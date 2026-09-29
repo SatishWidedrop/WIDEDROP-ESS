@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   EXPENSE_CLAIM_STATES,
+  EXPENSE_STATES_AWAITING_DECISION,
+  EXPENSE_STATES_AWAITING_PAYMENT,
   LEAVE_REQUEST_STATES,
   LEAVE_STATES_HOLDING_BALANCE,
   OUTBOX_MAX_ATTEMPTS,
@@ -22,7 +24,7 @@ import {
 
 describe('leave', () => {
   it('reserves balance only while pending or approved', () => {
-    expect(LEAVE_STATES_HOLDING_BALANCE).toEqual(['PENDING', 'APPROVED']);
+    expect(LEAVE_STATES_HOLDING_BALANCE).toEqual(['PENDING_APPROVAL', 'APPROVED']);
     for (const state of ['REJECTED', 'WITHDRAWN', 'CANCELLED', 'DRAFT'] as const) {
       expect(LEAVE_STATES_HOLDING_BALANCE).not.toContain(state);
     }
@@ -30,6 +32,7 @@ describe('leave', () => {
 
   it('cannot approve a request that was never submitted', () => {
     expect(leaveRequestMachine.can('DRAFT', 'APPROVE')).toBe(false);
+    expect(leaveRequestMachine.next('DRAFT', 'SUBMIT')).toBe('PENDING_APPROVAL');
   });
 
   it('cannot withdraw a decided request', () => {
@@ -47,19 +50,42 @@ describe('leave', () => {
 
 describe('expenses', () => {
   it('requires both a manager and Accounts before reimbursement', () => {
-    expect(expenseClaimMachine.can('PENDING_MANAGER', 'REIMBURSE')).toBe(false);
-    expect(expenseClaimMachine.can('PENDING_ACCOUNTS', 'REIMBURSE')).toBe(false);
-    expect(expenseClaimMachine.can('APPROVED', 'REIMBURSE')).toBe(true);
+    for (const from of [
+      'SUBMITTED',
+      'PENDING_MANAGER',
+      'MANAGER_APPROVED',
+      'PENDING_FINANCE',
+      'FINANCE_APPROVED',
+    ] as const) {
+      expect(expenseClaimMachine.can(from, 'REIMBURSE'), from).toBe(false);
+    }
+    expect(expenseClaimMachine.can('QUEUED_FOR_PAYMENT', 'REIMBURSE')).toBe(true);
   });
 
-  it('walks submit -> manager -> accounts -> reimbursed', () => {
+  it('walks submit -> manager -> finance -> batch -> reimbursed', () => {
     let state = expenseClaimMachine.initial;
-    for (const event of ['SUBMIT', 'MANAGER_APPROVE', 'ACCOUNTS_VERIFY', 'REIMBURSE'] as const) {
+    for (const event of [
+      'SUBMIT',
+      'ROUTE_TO_MANAGER',
+      'MANAGER_APPROVE',
+      'ROUTE_TO_FINANCE',
+      'FINANCE_APPROVE',
+      'QUEUE_FOR_PAYMENT',
+      'REIMBURSE',
+    ] as const) {
       const next = expenseClaimMachine.next(state, event);
       expect(next, `${state} --${event}-->`).toBeDefined();
       state = next!;
     }
     expect(state).toBe('REIMBURSED');
+  });
+
+  it('separates the two stat tiles by real state, not by guesswork', () => {
+    expect(EXPENSE_STATES_AWAITING_DECISION).not.toContain('FINANCE_APPROVED');
+    expect(EXPENSE_STATES_AWAITING_PAYMENT).not.toContain('PENDING_MANAGER');
+    for (const state of [...EXPENSE_STATES_AWAITING_DECISION, ...EXPENSE_STATES_AWAITING_PAYMENT]) {
+      expect(EXPENSE_CLAIM_STATES).toContain(state);
+    }
   });
 
   it('treats reimbursement as final', () => {
@@ -71,7 +97,8 @@ describe('expenses', () => {
   });
 
   it('cannot withdraw a claim a manager has already approved', () => {
-    expect(expenseClaimMachine.can('PENDING_ACCOUNTS', 'WITHDRAW')).toBe(false);
+    expect(expenseClaimMachine.can('MANAGER_APPROVED', 'WITHDRAW')).toBe(false);
+    expect(expenseClaimMachine.can('PENDING_FINANCE', 'WITHDRAW')).toBe(false);
   });
 });
 
@@ -85,7 +112,8 @@ describe('attendance', () => {
   });
 
   it('lets a returned period be resubmitted', () => {
-    expect(attendancePeriodMachine.next('RETURNED', 'SUBMIT')).toBe('SUBMITTED');
+    expect(attendancePeriodMachine.next('MANAGER_APPROVAL_PENDING', 'RETURN')).toBe('REOPENED');
+    expect(attendancePeriodMachine.next('REOPENED', 'SUBMIT')).toBe('HR_SUBMITTED');
   });
 
   it('counts holidays and week-offs as paid, absence and unpaid leave as not', () => {
@@ -102,21 +130,23 @@ describe('policy versions', () => {
     expect(policyVersionMachine.next('PUBLISHED', 'SUPERSEDE')).toBe('SUPERSEDED');
   });
 
-  it('treats superseded and archived as final', () => {
+  it('treats superseded and withdrawn as final', () => {
     expect(policyVersionMachine.isTerminal('SUPERSEDED')).toBe(true);
-    expect(policyVersionMachine.isTerminal('ARCHIVED')).toBe(true);
+    expect(policyVersionMachine.isTerminal('WITHDRAWN')).toBe(true);
   });
 });
 
 describe('help desk', () => {
   it('pauses the SLA clock while waiting on the requester', () => {
-    expect(SLA_RUNNING_STATES).not.toContain('AWAITING_REQUESTER');
+    expect(SLA_RUNNING_STATES).not.toContain('WAITING_ON_EMPLOYEE');
     expect(SLA_RUNNING_STATES).not.toContain('RESOLVED');
+    expect(SLA_RUNNING_STATES).not.toContain('CLOSED');
     expect(SLA_RUNNING_STATES).toContain('OPEN');
   });
 
   it('allows a closed ticket to be reopened', () => {
-    expect(ticketMachine.next('CLOSED', 'REOPEN')).toBe('IN_PROGRESS');
+    expect(ticketMachine.next('CLOSED', 'REOPEN')).toBe('REOPENED');
+    expect(ticketMachine.next('REOPENED', 'START')).toBe('IN_PROGRESS');
   });
 
   it('cannot resolve a ticket nobody has touched', () => {
@@ -125,13 +155,15 @@ describe('help desk', () => {
 });
 
 describe('document requests', () => {
-  it('issues only from in-progress', () => {
-    expect(documentRequestMachine.can('REQUESTED', 'ISSUE')).toBe(false);
-    expect(documentRequestMachine.next('IN_PROGRESS', 'ISSUE')).toBe('ISSUED');
+  it('issues only once the letter is being prepared', () => {
+    expect(documentRequestMachine.can('SUBMITTED', 'ISSUE')).toBe(false);
+    expect(documentRequestMachine.can('IN_REVIEW', 'ISSUE')).toBe(false);
+    expect(documentRequestMachine.next('PROCESSING', 'ISSUE')).toBe('ISSUED');
   });
 
   it('cannot cancel a request HR has started', () => {
-    expect(documentRequestMachine.can('IN_PROGRESS', 'CANCEL')).toBe(false);
+    expect(documentRequestMachine.can('IN_REVIEW', 'CANCEL')).toBe(false);
+    expect(documentRequestMachine.can('PROCESSING', 'CANCEL')).toBe(false);
   });
 });
 

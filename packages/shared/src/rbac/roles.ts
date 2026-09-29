@@ -14,6 +14,14 @@
 export const ROLES = ['EMPLOYEE', 'MANAGER', 'HR', 'ACCOUNTS'] as const;
 export type Role = (typeof ROLES)[number];
 
+/**
+ * The database calls this enum `ess_persona`; it holds the same four values.
+ * Both names are exported so schema-facing code and RBAC code can each read
+ * naturally without a translation layer.
+ */
+export type Persona = Role;
+export const PERSONAS = ROLES;
+
 export const ROLE_LABELS: Record<Role, string> = {
   EMPLOYEE: 'Employee',
   MANAGER: 'Manager',

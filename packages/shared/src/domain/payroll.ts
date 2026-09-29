@@ -1,11 +1,10 @@
 import { StateMachine } from './state-machine.js';
-import type { Role } from '../rbac/roles.js';
+import type { Persona } from '../rbac/roles.js';
 
 /**
  * The payroll pipeline.
  *
- * A payslip does not exist until the cycle reaches GENERATED, and an employee
- * cannot see it until the cycle reaches PUBLISHED. The order is fixed:
+ * The order is fixed by the business:
  *
  *   Accounts uploads payroll data
  *     -> HR submits employee attendance
@@ -14,33 +13,41 @@ import type { Role } from '../rbac/roles.js';
  *     -> payroll and payslips are generated automatically
  *     -> the payslip becomes visible to the employee
  *
- * Each step is gated on the previous one by this machine, by a database check
- * constraint on the cycle's state, and by an authorization check on the actor's
- * role — three independent gates, so a bug in one does not open the pipeline.
+ * Each step is gated on the one before it three times over: by this machine, by
+ * a check constraint and trigger in the database, and by the authorization check
+ * on the route. A bug in one does not open the pipeline.
+ *
+ * State names match the `ess_payroll_cycle_status` enum exactly.
  */
 
 export const PAYROLL_CYCLE_STATES = [
-  /** Period created. Nothing uploaded yet. */
+  /** The period exists. Nothing has been uploaded. */
   'DRAFT',
-  /** Accounts has uploaded at least one payroll input batch with no fatal errors. */
-  'INPUTS_UPLOADED',
+  /** Accounts is uploading payroll inputs; batches may still be replaced. */
+  'INPUTS_OPEN',
+  /** Accounts has closed the input window. HR may now submit attendance. */
+  'INPUTS_LOCKED',
   /** HR has submitted attendance for every employee in scope. */
   'ATTENDANCE_SUBMITTED',
   /** Every manager who owed an approval has given it. */
   'ATTENDANCE_APPROVED',
-  /** Pre-generation validation passed for every employee in scope. */
-  'VALIDATED',
-  /** Validation found blocking problems. Returns to INPUTS_UPLOADED once fixed. */
+  /** Pre-generation validation is running. */
+  'VALIDATING',
+  /** Validation found blocking problems. Inputs must be corrected. */
   'VALIDATION_FAILED',
+  /** Every employee in scope has the inputs payroll needs. */
+  'VALIDATED',
   /** Generation is running. A lock state: no other transition may interleave. */
-  'GENERATING',
-  /** Payslips exist, immutable, but are not yet visible to employees. */
-  'GENERATED',
-  /** Generation failed part-way; nothing was committed. */
-  'GENERATION_FAILED',
-  /** Payslips are visible to their employees. Terminal for the happy path. */
+  'CALCULATING',
+  /** Payslips exist, immutable, and are not yet visible to employees. */
+  'CALCULATED',
+  /** Signed off inside Accounts. Still not visible to employees. */
+  'APPROVED',
+  /** Payslips are visible to their employees. */
   'PUBLISHED',
-  /** Abandoned before publication. Any generated payslips are voided. */
+  /** The period is closed to further change. */
+  'CLOSED',
+  /** Abandoned before publication. Any generated payslips are revoked. */
   'CANCELLED',
 ] as const;
 
@@ -48,50 +55,59 @@ export type PayrollCycleState = (typeof PAYROLL_CYCLE_STATES)[number];
 
 export const PAYROLL_CYCLE_EVENTS = [
   'UPLOAD_INPUTS',
+  'LOCK_INPUTS',
+  'REOPEN_INPUTS',
   'SUBMIT_ATTENDANCE',
   'RETURN_ATTENDANCE',
   'APPROVE_ATTENDANCE',
   'VALIDATE',
   'VALIDATION_PASSED',
   'VALIDATION_REJECTED',
-  'GENERATE',
-  'GENERATION_SUCCEEDED',
-  'GENERATION_ABORTED',
+  'CALCULATE',
+  'CALCULATION_SUCCEEDED',
+  'CALCULATION_FAILED',
+  'APPROVE',
   'PUBLISH',
+  'CLOSE',
   'CANCEL',
 ] as const;
 
 export type PayrollCycleEvent = (typeof PAYROLL_CYCLE_EVENTS)[number];
 
 export const payrollCycleMachine = new StateMachine<PayrollCycleState, PayrollCycleEvent>({
-  name: 'payroll-cycle',
+  name: 'payroll_cycle',
   initial: 'DRAFT',
   states: PAYROLL_CYCLE_STATES,
   transitions: [
     {
       from: 'DRAFT',
-      to: 'INPUTS_UPLOADED',
+      to: 'INPUTS_OPEN',
       event: 'UPLOAD_INPUTS',
-      description: 'Accounts uploads the payroll input batch for the period.',
+      description: 'Accounts uploads the first payroll input batch for the period.',
     },
     {
-      // Re-uploading before attendance is submitted replaces the batch.
-      from: 'INPUTS_UPLOADED',
-      to: 'INPUTS_UPLOADED',
+      from: 'INPUTS_OPEN',
+      to: 'INPUTS_OPEN',
       event: 'UPLOAD_INPUTS',
-      description: 'Accounts uploads a corrected or additional payroll input batch.',
+      description: 'Accounts uploads a corrected or additional batch, superseding the last.',
     },
     {
-      from: 'INPUTS_UPLOADED',
+      from: 'INPUTS_OPEN',
+      to: 'INPUTS_LOCKED',
+      event: 'LOCK_INPUTS',
+      description: 'Accounts closes the input window so attendance can be submitted against it.',
+    },
+    {
+      from: 'INPUTS_LOCKED',
       to: 'ATTENDANCE_SUBMITTED',
       event: 'SUBMIT_ATTENDANCE',
       description: 'HR submits attendance for every employee in the cycle.',
     },
     {
       from: 'ATTENDANCE_SUBMITTED',
-      to: 'INPUTS_UPLOADED',
+      to: 'INPUTS_LOCKED',
       event: 'RETURN_ATTENDANCE',
-      description: 'A manager returns attendance to HR for correction.',
+      description: 'A manager returns their slice to HR with a reason; HR corrects and resubmits.',
     },
     {
       from: 'ATTENDANCE_SUBMITTED',
@@ -101,110 +117,127 @@ export const payrollCycleMachine = new StateMachine<PayrollCycleState, PayrollCy
     },
     {
       from: 'ATTENDANCE_APPROVED',
-      to: 'ATTENDANCE_APPROVED',
+      to: 'VALIDATING',
       event: 'VALIDATE',
-      description: 'Accounts runs pre-generation validation.',
+      description: 'Accounts runs the pre-generation validation checklist.',
     },
     {
-      from: 'ATTENDANCE_APPROVED',
+      from: 'VALIDATING',
       to: 'VALIDATED',
       event: 'VALIDATION_PASSED',
       description: 'Every employee in scope has the inputs payroll needs.',
     },
     {
-      from: 'ATTENDANCE_APPROVED',
+      from: 'VALIDATING',
       to: 'VALIDATION_FAILED',
       event: 'VALIDATION_REJECTED',
-      description: 'Validation found blocking problems on one or more employees.',
+      description: 'Validation found blocking problems; each is recorded against its employee.',
     },
     {
       from: 'VALIDATION_FAILED',
-      to: 'INPUTS_UPLOADED',
-      event: 'UPLOAD_INPUTS',
-      description: 'Accounts uploads corrected inputs; attendance must be re-approved.',
+      to: 'INPUTS_OPEN',
+      event: 'REOPEN_INPUTS',
+      description: 'Accounts reopens inputs to correct them; attendance must be approved again.',
     },
     {
       from: 'VALIDATED',
-      to: 'GENERATING',
-      event: 'GENERATE',
-      description: 'Accounts starts payroll generation.',
+      to: 'CALCULATING',
+      event: 'CALCULATE',
+      description: 'Payroll generation starts. Nothing else may touch the cycle while it runs.',
     },
     {
-      from: 'GENERATING',
-      to: 'GENERATED',
-      event: 'GENERATION_SUCCEEDED',
+      from: 'CALCULATING',
+      to: 'CALCULATED',
+      event: 'CALCULATION_SUCCEEDED',
       description: 'Payslips were generated and sealed for every employee in scope.',
     },
     {
-      from: 'GENERATING',
-      to: 'GENERATION_FAILED',
-      event: 'GENERATION_ABORTED',
-      description: 'Generation failed; the transaction was rolled back and nothing was written.',
-    },
-    {
-      from: 'GENERATION_FAILED',
+      from: 'CALCULATING',
       to: 'VALIDATED',
-      event: 'VALIDATE',
-      description: 'The cause was fixed; the cycle is ready to generate again.',
+      event: 'CALCULATION_FAILED',
+      description:
+        'Generation failed and rolled back; nothing was written and the run records why.',
     },
     {
-      from: 'GENERATED',
+      from: 'CALCULATED',
+      to: 'APPROVED',
+      event: 'APPROVE',
+      description: 'Accounts signs the run off. Payslips are still not visible to employees.',
+    },
+    {
+      from: 'APPROVED',
       to: 'PUBLISHED',
       event: 'PUBLISH',
-      description: 'Accounts publishes the cycle; payslips become visible to employees.',
+      description: 'The cycle is published; payslips become visible to their employees.',
     },
-    // A cycle can be abandoned at any point before publication — but never
-    // after, because an employee may already have downloaded their payslip.
+    {
+      from: 'PUBLISHED',
+      to: 'CLOSED',
+      event: 'CLOSE',
+      description: 'The period is closed; corrections go through a supplementary run.',
+    },
+    // A cycle can be abandoned at any point before publication — never after,
+    // because an employee may already have downloaded their payslip.
     ...(
       [
         'DRAFT',
-        'INPUTS_UPLOADED',
+        'INPUTS_OPEN',
+        'INPUTS_LOCKED',
         'ATTENDANCE_SUBMITTED',
         'ATTENDANCE_APPROVED',
         'VALIDATION_FAILED',
-        'GENERATION_FAILED',
-        'GENERATED',
+        'VALIDATED',
+        'CALCULATED',
+        'APPROVED',
       ] as const
     ).map((from) => ({
       from,
       to: 'CANCELLED' as const,
       event: 'CANCEL' as const,
-      description: 'Accounts cancels the cycle; any generated payslips are voided.',
+      description: 'Accounts cancels the cycle; any generated payslips are revoked.',
     })),
   ],
 });
 
-/** Which role may raise each event. Enforced server-side on every request. */
-export const PAYROLL_EVENT_ACTOR: Record<PayrollCycleEvent, Role> = {
+/**
+ * Which persona may raise each event. Enforced server-side per request; events
+ * marked `null` are raised by the system as the outcome of a previous one and
+ * can never be requested by a user.
+ */
+export const PAYROLL_EVENT_ACTOR: Record<PayrollCycleEvent, Persona | null> = {
   UPLOAD_INPUTS: 'ACCOUNTS',
+  LOCK_INPUTS: 'ACCOUNTS',
+  REOPEN_INPUTS: 'ACCOUNTS',
   SUBMIT_ATTENDANCE: 'HR',
   RETURN_ATTENDANCE: 'MANAGER',
   APPROVE_ATTENDANCE: 'MANAGER',
   VALIDATE: 'ACCOUNTS',
-  // Raised by the system itself as the outcome of VALIDATE, never by a user.
-  VALIDATION_PASSED: 'ACCOUNTS',
-  VALIDATION_REJECTED: 'ACCOUNTS',
-  GENERATE: 'ACCOUNTS',
-  GENERATION_SUCCEEDED: 'ACCOUNTS',
-  GENERATION_ABORTED: 'ACCOUNTS',
+  VALIDATION_PASSED: null,
+  VALIDATION_REJECTED: null,
+  CALCULATE: 'ACCOUNTS',
+  CALCULATION_SUCCEEDED: null,
+  CALCULATION_FAILED: null,
+  APPROVE: 'ACCOUNTS',
   PUBLISH: 'ACCOUNTS',
+  CLOSE: 'ACCOUNTS',
   CANCEL: 'ACCOUNTS',
 };
 
 /**
- * States in which payslip rows may exist at all.
- *
- * Enforced by a database check constraint as well as by this list: a payslip row
- * whose cycle is in any other state is a data-integrity bug, not a display bug.
+ * States in which payslip rows may exist at all. Mirrored by a database trigger:
+ * a payslip whose cycle is in any other state cannot be inserted.
  */
 export const STATES_WITH_PAYSLIPS: readonly PayrollCycleState[] = [
-  'GENERATED',
+  'CALCULATING',
+  'CALCULATED',
+  'APPROVED',
   'PUBLISHED',
+  'CLOSED',
   'CANCELLED',
 ];
 
-/** The only state in which an employee may read their own payslip. */
-export const EMPLOYEE_VISIBLE_STATES: readonly PayrollCycleState[] = ['PUBLISHED'];
+/** The only states in which an employee may read their own payslip. */
+export const EMPLOYEE_VISIBLE_STATES: readonly PayrollCycleState[] = ['PUBLISHED', 'CLOSED'];
 
 export function payslipsMayExist(state: PayrollCycleState): boolean {
   return STATES_WITH_PAYSLIPS.includes(state);
@@ -219,14 +252,14 @@ export function payslipVisibleToEmployee(state: PayrollCycleState): boolean {
 /* ------------------------------------------------------------------ */
 
 /**
- * The checklist the system runs before generating payroll. Every check is
- * evaluated for every employee in the cycle, and the result of each is
- * persisted so the run is auditable and explicable afterwards.
+ * The checklist the system runs before generating payroll. Every check runs for
+ * every employee in the cycle and its result is persisted, so the run is
+ * auditable and every exclusion carries a recorded reason.
  */
 export const PAYROLL_VALIDATION_CHECKS = [
   'SALARY_STRUCTURE_EFFECTIVE',
   'ATTENDANCE_APPROVED',
-  'BANK_DETAILS_PRESENT',
+  'BANK_DETAILS_VERIFIED',
   'STATUTORY_IDS_PRESENT',
   'TAX_REGIME_ELECTED',
   'NO_UNRESOLVED_INPUT_ERRORS',
@@ -236,7 +269,8 @@ export const PAYROLL_VALIDATION_CHECKS = [
 
 export type PayrollValidationCheck = (typeof PAYROLL_VALIDATION_CHECKS)[number];
 
-export type ValidationSeverity = 'BLOCKING' | 'WARNING';
+/** Matches the `ess_payroll_validation_severity` enum. */
+export type ValidationSeverity = 'INFO' | 'WARNING' | 'ERROR';
 
 export interface PayrollCheckDefinition {
   check: PayrollValidationCheck;
@@ -248,53 +282,52 @@ export interface PayrollCheckDefinition {
 }
 
 /**
- * A BLOCKING failure excludes that employee from the run and records why; the
- * cycle itself only fails when *every* employee is excluded, or when Accounts
- * chooses not to proceed. This is deliberate: one employee missing a bank
- * account must not stop an organisation being paid, but they must not be paid
- * silently or approximately either — they are excluded with a recorded reason
- * and picked up by a supplementary run.
+ * An ERROR excludes that employee from the run with a recorded reason; the cycle
+ * itself fails only when every employee is excluded. That is deliberate: one
+ * person's missing bank account must not stop an organisation being paid, and
+ * they must not be paid approximately either — they are excluded visibly and
+ * picked up by a supplementary run.
  */
 export const PAYROLL_CHECKS: readonly PayrollCheckDefinition[] = [
   {
     check: 'SALARY_STRUCTURE_EFFECTIVE',
-    severity: 'BLOCKING',
+    severity: 'ERROR',
     label: 'Salary structure effective for the period',
     remedy: 'Accounts uploads an effective-dated salary structure for this employee.',
   },
   {
     check: 'ATTENDANCE_APPROVED',
-    severity: 'BLOCKING',
+    severity: 'ERROR',
     label: 'Attendance approved by the reporting manager',
     remedy: 'The reporting manager approves the attendance slice for this period.',
   },
   {
-    check: 'BANK_DETAILS_PRESENT',
-    severity: 'BLOCKING',
+    check: 'BANK_DETAILS_VERIFIED',
+    severity: 'ERROR',
     label: 'Verified bank account on file',
-    remedy: 'The employee submits bank details and Payroll verifies them.',
+    remedy: 'The employee submits bank details and Payroll verifies the cancelled cheque.',
   },
   {
     check: 'STATUTORY_IDS_PRESENT',
-    severity: 'BLOCKING',
+    severity: 'ERROR',
     label: 'PAN and, where applicable, UAN on file',
     remedy: 'The employee submits the missing identifier through My profile.',
   },
   {
     check: 'TAX_REGIME_ELECTED',
-    severity: 'BLOCKING',
+    severity: 'ERROR',
     label: 'Tax regime elected for the financial year',
-    remedy: 'The employee elects a regime, or HR applies the statutory default.',
+    remedy: 'The employee elects a regime, or HR records the statutory default against them.',
   },
   {
     check: 'NO_UNRESOLVED_INPUT_ERRORS',
-    severity: 'BLOCKING',
+    severity: 'ERROR',
     label: 'No unresolved errors in the uploaded payroll inputs',
-    remedy: 'Accounts corrects the flagged rows and re-uploads the batch.',
+    remedy: 'Accounts corrects the flagged rows and uploads the batch again.',
   },
   {
     check: 'NO_EXISTING_PAYSLIP',
-    severity: 'BLOCKING',
+    severity: 'ERROR',
     label: 'No payslip already issued for this employee and period',
     remedy: 'Use a supplementary run to issue a correction rather than a second payslip.',
   },
@@ -306,30 +339,33 @@ export const PAYROLL_CHECKS: readonly PayrollCheckDefinition[] = [
   },
 ];
 
-export const BLOCKING_CHECKS = PAYROLL_CHECKS.filter((c) => c.severity === 'BLOCKING').map(
+export const BLOCKING_CHECKS = PAYROLL_CHECKS.filter((c) => c.severity === 'ERROR').map(
   (c) => c.check,
 );
+
+export function checkDefinition(check: PayrollValidationCheck): PayrollCheckDefinition {
+  const found = PAYROLL_CHECKS.find((c) => c.check === check);
+  if (!found) throw new Error(`Unknown payroll validation check: ${check}`);
+  return found;
+}
 
 /* ------------------------------------------------------------------ */
 /* Payslip                                                             */
 /* ------------------------------------------------------------------ */
 
-export const PAYSLIP_STATES = [
-  /** Generated and sealed, not yet visible to the employee. */
-  'GENERATED',
-  /** Visible to the employee. */
-  'PUBLISHED',
-  /** Superseded by a revision. Kept for the audit trail, never deleted. */
-  'SUPERSEDED',
-  /** The cycle was cancelled after generation. Not payable, not visible. */
-  'VOIDED',
-] as const;
-
+/** Matches the `ess_payslip_status` enum. */
+export const PAYSLIP_STATES = ['GENERATED', 'PUBLISHED', 'SUPERSEDED', 'REVOKED'] as const;
 export type PayslipState = (typeof PAYSLIP_STATES)[number];
 
-/** Payroll runs. A correction never mutates a payslip; it issues a new one. */
+/** Matches the `ess_payroll_run_type` enum. A correction never edits a payslip. */
 export const PAYROLL_RUN_TYPES = ['REGULAR', 'SUPPLEMENTARY', 'OFF_CYCLE'] as const;
 export type PayrollRunType = (typeof PAYROLL_RUN_TYPES)[number];
 
-export const PAYSLIP_LINE_KINDS = ['EARNING', 'DEDUCTION', 'EMPLOYER_CONTRIBUTION'] as const;
+/** Matches the `ess_payslip_line_kind` enum. */
+export const PAYSLIP_LINE_KINDS = [
+  'EARNING',
+  'DEDUCTION',
+  'EMPLOYER_CONTRIBUTION',
+  'INFORMATIONAL',
+] as const;
 export type PayslipLineKind = (typeof PAYSLIP_LINE_KINDS)[number];
