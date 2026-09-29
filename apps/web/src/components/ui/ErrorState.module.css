@@ -1,0 +1,39 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-16) var(--space-10);
+  text-align: center;
+  background: var(--surface-raised);
+  border: 1px solid var(--tone-red-fg);
+  border-radius: var(--radius-lg);
+}
+
+.glyph {
+  color: var(--tone-red-fg);
+}
+
+.title {
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+}
+
+.body {
+  font-size: var(--text-meta);
+  color: var(--text-muted);
+  line-height: var(--leading-relaxed);
+  max-width: 46ch;
+}
+
+/*
+ * The request id, in monospace, so a person can read it to the help desk and
+ * an engineer can find the exact request in the logs.
+ */
+.reference {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+  user-select: all;
+}

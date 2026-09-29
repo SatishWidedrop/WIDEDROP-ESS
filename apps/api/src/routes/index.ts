@@ -3,6 +3,7 @@ import { generateDevelopmentKeyPair, loadTokenKeys } from '../services/auth/toke
 import { authenticatePlugin } from '../plugins/authenticate.js';
 import { healthRoutes } from './health.js';
 import { authRoutes } from './v1/auth.routes.js';
+import { meRoutes } from './v1/me.js';
 
 /**
  * Route registration.
@@ -41,4 +42,5 @@ export async function registerRoutes(app: App): Promise<void> {
   await app.register(authenticatePlugin, { keys, db: app.db });
   await app.register(healthRoutes);
   await app.register(authRoutes, { keys });
+  await app.register(meRoutes);
 }

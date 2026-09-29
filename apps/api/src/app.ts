@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
@@ -53,8 +54,10 @@ export async function buildApp({ env, db, logger }: AppDependencies) {
 
   const app = Fastify({
     loggerInstance: log,
-    // The id is minted by the request-context plugin; Fastify's own is unused.
-    genReqId: () => '',
+    // One id per request, minted here and reused by the context and the
+    // response header — never taken from the client, who could otherwise
+    // collide or poison log correlation.
+    genReqId: () => randomUUID(),
     trustProxy: env.TRUST_PROXY,
     // A body larger than this is refused before it is buffered.
     bodyLimit: 1 * 1024 * 1024,

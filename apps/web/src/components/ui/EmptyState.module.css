@@ -1,0 +1,47 @@
+/*
+ * Every list, table, card and metric has one of these.
+ *
+ * A dashed border rather than a solid one says "nothing here yet" rather than
+ * "here is a thing that is blank", and the copy always explains what would put
+ * something here — never a bare "No data".
+ */
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  padding: var(--space-16) var(--space-10);
+  text-align: center;
+  background: var(--surface-raised);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+  min-height: 180px;
+}
+
+.compact {
+  padding: var(--space-10) var(--space-8);
+  min-height: 120px;
+}
+
+.glyph {
+  color: var(--text-dim);
+  margin-bottom: var(--space-1);
+}
+
+.title {
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+}
+
+.body {
+  font-size: var(--text-meta);
+  color: var(--text-muted);
+  line-height: var(--leading-relaxed);
+  max-width: 42ch;
+}
+
+.action {
+  margin-top: var(--space-2);
+}

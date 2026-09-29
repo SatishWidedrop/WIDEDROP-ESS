@@ -16,8 +16,11 @@ import {
   isBreachedPassword,
   verifyPassword,
 } from '../../lib/password.js';
+import { randomUUID } from 'node:crypto';
 import {
+  createTotpEnrolment,
   generateChallengeId,
+  generateRecoveryCodes,
   isWellFormedRecoveryCode,
   normalizeRecoveryCode,
   verifyTotp,
@@ -678,6 +681,87 @@ export async function authRoutes(app: App, options: { keys: TokenKeys }): Promis
   );
 
   /* ---------------------------------------------------------------- */
+  /* POST /auth/mfa/enrol                                              */
+  /*                                                                   */
+  /* Reachable from the sign-in challenge alone, because a user whose  */
+  /* role requires MFA has no session until they have enrolled. The    */
+  /* challenge is the ticket: short-lived, single-use, and already     */
+  /* proves the password.                                              */
+  /* ---------------------------------------------------------------- */
+
+  app.post(
+    '/api/v1/auth/mfa/enrol',
+    { config: { public: true, rateLimitName: 'auth:mfa-enrol' } },
+    async (request, reply) => {
+      const { challengeId } = (request.body ?? {}) as { challengeId?: string };
+      if (typeof challengeId !== 'string' || challengeId.length < 16) {
+        throw new AppError(400, ERROR_CODES.VALIDATION_FAILED, 'A sign-in challenge is required.');
+      }
+
+      const challenge = await db.passwordResetToken.findUnique({
+        where: { tokenHash: hashToken(`mfa:${challengeId}`) },
+        select: {
+          id: true,
+          expiresAt: true,
+          usedAt: true,
+          user: {
+            select: { id: true, email: true, organizationId: true, status: true },
+          },
+        },
+      });
+
+      if (
+        !challenge ||
+        challenge.usedAt ||
+        challenge.expiresAt.getTime() <= Date.now() ||
+        challenge.user.status !== 'ACTIVE'
+      ) {
+        throw new AppError(
+          401,
+          ERROR_CODES.SESSION_EXPIRED,
+          'That sign-in has expired. Sign in again.',
+        );
+      }
+
+      const encryption = new EncryptionService(env);
+      const enrolment = createTotpEnrolment(challenge.user.email);
+      const credentialId = randomUUID();
+      const sealed = encryption.encrypt(
+        enrolment.secret,
+        EncryptionService.context('mfa_credential', 'secret', credentialId),
+      );
+
+      await db.$transaction(async (tx) => {
+        // Replace any previous unconfirmed attempt, so a half-finished
+        // enrolment cannot be resumed later with a secret the user discarded.
+        await tx.mfaCredential.deleteMany({
+          where: { appUserId: challenge.user.id, confirmedAt: null },
+        });
+
+        await tx.mfaCredential.create({
+          data: {
+            id: credentialId,
+            organizationId: challenge.user.organizationId,
+            appUserId: challenge.user.id,
+            method: 'TOTP',
+            secretCt: sealed.ct,
+            secretIv: sealed.iv,
+            secretTag: sealed.tag,
+            encryptionKeyVersion: sealed.keyVersion,
+          },
+        });
+      });
+
+      // The secret is returned once, to be scanned or typed. It is stored
+      // encrypted and is never readable again through the API.
+      return reply.status(200).send({
+        otpauthUri: enrolment.uri,
+        secret: enrolment.secret,
+      });
+    },
+  );
+
+  /* ---------------------------------------------------------------- */
   /* POST /auth/mfa/verify                                             */
   /* ---------------------------------------------------------------- */
 
@@ -706,10 +790,14 @@ export async function authRoutes(app: App, options: { keys: TokenKeys }): Promis
                 where: { revokedAt: null },
                 select: { role: { select: { persona: true } }, expiresAt: true },
               },
+              // Includes an unconfirmed credential: verifying a code from it
+              // is exactly what completes enrolment.
               mfaCredentials: {
-                where: { disabledAt: null, confirmedAt: { not: null } },
+                where: { disabledAt: null },
+                orderBy: { createdAt: 'desc' },
                 select: {
                   id: true,
+                  confirmedAt: true,
                   secretCt: true,
                   secretIv: true,
                   secretTag: true,
@@ -746,6 +834,7 @@ export async function authRoutes(app: App, options: { keys: TokenKeys }): Promis
 
       const credential = challenge.user.mfaCredentials[0];
       if (!credential) throw rejected();
+      const justEnrolled = credential.confirmedAt === null;
 
       const encryption = new EncryptionService(env);
       let secret: string;
@@ -822,7 +911,12 @@ export async function authRoutes(app: App, options: { keys: TokenKeys }): Promis
         if (timeStep !== undefined) {
           await tx.mfaCredential.update({
             where: { id: credential.id },
-            data: { lastUsedTimeStep: BigInt(timeStep) },
+            data: {
+              lastUsedTimeStep: BigInt(timeStep),
+              // A code verified against an unconfirmed credential completes
+              // enrolment: proving the code works is the whole check.
+              ...(credential.confirmedAt === null ? { confirmedAt: new Date() } : {}),
+            },
           });
         }
 
@@ -873,17 +967,48 @@ export async function authRoutes(app: App, options: { keys: TokenKeys }): Promis
         );
       });
 
-      return reply.status(200).send(
-        await establishSession(reply, {
-          userId: challenge.user.id,
-          organizationId: challenge.user.organizationId,
-          employeeId: challenge.user.employee?.id,
-          personas,
-          mfaSatisfied: true,
-          ip: request.context.ip,
-          userAgent: request.context.userAgent,
-        }),
-      );
+      // On the verification that completes enrolment, mint recovery codes and
+      // show them once. They are stored only as hashes, so the server cannot
+      // show them again — which is the point.
+      let recoveryCodes: string[] | undefined;
+      if (justEnrolled) {
+        recoveryCodes = generateRecoveryCodes();
+        await db.$transaction(async (tx) => {
+          await tx.mfaRecoveryCode.deleteMany({ where: { appUserId: challenge.user.id } });
+          for (const code of recoveryCodes!) {
+            await tx.mfaRecoveryCode.create({
+              data: {
+                appUserId: challenge.user.id,
+                codeHash: await hashPassword(normalizeRecoveryCode(code), env.PASSWORD_PEPPER),
+              },
+            });
+          }
+          await recordAudit(
+            tx,
+            {
+              organizationId: challenge.user.organizationId,
+              action: 'CONFIG_CHANGE',
+              entityType: 'mfa_credential',
+              entityId: credential.id,
+              summary: 'Two-factor authentication enrolled',
+              actor: { kind: 'USER', userId: challenge.user.id },
+            },
+            env.AUDIT_HMAC_KEY,
+          );
+        });
+      }
+
+      const session = await establishSession(reply, {
+        userId: challenge.user.id,
+        organizationId: challenge.user.organizationId,
+        employeeId: challenge.user.employee?.id,
+        personas,
+        mfaSatisfied: true,
+        ip: request.context.ip,
+        userAgent: request.context.userAgent,
+      });
+
+      return reply.status(200).send(recoveryCodes ? { ...session, recoveryCodes } : session);
     },
   );
 }

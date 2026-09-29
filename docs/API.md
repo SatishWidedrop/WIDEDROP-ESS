@@ -1,7 +1,9 @@
 # Widedrop ESS — REST API Contract
 
 **Status:** authoritative design contract. An implementer follows this document and
-makes no further interface decisions.
+makes no further interface decisions. Where a decision was previously left open, §18 now
+marks it `RESOLVED` with the decision, or `OPEN` with the owner and the default that holds
+until they decide — an implementer never has to invent one.
 
 **Companion documents (read together, no duplication of truth):**
 
@@ -27,18 +29,18 @@ placeholder operational value.
 
 ### 1.1 Base path and versioning
 
-| Property             | Value                                                                                                                                                                                                                                                                                      |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Base path            | `/api/v1`                                                                                                                                                                                                                                                                                  |
-| Production origin    | `https://api-ess.widedrop.com`                                                                                                                                                                                                                                                             |
-| Staging origin       | `https://api-ess-staging.widedrop.com`                                                                                                                                                                                                                                                     |
-| Media type           | `application/json; charset=utf-8` only (plus `multipart/form-data` on the two upload routes in §12)                                                                                                                                                                                        |
-| Versioning policy    | The major version is in the path. A breaking change (removing a field, narrowing a type, changing a status code, changing an enum's meaning) requires `/api/v2`. Adding an optional request field, adding a response field, or adding an enum **value** is non-breaking and ships in `v1`. |
-| Enum growth          | Clients MUST tolerate unknown enum values by falling back to the `gray` tone and the raw label. The server never removes an enum value.                                                                                                                                                    |
-| Trailing slashes     | Rejected. `/api/v1/leave-requests/` → `404`.                                                                                                                                                                                                                                               |
-| Unknown routes       | `404 NOT_FOUND` with the standard envelope; the API never serves an HTML error page.                                                                                                                                                                                                       |
-| Unregistered parsers | `text/plain`, `application/x-www-form-urlencoded` and `application/xml` parsers are not registered (`SECURITY.md` §5.1) ⇒ `415 UNSUPPORTED_MEDIA_TYPE`.                                                                                                                                    |
-| CORS allowlist       | Exactly two origins, read once at boot from `ALLOWED_ORIGINS` (comma-separated, no wildcard, no regex, boot fails when empty): production `https://ess.widedrop.com`, staging `https://ess-staging.widedrop.com`. `https://widedrop.com` — the Netlify marketing site — is **not** an allowed origin and never calls this API (Directive 10). Comparison is byte-equality on the full origin. |
+| Property             | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Base path            | `/api/v1`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Production origin    | `https://api-ess.widedrop.com`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Staging origin       | `https://api-ess-staging.widedrop.com`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Media type           | `application/json; charset=utf-8` only (plus `multipart/form-data` on the two upload routes in §12)                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Versioning policy    | The major version is in the path. A breaking change (removing a field, narrowing a type, changing a status code, changing an enum's meaning) requires `/api/v2`. Adding an optional request field, adding a response field, or adding an enum **value** is non-breaking and ships in `v1`.                                                                                                                                                                                                                                                                                      |
+| Enum growth          | Clients MUST tolerate unknown enum values by falling back to the `gray` tone and the raw label. The server never removes an enum value.                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Trailing slashes     | Rejected. `/api/v1/leave-requests/` → `404`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Unknown routes       | `404 NOT_FOUND` with the standard envelope; the API never serves an HTML error page.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Unregistered parsers | `text/plain`, `application/x-www-form-urlencoded` and `application/xml` parsers are not registered (`SECURITY.md` §5.1) ⇒ `415 UNSUPPORTED_MEDIA_TYPE`.                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| CORS allowlist       | Exactly two origins, read once at boot from `ALLOWED_ORIGINS` (comma-separated, no wildcard, no regex, boot fails when empty): production `https://ess.widedrop.com`, staging `https://ess-staging.widedrop.com`. `https://widedrop.com` — the Netlify marketing site — is **not** an allowed origin and never calls this API (Directive 10). Comparison is byte-equality on the full origin.                                                                                                                                                                                   |
 | Preflight            | `OPTIONS` is answered by the CORS plugin alone, **before** authentication, and only for an allowlisted `Origin`: `Access-Control-Allow-Origin: <the echoed origin>` (never `*`), `-Allow-Credentials: true`, `-Allow-Methods: GET, POST, PUT, PATCH, DELETE`, `-Allow-Headers: Authorization, Content-Type, X-Request-Id, Idempotency-Key, If-Match, X-WD-CSRF`, `-Max-Age: 600`. A preflight from any other origin returns `204` with **no** `Access-Control-*` header, which the browser then blocks. `OPTIONS` is the only method exempt from the §4.1 permission assertion. |
 
 Path style: plural, kebab-case nouns (`/leave-requests`, `/payroll/cycles`,
@@ -77,43 +79,43 @@ then checking.
 
 ### 1.4 Response headers
 
-| Header                                                                                                                                | When                                                           | Value                                                                                                                                      |
-| ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `X-Request-Id`                                                                                                                        | Always                                                         | The correlation id. The SPA shows it in the error banner's "reference" line so a support ticket can be joined to `audit_event.request_id`. |
-| `Cache-Control: no-store` + `Pragma: no-cache`                                                                                        | Always                                                         | Global `onSend` hook; not per-route (`SECURITY.md` §6.6).                                                                                  |
-| `Vary: Origin, Authorization`                                                                                                         | Always                                                         |                                                                                                                                            |
-| `Content-Type: application/json; charset=utf-8`                                                                                       | On every body                                                  |                                                                                                                                            |
-| `ETag: "<row_version>"`                                                                                                               | On single-resource `GET`/`POST`/`PATCH` of versioned resources | Opaque strong validator; the value is the integer `row_version`.                                                                           |
-| `Location`                                                                                                                            | On `201`                                                       | Absolute path of the created resource.                                                                                                     |
-| `RateLimit-Limit` / `-Remaining` / `-Reset`                                                                                           | Always on rate-limited routes                                  |                                                                                                                                            |
-| `Retry-After`                                                                                                                         | On `429`, `423`, `503`, and `409 IDEMPOTENCY_IN_PROGRESS`      | Integer seconds.                                                                                                                           |
-| `Idempotency-Replayed: true`                                                                                                          | On a replayed idempotent response                              | Absent on the first execution.                                                                                                             |
-| `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cross-Origin-Resource-Policy: same-site` | Always                                                         | `SECURITY.md` §6.4.                                                                                                                        |
-| `Strict-Transport-Security: max-age=63072000; includeSubDomains` | Always | `SECURITY.md` §6.2. `preload` deliberately absent. |
-| `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; base-uri 'none'; sandbox` | Always | The API serves JSON only; this neutralises any response a browser is tricked into rendering as a document. |
-| `Cross-Origin-Opener-Policy: same-origin` | Always | |
-| `Access-Control-Allow-Origin: <echoed allowlisted origin>`, `Access-Control-Allow-Credentials: true`, `Access-Control-Expose-Headers: X-Request-Id, ETag, Location, Retry-After, Idempotency-Replayed, RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset` | When `Origin` is allowlisted (§1.1) | Never `*`; absent entirely otherwise. |
-| `Server` / `X-Powered-By`                                                                                                             | Never                                                          | Removed.                                                                                                                                   |
+| Header                                                                                                                                                                                                                                                        | When                                                           | Value                                                                                                                                      |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `X-Request-Id`                                                                                                                                                                                                                                                | Always                                                         | The correlation id. The SPA shows it in the error banner's "reference" line so a support ticket can be joined to `audit_event.request_id`. |
+| `Cache-Control: no-store` + `Pragma: no-cache`                                                                                                                                                                                                                | Always                                                         | Global `onSend` hook; not per-route (`SECURITY.md` §6.6).                                                                                  |
+| `Vary: Origin, Authorization`                                                                                                                                                                                                                                 | Always                                                         |                                                                                                                                            |
+| `Content-Type: application/json; charset=utf-8`                                                                                                                                                                                                               | On every body                                                  |                                                                                                                                            |
+| `ETag: "<row_version>"`                                                                                                                                                                                                                                       | On single-resource `GET`/`POST`/`PATCH` of versioned resources | Opaque strong validator; the value is the integer `row_version`.                                                                           |
+| `Location`                                                                                                                                                                                                                                                    | On `201`                                                       | Absolute path of the created resource.                                                                                                     |
+| `RateLimit-Limit` / `-Remaining` / `-Reset`                                                                                                                                                                                                                   | Always on rate-limited routes                                  |                                                                                                                                            |
+| `Retry-After`                                                                                                                                                                                                                                                 | On `429`, `423`, `503`, and `409 IDEMPOTENCY_IN_PROGRESS`      | Integer seconds.                                                                                                                           |
+| `Idempotency-Replayed: true`                                                                                                                                                                                                                                  | On a replayed idempotent response                              | Absent on the first execution.                                                                                                             |
+| `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cross-Origin-Resource-Policy: same-site`                                                                                                                         | Always                                                         | `SECURITY.md` §6.4.                                                                                                                        |
+| `Strict-Transport-Security: max-age=63072000; includeSubDomains`                                                                                                                                                                                              | Always                                                         | `SECURITY.md` §6.2. `preload` deliberately absent.                                                                                         |
+| `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; base-uri 'none'; sandbox`                                                                                                                                                               | Always                                                         | The API serves JSON only; this neutralises any response a browser is tricked into rendering as a document.                                 |
+| `Cross-Origin-Opener-Policy: same-origin`                                                                                                                                                                                                                     | Always                                                         |                                                                                                                                            |
+| `Access-Control-Allow-Origin: <echoed allowlisted origin>`, `Access-Control-Allow-Credentials: true`, `Access-Control-Expose-Headers: X-Request-Id, ETag, Location, Retry-After, Idempotency-Replayed, RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset` | When `Origin` is allowlisted (§1.1)                            | Never `*`; absent entirely otherwise.                                                                                                      |
+| `Server` / `X-Powered-By`                                                                                                                                                                                                                                     | Never                                                          | Removed.                                                                                                                                   |
 
 ### 1.5 Representation rules
 
-| Concern                    | Rule                                                                                                                                                                                                                                                                                                                                                                    |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Money**                  | Always an **integer of minor units (paise)** in a field suffixed `…Minor`, plus a sibling `currency` (`"INR"`). The API never sends a formatted string, a float, or a rupee value — **including inside `emptyState.params`, `/search` results, `notification` payloads and `email_outbox.template_data`**. Every `…Minor` value is asserted `Number.isSafeInteger` (|v| ≤ 2^53−1) by the response schema; a stored value outside that range is `500 INTEGRITY_ASSERTION_FAILED`, never a rounded number. `₹86,000` is produced by the SPA as `'₹' + Math.round(minor/100).toLocaleString('en-IN')` (`DESIGN-SYSTEM.md` §10).                                                                  |
-| **Dates**                  | `YYYY-MM-DD` (calendar dates, e.g. `payslip.pay_date`).                                                                                                                                                                                                                                                                                                                 |
-| **Instants**               | RFC 3339 UTC with `Z` (e.g. `2026-08-31T12:04:11.238Z`).                                                                                                                                                                                                                                                                                                                |
-| **Day counts**             | JSON numbers with at most 2 decimals (`numeric(5,2)` columns): `14.5`, `0.5`.                                                                                                                                                                                                                                                                                           |
-| **Percentages**            | Integers `0–100` when displayed as a bar width; ratios as `numeric` only where the DB stores a rate.                                                                                                                                                                                                                                                                    |
-| **Ids**                    | UUID v4/v7 strings. Business references (`WDT-PS-2608-1847`, `EXP-2291`, `HD-4821`) are separate display fields, never used as path ids.                                                                                                                                                                                                                                |
-| **Enums**                  | `SCREAMING_SNAKE_CASE` exactly as the Postgres enum (`ess_*`). The server also sends a rendered `label` and a `tone` (`GREEN`/`AMBER`/`RED`/`BLUE`/`GRAY`) wherever the UI shows a chip, so the SPA never maps status→copy itself.                                                                                                                                      |
-| **Absent vs null vs zero** | **Load-bearing.** `null` = the fact is persisted as unknown/not-applicable → the UI renders `—`. **Field omitted** = the actor is not entitled to it, or the satellite row does not exist → the UI omits the element. `0` = a measured zero and is rendered as `0`. The API never substitutes `0` for a missing measurement (Core Principle 2 / `DESIGN-SYSTEM.md` §8). |
-| **Empty collections**      | `{"data": [], "page": {...}}` with `200`. **Never** `404`, never an error, never sample rows. Where the emptiness has a knowable cause the collection carries a sibling `emptyState` object (§1.6).                                                                                                                                                                     |
-| **Masking**                | Applied server-side in the DTO mapper (`SECURITY.md` §7.5). A masked field is sent as `{"masked": "AXYPR••••K", "isMasked": true}`; the full value is a different field on a different, step-up-guarded endpoint. A masked value is never accepted as write input.                                                                                                      |
-| **Strings**                | UTF-8, NFC-normalised on write, `.trim()`-ed, explicit `.max()` on every field.                                                                                                                                                                                                                                                                                         |
-| **Booleans**               | Never tri-state; use `null` on a nullable column only where the DB column is nullable.                                                                                                                                                                                                                                                                                  |
-| **Unknown request keys**   | Rejected (`.strict()`), not stripped ⇒ `400 VALIDATION_FAILED`.                                                                                                                                                                                                                                                                                                         |
-| **Enum ordering is never semantic** | No query, guard, computed field or DTO in this contract compares a Postgres enum with `<`, `<=`, `>` or `>=`. `ess_payroll_cycle_status` and its siblings are ordered for readability only, and a future `ALTER TYPE … ADD VALUE` would silently change the meaning of such a comparison (`DATA-MODEL.md` §20.9). Every "has reached stage X" test is an explicit `IN (…)` list, and every such list is written out in this document (§13.6.1). |
-| **Server-composed labels** | Any response field that is a sentence or a joined label (`rangeLabel`, `daysLabel`, `metaLabel`, `subLabel`, `subHeader`, `meta`, `purposeLabel`, `requestedLabel`, `disabledReason`, `coverLabel`, `payableLabel`, `authorByline`, `cardSubLabel`, `firstResponseSlaLabel`) is composed **server-side** from a `ui_copy` template plus persisted parameters, using the formatters of §12.18 in `organization.locale`/`.timezone`. It is never a literal in a handler and never assembled by the SPA. |
+| Concern                             | Rule                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Money**                           | Always an **integer of minor units (paise)** in a field suffixed `…Minor`, plus a sibling `currency` (`"INR"`). The API never sends a formatted string, a float, or a rupee value — **including inside `emptyState.params`, `/search` results, `notification` payloads and `email_outbox.template_data`**. Every `…Minor` value is asserted `Number.isSafeInteger` (                                                                                                                                  | v   | ≤ 2^53−1) by the response schema; a stored value outside that range is `500 INTEGRITY_ASSERTION_FAILED`, never a rounded number. `₹86,000` is produced by the SPA as `'₹' + Math.round(minor/100).toLocaleString('en-IN')` (`DESIGN-SYSTEM.md` §10). |
+| **Dates**                           | `YYYY-MM-DD` (calendar dates, e.g. `payslip.pay_date`).                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **Instants**                        | RFC 3339 UTC with `Z` (e.g. `2026-08-31T12:04:11.238Z`).                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **Day counts**                      | JSON numbers with at most 2 decimals (`numeric(5,2)` columns): `14.5`, `0.5`.                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| **Percentages**                     | Integers `0–100` when displayed as a bar width; ratios as `numeric` only where the DB stores a rate.                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Ids**                             | UUID v4/v7 strings. Business references (`WDT-PS-2608-1847`, `EXP-2291`, `HD-4821`) are separate display fields, never used as path ids.                                                                                                                                                                                                                                                                                                                                                              |
+| **Enums**                           | `SCREAMING_SNAKE_CASE` exactly as the Postgres enum (`ess_*`). The server also sends a rendered `label` and a `tone` (`GREEN`/`AMBER`/`RED`/`BLUE`/`GRAY`) wherever the UI shows a chip, so the SPA never maps status→copy itself.                                                                                                                                                                                                                                                                    |
+| **Absent vs null vs zero**          | **Load-bearing.** `null` = the fact is persisted as unknown/not-applicable → the UI renders `—`. **Field omitted** = the actor is not entitled to it, or the satellite row does not exist → the UI omits the element. `0` = a measured zero and is rendered as `0`. The API never substitutes `0` for a missing measurement (Core Principle 2 / `DESIGN-SYSTEM.md` §8).                                                                                                                               |
+| **Empty collections**               | `{"data": [], "page": {...}}` with `200`. **Never** `404`, never an error, never sample rows. Where the emptiness has a knowable cause the collection carries a sibling `emptyState` object (§1.6).                                                                                                                                                                                                                                                                                                   |
+| **Masking**                         | Applied server-side in the DTO mapper (`SECURITY.md` §7.5). A masked field is sent as `{"masked": "AXYPR••••K", "isMasked": true}`; the full value is a different field on a different, step-up-guarded endpoint. A masked value is never accepted as write input.                                                                                                                                                                                                                                    |
+| **Strings**                         | UTF-8, NFC-normalised on write, `.trim()`-ed, explicit `.max()` on every field.                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| **Booleans**                        | Never tri-state; use `null` on a nullable column only where the DB column is nullable.                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **Unknown request keys**            | Rejected (`.strict()`), not stripped ⇒ `400 VALIDATION_FAILED`.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| **Enum ordering is never semantic** | No query, guard, computed field or DTO in this contract compares a Postgres enum with `<`, `<=`, `>` or `>=`. `ess_payroll_cycle_status` and its siblings are ordered for readability only, and a future `ALTER TYPE … ADD VALUE` would silently change the meaning of such a comparison (`DATA-MODEL.md` §20.9). Every "has reached stage X" test is an explicit `IN (…)` list, and every such list is written out in this document (§13.6.1).                                                       |
+| **Server-composed labels**          | Any response field that is a sentence or a joined label (`rangeLabel`, `daysLabel`, `metaLabel`, `subLabel`, `subHeader`, `meta`, `purposeLabel`, `requestedLabel`, `disabledReason`, `coverLabel`, `payableLabel`, `authorByline`, `cardSubLabel`, `firstResponseSlaLabel`) is composed **server-side** from a `ui_copy` template plus persisted parameters, using the formatters of §12.18 in `organization.locale`/`.timezone`. It is never a literal in a handler and never assembled by the SPA. |
 
 ### 1.6 The `emptyState` contract
 
@@ -126,10 +128,14 @@ knowable reason returns:
   "data": [],
   "page": { "limit": 25, "nextCursor": null, "hasMore": false },
   "emptyState": {
-    "code": "PAYSLIPS_NO_PUBLISHED_CYCLE", // stable, enumerated
+    "code": "PAYSLIPS_CYCLE_IN_PROGRESS", // stable, enumerated — Appendix C (§16)
     "title": "No payslips yet",
-    "message": "Your first payslip appears once August 2026 payroll is published.",
-    "params": { "periodLabel": "August 2026", "cycleStatus": "ATTENDANCE_SUBMITTED" },
+    "message": "August 2026 payroll is being processed.",
+    "params": {
+      "periodLabel": "August 2026",
+      "stageKey": "ATTENDANCE_SUBMITTED",
+      "stageLabel": "Attendance submitted",
+    },
   },
 }
 ```
@@ -140,14 +146,26 @@ Rules:
    `params` interpolated from persisted values. They are never hardcoded in the SPA.
 2. `params` values are themselves persisted facts (a `payroll_cycle.status`, a
    `benefit_plan_year.enrolment_window_opens_on`, a `fiscal_year.label`). Nothing is guessed.
+   `params` carries **no money value in any form** — not an integer, not a string — and no
+   raw back-office enum on an employee-facing route. Where a workflow stage must be named to
+   an employee it travels as the pair `stageKey` (one of the seven keys of §13.6.1, for the
+   SPA's `switch`) + `stageLabel` (its `ui_copy` label). Internal and failure states
+   (`VALIDATING`, `VALIDATION_FAILED`, `CALCULATING`, `CANCELLED`) collapse to
+   `stageKey: "IN_PROGRESS"` before they reach an employee — an employee is never told that
+   payroll validation failed.
 3. `emptyState` is **omitted** when the collection is non-empty, and also omitted when the
    emptiness has no explanation beyond "there is nothing" — in that case the SPA renders its
    generic designed empty state for that surface.
 4. A metric object that has no underlying row returns `{"valueMinor": null, "subLabel": {...}}`;
    the SPA renders `—` with the sub-label. It never renders `₹0`.
+5. `emptyState` behaves identically on page/limit collections; the `page` object keeps its
+   own shape (`total: 0`, `totalPages: 0`). A `404` is never used to express emptiness.
+6. A code is valid only if it appears in Appendix C (§16) **and** has seeded `ui_copy` keys
+   `empty.<lower_snake_code>.title` and `.message`. CI invariant 12 (§17) fails the build
+   otherwise, so an un-catalogued code cannot ship.
 
 The enumerated `emptyState.code` values are listed with their owning endpoints throughout §13
-and collected in Appendix D.
+and collected in **Appendix C (§16)**. Appendix D (§17) is the CI-invariant list.
 
 ---
 
@@ -220,18 +238,19 @@ key adds it here first.
 
 **403 Forbidden**
 
-| Code                           | Meaning                                                                 | `details`                            |
-| ------------------------------ | ----------------------------------------------------------------------- | ------------------------------------ |
-| `AUTHZ_DENIED`                 | The actor lacks the route's permission, or holds it at a narrower scope | `requiredPermission`                 |
-| `MFA_ENROLMENT_REQUIRED`       | Grace period expired, or a privileged role without active MFA           | `enrolUrl: "/api/v1/auth/mfa/enrol"` |
-| `MFA_STEP_UP_REQUIRED`         | No MFA assertion within 5 minutes on a step-up route                    | `maxAgeSeconds: 300`                 |
-| `PASSWORD_CHANGE_REQUIRED`     | `app_user.password_must_change`                                         | —                                    |
-| `CSRF_TOKEN_INVALID`           | Header/cookie mismatch or bad HMAC                                      | —                                    |
-| `CSRF_ORIGIN_REJECTED`         | `Origin` absent or not allowlisted                                      | —                                    |
-| `CSRF_FETCH_METADATA_REJECTED` | `Sec-Fetch-*` combination forbidden on an unsafe method                 | —                                    |
-| `SELF_APPROVAL_FORBIDDEN`      | The decision's subject employee is the actor                            | —                                    |
-| `ACCOUNT_DISABLED`             | `app_user.status = 'DISABLED'` or employee `EXITED`                     | —                                    |
-| `READ_SENSITIVE_DENIED`        | Unmask attempted without `profile:read_sensitive:*`                     | `requiredPermission`                 |
+| Code                           | Meaning                                                                       | `details`                                                                                                                                                                      |
+| ------------------------------ | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AUTHZ_DENIED`                 | The actor lacks the route's permission, or holds it at a narrower scope       | `requiredPermission`                                                                                                                                                           |
+| `MFA_ENROLMENT_REQUIRED`       | Grace period expired, or a privileged role without active MFA                 | `enrolUrl: "/api/v1/auth/mfa/enrol"`                                                                                                                                           |
+| `MFA_STEP_UP_REQUIRED`         | No MFA assertion within 5 minutes on a step-up route                          | `maxAgeSeconds: 300`                                                                                                                                                           |
+| `PASSWORD_CHANGE_REQUIRED`     | `app_user.password_must_change` is set, or a reset-issued credential was used | `changeToken` (opaque, 900 s, single-use, scoped to `POST /auth/password/forced-change` **only** — it authorises no other route, carries no session and is not a bearer token) |
+| `REAUTH_REQUIRED`              | No password re-authentication within 300 s on a route marked **R** (§4.3)     | `maxAgeSeconds: 300`, `reauthUrl: "/api/v1/auth/reauth"`                                                                                                                       |
+| `CSRF_TOKEN_INVALID`           | Header/cookie mismatch or bad HMAC                                            | —                                                                                                                                                                              |
+| `CSRF_ORIGIN_REJECTED`         | `Origin` absent or not allowlisted                                            | —                                                                                                                                                                              |
+| `CSRF_FETCH_METADATA_REJECTED` | `Sec-Fetch-*` combination forbidden on an unsafe method                       | —                                                                                                                                                                              |
+| `SELF_APPROVAL_FORBIDDEN`      | The decision's subject employee is the actor                                  | —                                                                                                                                                                              |
+| `ACCOUNT_DISABLED`             | `app_user.status = 'DISABLED'` or employee `EXITED`                           | —                                                                                                                                                                              |
+| `READ_SENSITIVE_DENIED`        | Unmask attempted without `profile:read_sensitive:*`                           | `requiredPermission`                                                                                                                                                           |
 
 **404 Not Found**
 
@@ -241,48 +260,65 @@ key adds it here first.
 
 **405 / 406 / 409 / 413 / 415 / 423 / 428 / 429**
 
-| Code                           | Status | Meaning                                                                                  | `details`                                              |
-| ------------------------------ | ------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `METHOD_NOT_ALLOWED`           | 405    |                                                                                          | `allow: string[]`                                      |
-| `NOT_ACCEPTABLE`               | 406    | `Accept` excludes JSON                                                                   | —                                                      |
-| `STATE_TRANSITION_NOT_ALLOWED` | 409    | No `state_transition` row for (machine, from, to)                                        | `machine`, `fromState`, `toState`                      |
-| `GUARD_FAILED`                 | 409    | A transition guard predicate is false                                                    | `guardKey`, plus that guard's allowlisted context keys |
-| `VERSION_CONFLICT`             | 409    | `If-Match` ≠ current `row_version`                                                       | `currentVersion`                                       |
-| `DUPLICATE_RESOURCE`           | 409    | Unique constraint (duplicate file sha, duplicate period code, duplicate acknowledgement) | `constraint` (logical name, never the DB index name)   |
-| `SEGREGATION_REQUIRED`         | 409    | Maker-checker: the actor performed the preceding step                                    | `requires` (e.g. `"a second Accounts approver"`)       |
-| `IDEMPOTENCY_IN_PROGRESS`      | 409    | Same key is executing                                                                    | — (`Retry-After: 1`)                                   |
-| `CONFLICT`                     | 409    | Generic state collision not covered above                                                | —                                                      |
-| `PAYLOAD_TOO_LARGE`            | 413    | Body > 128 KiB, or a part > the context cap                                              | `maxBytes`                                             |
-| `UNSUPPORTED_MEDIA_TYPE`       | 415    |                                                                                          | `accepted: string[]`                                   |
-| `ACCOUNT_LOCKED`               | 423    | Progressive lockout (`SECURITY.md` §2.6)                                                 | — (`Retry-After` set)                                  |
-| `PRECONDITION_REQUIRED`        | 428    | `If-Match` missing on a versioned write                                                  | —                                                      |
-| `RATE_LIMITED`                 | 429    |                                                                                          | `retryAfterSeconds`                                    |
+| Code                           | Status | Meaning                                                                                                                                                                                                                                           | `details`                                                             |
+| ------------------------------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `METHOD_NOT_ALLOWED`           | 405    |                                                                                                                                                                                                                                                   | `allow: string[]`                                                     |
+| `NOT_ACCEPTABLE`               | 406    | `Accept` excludes JSON                                                                                                                                                                                                                            | —                                                                     |
+| `STATE_TRANSITION_NOT_ALLOWED` | 409    | No `state_transition` row for (machine, from, to)                                                                                                                                                                                                 | `machine`, `fromState`, `toState`                                     |
+| `GUARD_FAILED`                 | 409    | A transition guard predicate is false                                                                                                                                                                                                             | `guardKey`, plus that guard's allowlisted context keys                |
+| `VERSION_CONFLICT`             | 409    | `If-Match` ≠ current `row_version`                                                                                                                                                                                                                | `currentVersion`                                                      |
+| `DUPLICATE_RESOURCE`           | 409    | Unique constraint (duplicate file sha, duplicate period code, duplicate acknowledgement)                                                                                                                                                          | `constraint` (logical name, never the DB index name)                  |
+| `SEGREGATION_REQUIRED`         | 409    | Maker-checker: the actor performed the preceding step                                                                                                                                                                                             | `requires` (e.g. `"a second Accounts approver"`)                      |
+| `IDEMPOTENCY_IN_PROGRESS`      | 409    | Same key is executing                                                                                                                                                                                                                             | — (`Retry-After: 1`)                                                  |
+| `CONFLICT`                     | 409    | Generic state collision not covered above                                                                                                                                                                                                         | —                                                                     |
+| `DUAL_CONTROL_UNAVAILABLE`     | 409    | Fewer than two distinct, `ACTIVE`, MFA-enrolled users hold the persona a maker-checker step needs (`DATA-MODEL.md` §3.3). Raised by `POST /payroll/cycles`, `POST /hr/policies/:id/versions` and any `…/approve` whose checker pool is too small. | `persona`, `requiredDistinctUsers` (always 2), `currentDistinctUsers` |
+| `PDF_NOT_READY`                | 409    | A visible artefact's file is still being generated (§11.2).                                                                                                                                                                                       | `reason: "PDF_NOT_READY"`, `entityType`                               |
+| `PAYLOAD_TOO_LARGE`            | 413    | Body > 128 KiB, or a part > the context cap                                                                                                                                                                                                       | `maxBytes`                                                            |
+| `UNSUPPORTED_MEDIA_TYPE`       | 415    |                                                                                                                                                                                                                                                   | `accepted: string[]`                                                  |
+| `ACCOUNT_LOCKED`               | 423    | Progressive lockout (`SECURITY.md` §2.6)                                                                                                                                                                                                          | — (`Retry-After` set)                                                 |
+| `PRECONDITION_REQUIRED`        | 428    | `If-Match` missing on a versioned write                                                                                                                                                                                                           | —                                                                     |
+| `RATE_LIMITED`                 | 429    |                                                                                                                                                                                                                                                   | `retryAfterSeconds`                                                   |
 
 **422 Unprocessable Content** — business rules. All render inline.
 
-| Code                         | Raised by                                                      | `details`                                                     |
-| ---------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------- |
-| `BUSINESS_RULE_VIOLATED`     | Fallback for a rule with no dedicated code                     | `rule`                                                        |
-| `INSUFFICIENT_LEAVE_BALANCE` | `leave.sufficient_balance`                                     | `availableDays`, `pendingDays`, `requestedDays`               |
-| `LEAVE_DATES_OVERLAP`        | `leave.no_overlap`                                             | `conflictingRequestReference`, `conflictStart`, `conflictEnd` |
-| `NO_WORKING_DAYS_IN_RANGE`   | `working_days()` returns 0                                     | `startDate`, `endDate`                                        |
-| `MIN_NOTICE_NOT_MET`         | `leave.min_notice`                                             | `minNoticeDays`, `earliestStartDate`                          |
-| `ATTACHMENT_REQUIRED`        | `leave.attachment_if_required`, `expense.receipt_if_required`  | `afterDays` \| `aboveAmountMinor`                             |
-| `MANAGER_NOT_RESOLVED`       | `leave.manager_exists`, `expense.manager_exists`               | —                                                             |
-| `EXPENSE_LIMIT_EXCEEDED`     | `expense.within_hard_limits`                                   | `capAmountMinor`, `basis`, `lineNo`                           |
-| `CLAIM_WINDOW_CLOSED`        | `expense.spend_within_claim_window`                            | `windowDays`, `spendDate`                                     |
-| `DECLARATION_WINDOW_CLOSED`  | `tax.declaration_window_open`                                  | `opensOn`, `closesOn`                                         |
-| `PROOF_WINDOW_CLOSED`        | `tax.proof_window_open`                                        | `opensOn`, `closesOn`                                         |
-| `ENROLMENT_WINDOW_CLOSED`    | Benefit dependent add                                          | `opensOn`, `closesOn`                                         |
-| `PASSWORD_REJECTED`          | Length/breach check (`SECURITY.md` §2.2–2.3)                   | `reason: "TOO_SHORT" \| "BREACHED" \| "TOO_COMMON"`           |
-| `PASSWORD_REUSED`            | `password_history` hit                                         | `historyDepth`                                                |
-| `IDEMPOTENCY_KEY_REUSED`     | Same key, different `request_hash`                             | —                                                             |
-| `FILE_NOT_CLEAN`             | Referenced `file_object.scan_status <> 'CLEAN'`                | `fileId`, `scanStatus`                                        |
-| `FILE_NOT_OWNED`             | Referenced file was not uploaded by the actor for this purpose | `fileId`                                                      |
-| `CONTROL_TOTAL_MISMATCH`     | Declared vs parsed payroll batch total                         | `declaredTotalMinor`, `parsedTotalMinor`                      |
-| `ROW_VALIDATION_FAILED`      | Payroll/attendance bulk rows rejected                          | `rejectedCount`, `reportUrl`                                  |
-| `DAY_IDENTITY_VIOLATED`      | `ck_ar__day_identity` would fail                               | `employeeId`, `expectedEligibleDays`, `suppliedSum`           |
-| `WINDOW_NOT_OPEN`            | Generic window guard                                           | `opensOn`, `closesOn`                                         |
+| Code                              | Raised by                                                               | `details`                                                     |
+| --------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `BUSINESS_RULE_VIOLATED`          | Fallback for a rule with no dedicated code                              | `rule`                                                        |
+| `INSUFFICIENT_LEAVE_BALANCE`      | `leave.sufficient_balance`                                              | `availableDays`, `pendingDays`, `requestedDays`               |
+| `LEAVE_DATES_OVERLAP`             | `leave.no_overlap`                                                      | `conflictingRequestReference`, `conflictStart`, `conflictEnd` |
+| `NO_WORKING_DAYS_IN_RANGE`        | `working_days()` returns 0                                              | `startDate`, `endDate`                                        |
+| `MIN_NOTICE_NOT_MET`              | `leave.min_notice`                                                      | `minNoticeDays`, `earliestStartDate`                          |
+| `ATTACHMENT_REQUIRED`             | `leave.attachment_if_required`, `expense.receipt_if_required`           | `afterDays` \| `aboveAmountMinor`                             |
+| `MANAGER_NOT_RESOLVED`            | `leave.manager_exists`, `expense.manager_exists`                        | —                                                             |
+| `EXPENSE_LIMIT_EXCEEDED`          | `expense.within_hard_limits`                                            | `capAmountMinor`, `basis`, `lineNo`                           |
+| `CLAIM_WINDOW_CLOSED`             | `expense.spend_within_claim_window`                                     | `windowDays`, `spendDate`                                     |
+| `DECLARATION_WINDOW_CLOSED`       | `tax.declaration_window_open`                                           | `opensOn`, `closesOn`                                         |
+| `PROOF_WINDOW_CLOSED`             | `tax.proof_window_open`                                                 | `opensOn`, `closesOn`                                         |
+| `ENROLMENT_WINDOW_CLOSED`         | Benefit dependent add                                                   | `opensOn`, `closesOn`                                         |
+| `PASSWORD_REJECTED`               | Length/breach check (`SECURITY.md` §2.2–2.3)                            | `reason: "TOO_SHORT" \| "BREACHED" \| "TOO_COMMON"`           |
+| `PASSWORD_REUSED`                 | `password_history` hit                                                  | `historyDepth`                                                |
+| `IDEMPOTENCY_KEY_REUSED`          | Same key, different `request_hash`                                      | —                                                             |
+| `FILE_NOT_CLEAN`                  | Referenced `file_object.scan_status <> 'CLEAN'`                         | `fileId`, `scanStatus`                                        |
+| `FILE_NOT_OWNED`                  | Referenced file was not uploaded by the actor for this purpose          | `fileId`                                                      |
+| `CONTROL_TOTAL_MISMATCH`          | Declared vs parsed payroll batch total                                  | `declaredTotalMinor`, `parsedTotalMinor`                      |
+| `ROW_VALIDATION_FAILED`           | Payroll/attendance bulk rows rejected                                   | `rejectedCount`, `reportUrl`                                  |
+| `DAY_IDENTITY_VIOLATED`           | `ck_ar__day_identity` would fail                                        | `employeeId`, `expectedEligibleDays`, `suppliedSum`           |
+| `WINDOW_NOT_OPEN`                 | Generic window guard                                                    | `opensOn`, `closesOn`                                         |
+| `NOMINEE_SHARE_NOT_100`           | `PUT /me/nominees` — Σ `share_percent` ≠ 100 for a plan                 | `benefitPlanId`, `sum`                                        |
+| `APPROVED_AMOUNT_EXCEEDS_CLAIM`   | A partial approval above `expense_claim.total_amount_minor`             | `claimTotalMinor`, `approvedAmountMinor`                      |
+| `BODY_HASH_MISMATCH`              | `POST …/acknowledge` echoed a stale `bodySha256`                        | `currentVersionId`, `currentBodySha256`                       |
+| `MASKED_VALUE_SUBMITTED`          | A write field matched a mask pattern (`•`)                              | `fieldKey`                                                    |
+| `NOTE_REQUIRED`                   | A decision that requires a note supplied none                           | `outcome`                                                     |
+| `MFA_REQUIRED_FOR_ROLE`           | Role grant to a target with no confirmed MFA credential                 | `roleId`, `persona`                                           |
+| `SELF_SERVICE_FIELD_NOT_EDITABLE` | A change request named a field no persona may change through this route | `fieldKey`                                                    |
+
+> **`BUSINESS_RULE_VIOLATED` is a fallback, not a bucket.** Where this table gives a dedicated
+> code, the handler MUST emit that code; `BUSINESS_RULE_VIOLATED` with a `rule` string is
+> permitted only for a rule that has no row here, and adding such a rule means adding a row
+> here first (CI invariant 13, §17). The `rule` strings previously written inline in §13
+> (`MASKED_VALUE_SUBMITTED`, `NOTE_REQUIRED`, `NOMINEE_SHARE_NOT_100`,
+> `APPROVED_AMOUNT_EXCEEDS_CLAIM`, `BODY_HASH_MISMATCH`, `MFA_REQUIRED_FOR_ROLE`) are hereby
+> promoted to first-class codes and are what the SPA branches on.
 
 **5xx**
 
@@ -328,7 +364,9 @@ Optional per-endpoint filters are additive and are restated in the cursor.
 
 **Cursor-paginated endpoints:** notifications, announcements, help-desk tickets, ticket
 comments, approval history, audit log, employee documents, expense claims, leave requests,
-payroll input items, payroll validation results, attendance records, email outbox (admin).
+payroll input items, payroll validation results, attendance records, email outbox (admin),
+HR document-request queue, HR ticket queue, manager expense claims, manager leave requests,
+manager attendance slice records.
 
 ### 3.2 Page/limit pagination — for bounded, countable collections the UI counts
 
@@ -345,10 +383,19 @@ Query: `?page=<1..>&limit=<1..100, default 25>&sort=<allowlisted>`
   header's "12 people shown" is this `total` and nothing else (`DATA-MODEL.md` §20.11).
 - `page` beyond `totalPages` returns `200` with `data: []` — not a `404`.
 - `sort` accepts only the values the endpoint lists; anything else ⇒ `400 UNSUPPORTED_SORT`.
+- `sort` is `<field>` or `<field>:asc` / `<field>:desc`. A bare field uses the **default
+  direction stated by the endpoint**; a direction the endpoint does not allow is
+  `400 UNSUPPORTED_SORT` with `details.allowed` listing the exact accepted strings. Sorting is
+  always stabilised by appending `id ASC`, so page boundaries cannot duplicate or drop a row.
+- `total` is capped: a predicate matching more than 50 000 rows returns
+  `total: 50000` and `totalIsExact: false`. Every page/limit surface in this contract is
+  bounded well below that, so `totalIsExact` is `true` everywhere in practice; the field
+  exists so a count can never become an unbounded scan.
 
-**Page-paginated endpoints:** directory, payslips, policies, form 16, leave balances (unpaged,
-see below), expense categories, ticket categories, benefit plans, HR employee admin, payroll
-cycles, attendance periods, letter templates, document requests, dependents, nominees.
+**Page-paginated endpoints:** directory, payslips, policies, form 16, expense categories,
+ticket categories, benefit plans, HR employee admin, payroll cycles, attendance periods,
+letter templates, document requests, dependents, manager approvals, manager attendance
+approvals, policy compliance. (Leave balances are **unpaged** — see §3.3.)
 
 ### 3.3 Unpaginated collections
 
@@ -362,11 +409,21 @@ manifest, reporting line. Every such endpoint is marked **unpaged** in §13.
 
 ## 4. Authentication and session wire contract
 
-### 4.1 The five public routes
+### 4.1 The public routes
 
 `POST /api/v1/auth/login` · `POST /api/v1/auth/refresh` ·
 `POST /api/v1/auth/password-reset/request` · `POST /api/v1/auth/password-reset/confirm` ·
-`GET /api/v1/healthz`
+`POST /api/v1/auth/accept-invitation` · `POST /api/v1/auth/mfa/challenge` ·
+`POST /api/v1/auth/password/forced-change` ·
+`GET /api/v1/healthz` · `OPTIONS *` (CORS preflight, §1.1)
+
+Eight routes, not five. `/auth/mfa/challenge`, `/auth/accept-invitation` and
+`/auth/password/forced-change` are bearer-less by construction — the caller has no access
+token yet — and each is authorised instead by a **single-use, short-lived, purpose-scoped
+opaque token** (`mfaToken`, `invitationToken`, `changeToken`) that names exactly one route in
+its stored record and is rejected on any other. Each declares
+`config.public = { reason, boundToken }` so the boot assertion can prove the token binding
+exists; a `config.public` route with no `boundToken` and no documented reason fails boot.
 
 Every other route in this document declares `config.permission`. A route declaring neither
 `permission` nor `public` fails the **boot-time** assertion in
@@ -374,16 +431,19 @@ Every other route in this document declares `config.permission`. A route declari
 
 ### 4.2 Tokens on the wire
 
-| Credential                   | Transport                                                                                                     | Lifetime                                         |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| Access token (EdDSA JWT)     | `Authorization: Bearer` header. Held in an in-memory closure in the SPA, never `localStorage`.                | 600 s                                            |
-| Refresh token (opaque, 32 B) | `__Host-wd_rt` cookie: `Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=604800`. Never in a response body. | 7 d idle / 14 d absolute family                  |
-| CSRF token                   | `__Host-wd_csrf` cookie (readable) + `X-WD-CSRF` header.                                                      | Rotated on login and on every `token_epoch` bump |
-| MFA challenge token          | `mfaToken` in the login response body; single-use, bound to the login attempt.                                | 300 s                                            |
-| Step-up assertion            | No separate token; `refresh_token.mfa_satisfied_at` + the access token's `mfa_at` claim.                      | 300 s for step-up purposes                       |
+| Credential                   | Transport                                                                                                                                                        | Lifetime                                         |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Access token (EdDSA JWT)     | `Authorization: Bearer` header. Held in an in-memory closure in the SPA, never `localStorage`.                                                                   | 600 s                                            |
+| Refresh token (opaque, 32 B) | `__Host-wd_rt` cookie: `Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=604800`. Never in a response body.                                                    | 7 d idle / 14 d absolute family                  |
+| CSRF token                   | `__Host-wd_csrf` cookie (readable) + `X-WD-CSRF` header.                                                                                                         | Rotated on login and on every `token_epoch` bump |
+| MFA challenge token          | `mfaToken` in the login response body; single-use, bound to the login attempt.                                                                                   | 300 s                                            |
+| Step-up assertion            | No separate token; `refresh_token.mfa_satisfied_at` + the access token's `mfa_at` claim.                                                                         | 300 s for step-up purposes                       |
+| Re-auth assertion            | No separate token; the access token's `reauth_at` claim, set by `POST /auth/reauth` (§4.3)                                                                       | 300 s                                            |
+| Invitation token             | `invitationToken` in the `USER_INVITE` email link; SHA-256-only at rest in `user_invitation.token_hash` with `token_fpr` for lookup; `attempt_count` capped at 5 | 7 d, single-use                                  |
+| Forced-change token          | `changeToken` in the `403 PASSWORD_CHANGE_REQUIRED` body; single-use, scoped to `POST /auth/password/forced-change`                                              | 900 s                                            |
 
 Access-token claims are exactly as `SECURITY.md` §3.1 (`iss`, `aud`, `sub`, `sid`, `jti`,
-`iat`, `nbf`, `exp`, `ver`, `roles`, `emp`, `amr`, `auth_time`, `mfa_at`). `sid` is the
+`iat`, `nbf`, `exp`, `ver`, `roles`, `emp`, `amr`, `auth_time`, `mfa_at`, `reauth_at`). `sid` is the
 `refresh_token.family_id` — the session identity. `ver` carries `app_user.token_epoch`.
 **No PII is in the token.** The SPA gets identity from `GET /api/v1/me`, never by decoding
 the JWT.
@@ -393,12 +453,28 @@ the JWT.
 Routes marked **Step-up: yes** require `now() - mfa_at ≤ 300 s`. Otherwise
 `403 MFA_STEP_UP_REQUIRED`; the SPA opens the step-up dialog, calls
 `POST /api/v1/auth/mfa/step-up`, receives a fresh access token, and retries the original
-request. The step-up set (`SECURITY.md` §2.7):
+request.
+**Two assertions, not one.** `mfa_at` proves a _second factor_ was presented recently;
+`reauth_at` proves the _password_ was presented recently. A user enrolling their first MFA
+credential has no `mfa_at` and never will until enrolment completes, so requiring `mfa_at`
+there would be a deadlock. The primitive is therefore:
 
-bank-account change submission and verification · password change · MFA enrol/disable/
-recovery regeneration · any role grant or revoke · payroll approve and publish · payslip
-regeneration/revocation · any export · admin user-status change · unmasking any statutory id
-or bank account.
+| Assertion   | Minted by                                                                                                                                                  | Claim       | Max age | Required by                                                                                                                                                                                     |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mfa_at`    | `POST /auth/mfa/challenge`, `POST /auth/mfa/step-up`                                                                                                       | `mfa_at`    | 300 s   | every step-up route in the list below **except** MFA enrolment                                                                                                                                  |
+| `reauth_at` | `POST /auth/reauth` (body `{ password }`, returns a fresh access token, `RL user 5/5min`, wrong password ⇒ `401 INVALID_CREDENTIALS` + the lockout ladder) | `reauth_at` | 300 s   | `POST /auth/mfa/enrol`, `POST /auth/mfa/verify-enrolment`, `POST /auth/mfa/recovery-codes`, `DELETE /auth/mfa/credentials/:id`, and **in addition to** `mfa_at` on `POST /auth/password/change` |
+
+A route marked **S** yes requires `mfa_at` unless its row above says otherwise; a route
+marked **R** yes requires `reauth_at`. Missing/stale `reauth_at` ⇒ `403 REAUTH_REQUIRED`
+(`details.maxAgeSeconds: 300`), a new code in §2.3's 403 block. Both claims are set to
+
+`null` on every `token_epoch` bump, so a password change or role grant invalidates them.
+**The step-up (`mfa_at`) set** (`SECURITY.md` §2.7):
+
+bank-account and statutory change submission and HR verification · password change ·
+MFA disable · any role grant or revoke · payroll approve, publish and correction approval ·
+payslip publication revocation and correction · any export · admin user-status change ·
+unmasking any statutory id or bank account · issuing a letter that includes salary details.
 
 ---
 
@@ -408,6 +484,34 @@ Every endpoint row in §13 states `Permission` using the **exact seeded
 `permission.code`** from `DATA-MODEL.md` §3.1 (format `<resource>:<action>[:<scope>]`,
 scope ∈ `self` | `team` | `any`) and the ABAC scope it resolves to
 (`SELF` | `DIRECT_REPORTS` | `REPORTING_CHAIN` | `DEPARTMENT` | `ORG`, `SECURITY.md` §4.2).
+**One primary permission per route.** `config.permission` is a single seeded code — the one
+the boot assertion and CI invariant 1 check. Where a handler needs a second capability it
+declares `config.alsoRequires: string[]` (**all** must be held) or
+`config.conditionalFields: { <permission>: <field path[]> }` (fields **omitted** from the DTO
+when the permission is absent, never a `403`). Exactly two routes use each:
+
+| Route                   | `permission`            | `alsoRequires` / `conditionalFields`                                                                                                                                                                             |
+| ----------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /me/tax/summary`   | `tax:quarter:read:self` | `alsoRequires: ['tax:declaration:read:self']`                                                                                                                                                                    |
+| `GET /me/profile`       | `profile:read:self`     | `conditionalFields: { 'profile:read_sensitive:self': ['fields[].value for masked keys'] }` — without it those rows are returned with `value: null, isAvailable: false, isMasked: true` rather than being refused |
+| `GET /directory/people` | `directory:read`        | `conditionalFields: { 'directory:read_contact': ['workPhone'] }`                                                                                                                                                 |
+| `GET /hr/employees/:id` | `employee:read:any`     | `conditionalFields: { 'profile:read_sensitive:any': ['masked tab values','canUnmask'] }`                                                                                                                         |
+
+**Persona binding is `DATA-MODEL.md` §3.3 and only §3.3.** This contract never invents a
+grant. Three consequences that are load-bearing here and were previously stated wrongly:
+
+1. **A Manager holds `approval:task:read:team`, never `approval:task:read:any`.** The `:any`
+   scope would admit every manager's queue org-wide under the RLS shape of
+   `DATA-MODEL.md` §1.8.3. `approval:task:read:any` is an **HR-only** code for the escalation
+   and audit surfaces. Every `/manager/**` route in §13 therefore declares a `:team` code and
+   resolves `assignee_employee_id = :me` in the query.
+2. **A Manager holds no `:read:any` code of any kind and no `profile:read_sensitive:*`.**
+   A manager surface never returns an unmasked statutory id, a salary figure, or a person
+   outside `employee_reporting_closure`.
+3. **HR holds `payroll:cycle:read` and nothing else in `payroll:*`; Accounts holds no
+   `attendance:capture|submit|approve:*` and no `employee:*` or `role:*`.** Any route that
+   would need HR to read an amount, or Accounts to author attendance, is not in this
+   contract and must not be added without changing §3.3 first.
 
 Enforcement order, for every request (`SECURITY.md` §4.6):
 
@@ -417,6 +521,7 @@ verify JWT (alg/iss/aud/exp/kid) → load session family by sid (live, not revok
  → actor = { userId, employeeId, personas[], scopes[], mfaAt, authTime }
  → required = route.config.permission        (absent at boot ⇒ build fails)
  → grants  = union over held personas        (§4.7 of SECURITY.md)
+ → alsoRequires ⊆ grants                     (else 403 AUTHZ_DENIED)
  → none ⇒ 403 AUTHZ_DENIED (audited)
  → scope  = widest grant FOR THIS PERMISSION
  → where  = authzWhere(actor, required, scope)   ← compiled into the query
@@ -432,6 +537,12 @@ Three invariants the contract depends on:
 2. **A manager is never inside their own approval scope** (`REPORTING_CHAIN` requires
    `depth ≥ 1`; `approval_task` carries `ck_at__not_self`).
 3. **Accounts never receives non-payroll PII** — enforced at the permission layer, the DTO
+4. **Cosmetic gating is never a control.** `GET /me` returns `permissions[]` so the SPA can
+   hide controls; every route re-resolves the grant server-side. A test in CI (§17 invariant 16) calls every route with every persona that lacks its permission and asserts `403`/`404`.
+5. **Scope widening is impossible through a body field.** No request body anywhere in this
+   contract accepts an `employeeId`, `organizationId`, `roleId` or `scope` that widens the
+   actor's own reach; where a back-office route names another employee, that id is a **path**
+   parameter resolved through `authzWhere`, so an out-of-scope id is `404`, not `403`.
    allowlist layer and the `payroll_employee_v` view layer (`SECURITY.md` §4.5).
 
 ---
@@ -457,6 +568,15 @@ right step" (a state problem, usually someone else's action is outstanding);
 `expense.within_hard_limits`, `expense.spend_within_claim_window`, `expense.manager_exists`,
 `tax.declaration_window_open`, `tax.proof_window_open`, `tax.all_items_have_proof`.
 **Every other guard maps to `409 GUARD_FAILED`.**
+Two further rules close the gap this split leaves open:
+
+- A guard listed as `422` on **create/update** is re-evaluated at **submit** and at
+  **decision** time; failing it later is `409 GUARD_FAILED`, because by then it is someone
+  else's state that moved, not the author's input.
+- `GUARD_FAILED.details` is an allowlist **per guard key**, seeded alongside the guard in
+  `state_transition`. A guard whose allowlist is undefined returns `details: { guardKey }`
+  and nothing else. No guard ever puts a money value, an employee name outside the actor's
+  scope, or a raw row into `details`.
 
 `GUARD_FAILED.details` carries the guard key plus an allowlisted context so the UI can state
 the real reason — e.g. for `attendance.payroll_inputs_locked`:
@@ -496,6 +616,16 @@ to non-audit callers, but two response conventions exist so the UI can be honest
                          with `Idempotency-Replayed: true`. No side effect re-runs.
    2c. Conflict, completed_at IS NULL (in flight, locked_at < 60 s ago)
                        → 409 IDEMPOTENCY_IN_PROGRESS, Retry-After: 1
+   2c'. Conflict, completed_at IS NULL, locked_at >= 60 s ago (the executing process died)
+                       → the row is *taken over*: UPDATE … SET locked_at = now(),
+                         takeover_count = takeover_count + 1
+                         WHERE id = $1 AND completed_at IS NULL AND locked_at = $prev
+                         (a zero-row update means another worker won the race
+                          → 409 IDEMPOTENCY_IN_PROGRESS). The handler then re-executes.
+                         Because every handler body is a single transaction, a takeover
+                         cannot double-apply a committed effect; a handler whose transaction
+                         had already committed before the crash is detected by its own
+                         uniqueness constraint and replays as 2b.
    2d. Conflict, request_hash differs
                        → 422 IDEMPOTENCY_KEY_REUSED
 3. Records expire after 24 h (`expires_at`); a key reused after expiry executes afresh.
@@ -505,29 +635,48 @@ A handler that fails with a `4xx` **still stores** its response, so a retried
 client-side error replays identically rather than producing a second partial attempt. A
 `5xx` is **not** stored — the row's lock is released so a retry can genuinely re-run.
 
+**Scoping on public routes.** `ess_ops.idempotency_key` is unique on
+`(organization_id, app_user_id, key, route)`. On the three public routes that take a key
+(`/auth/password-reset/confirm`, `/auth/accept-invitation`, `/auth/password/forced-change`)
+there is no authenticated actor at the time of the insert, so `app_user_id` is the **subject
+the bound token resolves to**, which is known before the handler runs and is exactly the
+identity the operation mutates. `organization_id` comes from the same record. A key is never
+scoped to an IP or left null — a null would let two users collide on one key.
+
+**Key minting.** The SPA mints a fresh `Idempotency-Key` (`crypto.randomUUID()`) on every
+user-initiated submit, **not** once per form mount, because §8.1 step 2d deliberately turns a
+changed body under a reused key into `422 IDEMPOTENCY_KEY_REUSED`. This is enforced by an
+ESLint rule on the mutation hooks (`apps/web/src/lib/mutations.ts`).
+
 ### 8.2 Endpoints that REQUIRE `Idempotency-Key`
 
 Anything that creates a durable business record, moves a state machine, mints money-adjacent
 data, sends an email, or issues a credential:
 
-| Group         | Endpoints                                                                                                                                                                                                                         |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Auth          | `POST /auth/mfa/enrol`, `/auth/mfa/verify-enrolment`, `/auth/mfa/recovery-codes`, `/auth/password/change`, `/auth/password-reset/confirm`                                                                                         |
-| Leave         | `POST /me/leave-requests`, `…/:id/withdraw`, `POST /manager/leave-requests/:id/decide`                                                                                                                                            |
-| Attendance    | `POST /hr/attendance/periods/:id/records:bulk`, `…/:id/submit`, `POST /hr/attendance/periods/:id/reopen`, `POST /manager/attendance/approvals/:id/decide`                                                                         |
-| Payroll       | `POST /payroll/cycles`, `…/:id/input-batches`, `…/input-batches/:id/commit`, `…/:id/lock-inputs`, `…/:id/validate`, `…/:id/calculate`, `…/:id/approve`, `…/:id/publish`, `…/:id/close`, `…/:id/cancel`                            |
-| Payslips      | `POST /me/payslips/:id/email`                                                                                                                                                                                                     |
-| Expenses      | `POST /me/expense-claims`, `…/:id/submit`, `…/:id/withdraw`, `POST /manager/expense-claims/:id/decide`, `POST /accounts/expense-claims/:id/decide`, `POST /accounts/reimbursement-batches`, `…/:id/lock`, `…/:id/send-to-payroll` |
-| Documents     | `POST /me/document-requests`, `POST /hr/document-requests/:id/issue`, `…/:id/reject`                                                                                                                                              |
-| Policies      | `POST /me/policies/:versionId/acknowledge`, `POST /hr/policies/:id/versions`, `…/versions/:versionId/publish`                                                                                                                     |
-| Announcements | `POST /hr/announcements`, `…/:id/publish`                                                                                                                                                                                         |
-| Help desk     | `POST /me/tickets`, `…/:id/comments`, `…/:id/close`, `POST /hr/tickets/:id/assign`, `…/:id/resolve`                                                                                                                               |
-| Approvals     | `POST /manager/approvals/:id/decide`                                                                                                                                                                                              |
-| Tax           | `POST /me/tax/declaration/submit`, `POST /accounts/form16/:id/issue`, `POST /accounts/tds-quarters/:id/file`                                                                                                                      |
-| Benefits      | `POST /me/dependents`, `POST /me/benefits/:planYearId/enrol`                                                                                                                                                                      |
-| Profile       | `POST /me/profile/change-request`, `POST /me/emergency-contacts`                                                                                                                                                                  |
-| Files         | `POST /files`                                                                                                                                                                                                                     |
-| Admin         | `POST /admin/employees`, `…/:id/invite`, `POST /admin/users/:id/roles`, `DELETE /admin/users/:id/roles/:roleId`, `POST /admin/users/:id/revoke-sessions`, `POST /admin/users/:id/reset-mfa`                                       |
+| Group         | Endpoints                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auth          | `POST /auth/mfa/enrol`, `/auth/mfa/verify-enrolment`, `/auth/mfa/recovery-codes`, `/auth/password/change`, `/auth/password-reset/confirm`, `/auth/accept-invitation`, `/auth/password/forced-change`                                                                                                                                                                                                                                            |
+| Leave         | `POST /me/leave-requests`, `…/:id/withdraw`, `…/:id/submit`, `POST /manager/leave-requests/:id/{approve,reject}`, `POST /hr/leave-requests/:id/cancel`                                                                                                                                                                                                                                                                                          |
+| Attendance    | `POST /hr/attendance/periods/:id/records:bulk`, `…/:id/submit`, `POST /hr/attendance/periods/:id/reopen`, `POST /manager/attendance/approvals/:id/{approve,return}`, `POST /hr/attendance/approvals/:id/escalate`                                                                                                                                                                                                                               |
+| Payroll       | `POST /payroll/cycles`, `…/:id/input-batches`, `…/input-batches/:id/commit`, `…/:id/lock-inputs`, `…/:id/validate`, `…/:id/calculate`, `…/:id/approve`, `…/:id/publish`, `…/:id/close`, `…/:id/cancel`, `…/:id/reopen-inputs`, `…/:id/discard-run`, `…/:id/scope/:employeeId/defer`, `…/:id/validations/:validationId/resolve`, `POST /payroll/corrections`, `…/:correctionId/{approve,reject}`, `POST /payroll/publications/:payslipId/revoke` |
+| Payslips      | `POST /me/payslips/:id/email`                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Expenses      | `POST /me/expense-claims`, `…/:id/submit`, `…/:id/withdraw`, `POST /manager/expense-claims/:id/decide`, `POST /accounts/expense-claims/:id/decide`, `POST /accounts/reimbursement-batches`, `POST /accounts/reimbursement-batches/:id/add`, `…/:id/lock`, `…/:id/send-to-payroll`                                                                                                                                                               |
+| Documents     | `POST /me/document-requests`, `POST /hr/document-requests/:id/{claim,start,issue,reject}`, `POST /hr/employees/:employeeId/documents`                                                                                                                                                                                                                                                                                                           |
+| Policies      | `POST /me/policy-versions/:versionId/acknowledge`, `POST /hr/policies/:id/versions`, `POST /hr/policy-versions/:id/{submit-review,return,reassign,publish,withdraw}`, `POST /hr/policy-assignments/:id/waive`                                                                                                                                                                                                                                   |
+| Announcements | `POST /hr/announcements`, `…/:id/publish`, `…/:id/{pin,unpin,archive}`                                                                                                                                                                                                                                                                                                                                                                          |
+| Help desk     | `POST /me/tickets`, `…/:id/comments`, `…/:id/close`, `…/:id/reopen`, `POST /hr/tickets/:id/{assign,start,request-info,comments,resolve,retry-notification}`, `POST /admin/email-outbox/:id/retry`                                                                                                                                                                                                                                               |
+| Approvals     | `POST /manager/approvals/:id/decide` (the polymorphic queue action)                                                                                                                                                                                                                                                                                                                                                                             |
+| Tax           | `POST /me/tax/declaration/submit`, `POST /accounts/form16/:id/issue`, `POST /accounts/tds-quarters/:id/file`, `POST /accounts/tax/declarations/:id/verify`                                                                                                                                                                                                                                                                                      |
+| Benefits      | `POST /me/dependents`, `POST /me/benefits/:planYearId/enrol`                                                                                                                                                                                                                                                                                                                                                                                    |
+| Profile       | `POST /me/profile-change-requests`, `POST /me/emergency-contacts`, `POST /hr/profile-change-requests/:id/{claim,approve,reject}`                                                                                                                                                                                                                                                                                                                |
+| Files         | `POST /files`                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Admin         | `POST /hr/employees`, `POST /hr/employees/:id/{invite,resend-invitation,activate,suspend,reinstate,resign,offboard,deactivate}`, `POST /admin/users/:id/roles`, `DELETE /admin/users/:id/roles/:roleId`, `POST /admin/users/:id/{revoke-sessions,reset-mfa,disable}`, `POST /admin/role-grant-requests/:id/{approve,reject}`, `POST /admin/audit/export`                                                                                        |
+
+> **This table is normative and complete.** §13.19 binds every `state_transition` to exactly
+> one endpoint; every one of those endpoints that is a `POST` appears above. CI invariant 8
+> (§17) walks the route table and fails the build on any `POST` that moves a state machine,
+> sends an email, mints a credential or creates a durable record and does **not** declare
+> `config.idempotent: true` — so this list cannot silently fall behind §13.19.
 
 ### 8.3 Endpoints that do NOT take `Idempotency-Key`
 
@@ -559,6 +708,18 @@ expose it two ways:
 | `If-Match` absent    | `428 PRECONDITION_REQUIRED`                                                                                                                     |
 | `If-Match` ≠ current | `409 VERSION_CONFLICT` with `details.currentVersion`; the SPA refetches and shows the moved-on state                                            |
 | Match                | Executes; `UPDATE … SET row_version = row_version + 1 WHERE id = $1 AND row_version = $2`; a zero-row update is itself a `409 VERSION_CONFLICT` |
+
+**Three stated exceptions to `If-Match`**, each because the request addresses a _set_, not a
+row, so there is no single version to match:
+
+| Route                                          | Instead of `If-Match`                                                                                                                                                                                                                                                                       |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /hr/attendance/periods/:id/records:bulk` | `If-Match` on the **period** (`attendance_period.row_version`) plus per-row `DAY_IDENTITY` validation; rows whose `attendance_record.row_version` changed since the file was parsed are rejected into `rejections[]` with `reason: "ROW_CHANGED_SINCE_UPLOAD"`, never silently overwritten. |
+| `POST /accounts/reimbursement-batches/:id/add` | `If-Match` on the **batch**; each claim must still be `FINANCE_APPROVED` at commit time or the whole call is `409 GUARD_FAILED`.                                                                                                                                                            |
+| `POST /me/notifications/read`                  | None — it is an idempotent upsert over a caller-supplied id list and carries no versioned resource.                                                                                                                                                                                         |
+
+CI invariant 9 (§17) is written against this list: a versioned-table route that is not one of
+these three and does not declare `config.requireIfMatch: true` fails the build.
 
 Immutable resources (`payslip`, `payslip_line`, `policy_acknowledgement`,
 `leave_balance_ledger`, `approval_decision`, `audit_event`, `attendance_submission`) have no
@@ -616,11 +777,11 @@ Justification, specific to this system rather than generic:
 
 Parts:
 
-| Part        | Type                      | Constraints                                                                                                                                                                                                                                                                                                                                            |
-| ----------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `purpose`   | text field                | `ess_file_purpose` value, restricted to the uploadable subset: `EXPENSE_BILL`, `TICKET_ATTACHMENT`, `PROFILE_PROOF`, `PAYROLL_INPUT_UPLOAD`, `ATTENDANCE_UPLOAD`, `POLICY_PDF`, `BENEFIT_DOCUMENT`, `EMPLOYEE_DOCUMENT`. `PAYSLIP_PDF`, `FORM16_PDF`, `LETTER_PDF` and `ORG_ASSET` are **system-generated only** and rejected with `403 AUTHZ_DENIED`. |
-| `file`      | file part                 | Exactly one. Caps per purpose below.                                                                                                                                                                                                                                                                                                                   |
-| `contextId` | text field, optional uuid | The claim / ticket / cycle the file is destined for, used only to pick the permission and to set `owner_employee_id`; the file is not attached by this call.                                                                                                                                                                                           |
+| Part        | Type                      | Constraints                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ----------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `purpose`   | text field                | `ess_file_purpose` value, restricted to the uploadable subset: `EXPENSE_BILL`, `TICKET_ATTACHMENT`, `PROFILE_PROOF`, `PAYROLL_INPUT_UPLOAD`, `ATTENDANCE_UPLOAD`, `POLICY_PDF`, `BENEFIT_DOCUMENT`, `EMPLOYEE_DOCUMENT`. `PAYSLIP_PDF`, `FORM16_PDF`, `LETTER_PDF` and `ORG_ASSET` are **system-generated only** and rejected with `403 AUTHZ_DENIED`.                                                                                                                                                                                                         |
+| `file`      | file part                 | Exactly one. Caps per purpose below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `contextId` | text field, optional uuid | The claim / ticket / cycle / employee the file is destined for. It is **resolved through `authzWhere` for the purpose's permission before a byte is read** — an id the actor cannot reach is `404 NOT_FOUND`, so `contextId` can never widen scope or set `owner_employee_id` to a stranger. `owner_employee_id` is then taken from the resolved entity, never from the request. Required for `EMPLOYEE_DOCUMENT` and `PAYROLL_INPUT_UPLOAD`; optional elsewhere, in which case `owner_employee_id = actor.employeeId`. The file is not attached by this call. |
 
 Per-purpose gate (mirrors `SECURITY.md` §5.3):
 
@@ -676,7 +837,14 @@ Files are attached by passing the id to the owning resource's endpoint
 (`attachmentFileIds` on an expense claim, `attachmentFileId` on a leave request, etc.).
 On attach the server re-checks: the file exists, `scan_status = 'CLEAN'`
 (else `422 FILE_NOT_CLEAN`), `uploaded_by_user_id = actor.userId` **and** `purpose` matches
-the destination (else `422 FILE_NOT_OWNED`). An unattached file older than 24 h is deleted by
+
+the destination (else `422 FILE_NOT_OWNED`), and — for a purpose whose `owner_employee_id`
+differs from the uploader (`EMPLOYEE_DOCUMENT`, `POLICY_PDF`, `BENEFIT_DOCUMENT`) — that the
+actor still holds the uploading permission **and** the destination entity is the one named by
+`contextId` at upload time. A file may be attached to **exactly one** entity: the second
+attach is `409 DUPLICATE_RESOURCE` (`constraint="file_object_single_attachment"`), which
+stops a bill being re-pointed at another employee's claim after approval.
+An unattached file older than 24 h is deleted by
 the `file-retention-purge` job.
 
 ---
@@ -690,21 +858,28 @@ GET /api/v1/{resource-path}/download
 ```
 
 There is no generic "download any file id" route. Each downloadable artefact has its own
-endpoint that authorizes the **owning entity** first:
 
-| Endpoint                                                | Authorizes                                                             | Audits                                                                        |
-| ------------------------------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `GET /me/payslips/:id/download`                         | the `payslip_publication` visibility gate                              | `DOWNLOAD` + `payslip_publication.download_count += 1`, `first_downloaded_at` |
-| `GET /me/tax/form16/:id/download`                       | `form16_document.employee_id = :me AND status IN ('ISSUED','REVISED')` | `DOWNLOAD`                                                                    |
-| `GET /me/documents/:id/download`                        | `employee_document` visibility + `archived_at IS NULL`                 | `DOWNLOAD` + `download_count += 1`                                            |
-| `GET /me/document-requests/:id/download`                | `document_request.employee_document_id IS NOT NULL`                    | `DOWNLOAD`                                                                    |
-| `GET /me/policies/:versionId/download`                  | a live `policy_assignment` **or** `policy:read`                        | `DOWNLOAD`                                                                    |
-| `GET /me/benefits/enrolments/:id/ecard`                 | `benefit_enrolment.employee_id = :me`                                  | `DOWNLOAD`                                                                    |
-| `GET /me/expense-claims/:id/attachments/:attachmentId`  | claim scope                                                            | `DOWNLOAD`                                                                    |
-| `GET /me/tickets/:id/attachments/:attachmentId`         | ticket scope                                                           | `DOWNLOAD`                                                                    |
-| `GET /payroll/cycles/:id/input-batches/:batchId/source` | `payroll:input:read`                                                   | `DOWNLOAD` (`READ_SENSITIVE`)                                                 |
-| `GET /hr/employees/:id/documents/:docId/download`       | `document:read:any`                                                    | `DOWNLOAD` (`READ_SENSITIVE`)                                                 |
-| `GET /admin/audit/export`                               | `audit:export`                                                         | `EXPORT`                                                                      |
+endpoint that authorizes the **owning entity** first. `GET /api/v1/files/:id` (§10.3) is
+metadata only and returns no bytes and no URL; **any response field that carries a link to a
+file names one of the routes below**, never `/files/:id`.
+
+| Endpoint                                                | Authorizes                                                                      | Audits                                                                        |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `GET /me/payslips/:id/download`                         | the `payslip_publication` visibility gate                                       | `DOWNLOAD` + `payslip_publication.download_count += 1`, `first_downloaded_at` |
+| `GET /me/tax/form16/:id/download`                       | `form16_document.employee_id = :me AND status IN ('ISSUED','REVISED')`          | `DOWNLOAD`                                                                    |
+| `GET /me/documents/:id/download`                        | `employee_document` visibility + `archived_at IS NULL`                          | `DOWNLOAD` + `download_count += 1`                                            |
+| `GET /me/document-requests/:id/download`                | `document_request.employee_document_id IS NOT NULL`                             | `DOWNLOAD`                                                                    |
+| `GET /me/policies/:versionId/download`                  | a live `policy_assignment` **or** `policy:read`                                 | `DOWNLOAD`                                                                    |
+| `GET /me/benefits/enrolments/:id/ecard`                 | `benefit_enrolment.employee_id = :me`                                           | `DOWNLOAD`                                                                    |
+| `GET /me/expense-claims/:id/attachments/:attachmentId`  | claim scope                                                                     | `DOWNLOAD`                                                                    |
+| `GET /me/tickets/:id/attachments/:attachmentId`         | ticket scope                                                                    | `DOWNLOAD`                                                                    |
+| `GET /payroll/cycles/:id/input-batches/:batchId/source` | `payroll:input:read`                                                            | `DOWNLOAD` (`READ_SENSITIVE`)                                                 |
+| `GET /hr/employees/:id/documents/:docId/download`       | `document:read:any`                                                             | `DOWNLOAD` (`READ_SENSITIVE`)                                                 |
+| `GET /admin/audit/export`                               | `audit:export`                                                                  | `EXPORT`                                                                      |
+| `GET /admin/exports/:id/download`                       | `audit:export` (or the export's own permission)                                 | `EXPORT`                                                                      |
+| `GET /org/logo`                                         | public-to-authenticated (`org:read`); serves `organization.logo_file_object_id` | none (not sensitive)                                                          |
+| `GET /me/benefits/plans/:planId/document`               | `benefit:read:self` + a live enrolment                                          | `DOWNLOAD`                                                                    |
+| `GET /me/announcements/:id/attachment`                  | announcement audience match                                                     | `DOWNLOAD`                                                                    |
 
 ### 11.2 Behaviour
 
@@ -742,6 +917,10 @@ Contract for the signed URL (`SECURITY.md` §5.3.12):
 - A URL is minted **only after** the authorization check and only for a file with
   `scan_status = 'CLEAN'` and `deleted_at IS NULL`.
 - Every mint writes the `audit_event` listed above **before** the redirect is sent.
+- `?mode=json` and `?mode=redirect` are the only accepted values; anything else is
+  `400 VALIDATION_FAILED`.
+- A signed URL is minted for **one** object; there is no batch mint and no directory
+  listing signature. The 120 s TTL is a constant, not a query parameter.
 
 Errors: `403 AUTHZ_DENIED` · `404 NOT_FOUND` (no such artefact, or out of scope, or the
 underlying `file_object_id` is `NULL` — e.g. a payslip whose PDF has not been generated yet)
@@ -795,7 +974,7 @@ Integer paise. A **nullable** money field is `null`, not `{"amountMinor": 0}`.
   "employeeId": "…uuid",
   "fullName": "Priya Raghavan", // employee.full_name (generated column)
   "initials": "PR", // employee.initials (generated column)
-  "accentColourHex": "#1B365D", // department.accent_colour_hex, else #1B365D
+  "accentColourHex": "#1B365D", // department.accent_colour_hex ?? organization.default_accent_colour_hex
   "title": "Senior Software Engineer", // designation.title via employment_as_of(id, today)
   "department": "Platform Engineering", // department.name
   "location": "Bengaluru", // location.city
@@ -813,6 +992,9 @@ Contains **no** contact details. Used on approval cards, team lists, reporting l
 `masked` comes from the persisted `_mask` column — a masked read performs **no decryption**
 (`SECURITY.md` §7.5). `canUnmask` = the actor holds the unmasking permission; it does **not**
 mean the value is in this payload. Unmasking is a separate step-up endpoint.
+A masked field is **never** accepted as write input: a request value matching
+`/[•\u2022]/` on any field whose column has a `_mask` sibling is
+`422 MASKED_VALUE_SUBMITTED` with `details.fieldKey`.
 
 ### 12.6 `PageDto`
 
@@ -947,20 +1129,20 @@ acknowledgement), and `requiresAcknowledgement`.
 
 ### 12.14 `TicketDto`
 
-| Field                                                             | Source                                                                                                                                                                                             |
-| ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`, `ticketNo`                                                  | `helpdesk_ticket.id`, `.ticket_no`                                                                                                                                                                 |
-| `category`                                                        | `{ id, code, name }` from `ticket_category`                                                                                                                                                        |
-| `subject`, `description`                                          |                                                                                                                                                                                                    |
-| `status`                                                          | `ChipDto` over `ess_ticket_status`                                                                                                                                                                 |
-| `priority`                                                        | `ess_ticket_priority`                                                                                                                                                                              |
-| `assignee`                                                        | `PersonRefDto` of the assigned agent, or `null`; `null` renders "unassigned" — a persisted fact                                                                                                    |
-| `metaLabel`                                                       | _(computed)_ assigned+open → `assignee.fullName + ' · updated ' + rel(updated_at)`; resolved → `'Resolved ' + fmtShort(resolved_at)`; unassigned → `'Opened ' + rel(created_at) + ' · unassigned'` |
-| `firstResponseDueAt`, `resolutionDueAt`, `resolvedAt`, `closedAt` | timestamps                                                                                                                                                                                         |
-| `resolutionSummary`                                               | nullable                                                                                                                                                                                           |
-| `notificationEmailStatus`                                         | _(HR view only)_ `email_outbox.status` of `email_outbox_id` — surfaces a `FAILED` dispatch as a banner (§14)                                                                                       |
-| `attachments[]`, `commentCount`                                   |                                                                                                                                                                                                    |
-| `version`                                                         | `row_version`                                                                                                                                                                                      |
+| Field                                                             | Source                                                                                                                                                                                                                                                                                                                              |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`, `ticketNo`                                                  | `helpdesk_ticket.id`, `.ticket_no`                                                                                                                                                                                                                                                                                                  |
+| `category`                                                        | `{ id, code, name }` from `ticket_category`                                                                                                                                                                                                                                                                                         |
+| `subject`, `description`                                          |                                                                                                                                                                                                                                                                                                                                     |
+| `status`                                                          | `ChipDto` over `ess_ticket_status`                                                                                                                                                                                                                                                                                                  |
+| `priority`                                                        | `ess_ticket_priority`                                                                                                                                                                                                                                                                                                               |
+| `assignee`                                                        | `PersonRefDto` of the assigned agent, or `null`; `null` renders "unassigned" — a persisted fact                                                                                                                                                                                                                                     |
+| `metaLabel`                                                       | _(computed)_ assigned+open → `assignee.fullName + ' · updated ' + rel(updated_at)`; resolved → `'Resolved ' + fmtShort(resolved_at)`; unassigned → `'Opened ' + rel(created_at) + ' · unassigned'`                                                                                                                                  |
+| `firstResponseDueAt`, `resolutionDueAt`, `resolvedAt`, `closedAt` | timestamps                                                                                                                                                                                                                                                                                                                          |
+| `resolutionSummary`                                               | nullable                                                                                                                                                                                                                                                                                                                            |
+| `notificationEmailStatus`                                         | _(HR view only)_ `helpdesk_ticket.email_delivery_status` — the denormalised mirror the dispatcher maintains in the same transaction as the outbox update (`DATA-MODEL.md` §16), so the queue renders the real delivery state in one read and never joins to `email_outbox` per row — surfaces a `FAILED` dispatch as a banner (§14) |
+| `attachments[]`, `commentCount`                                   |                                                                                                                                                                                                                                                                                                                                     |
+| `version`                                                         | `row_version`                                                                                                                                                                                                                                                                                                                       |
 
 ### 12.15 `PayrollCycleDto`
 
@@ -1001,6 +1183,35 @@ Tab note text is `ui_copy` keys `profile.tab_note.{personal|employment|bank|emer
 (`DATA-MODEL.md` §20.5) — never a literal in the SPA.
 
 ---
+
+### 12.18 Server-side formatters — the only ones that exist
+
+Every `*(computed)*` label in this catalogue is produced by one of these four functions, in
+`organization.timezone` and `organization.locale` (`Asia/Kolkata`, `en-IN`), in
+`packages/shared/src/format.ts`, shared **byte-for-byte** with the SPA so a server label and
+a client label of the same value are identical:
+
+| Function            | Definition                                                                                                                                                                                                                                                                                                                                              | Example                      |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| `fmt(date)`         | `Intl.DateTimeFormat(locale, { day:'numeric', month:'short', year:'numeric', timeZone })`                                                                                                                                                                                                                                                               | `29 Sep 2026`                |
+| `fmtShort(instant)` | `Intl.DateTimeFormat(locale, { day:'numeric', month:'short', timeZone })` — no year, matching the prototype's `31 Aug · Payroll`                                                                                                                                                                                                                        | `31 Aug`                     |
+| `fmtLong(instant)`  | `{ weekday:'long', day:'numeric', month:'long', year:'numeric' }`                                                                                                                                                                                                                                                                                       | `Tuesday, 29 September 2026` |
+| `rel(instant)`      | Buckets, **not** a continuous duration, so two callers a second apart render the same string: `< 60 s` → `just now`; `< 60 min` → `N minutes ago`; `< 24 h` → `N hours ago`; `< 7 d` → `N days ago`; otherwise `fmt(instant)`. Computed against `serverTime`, and `serverTime` is in the enclosing response, so the SPA can re-render without drifting. | `2 days ago`                 |
+| `periodRange(a, b)` | `a` and `b` are `period_label`s. Same year ⇒ `'<monA> – <monB> <year>'`; different years ⇒ `'<monA> <yearA> – <monB> <yearB>'`; `a == b` ⇒ `a`.                                                                                                                                                                                                         | `Apr – Aug 2026`             |
+
+Three rules bind them:
+
+1. **A range whose two ends are equal collapses to one value**, never `X – X`
+   (`LeaveRequestDto.rangeLabel`, `MetricDto.subLabel`).
+2. **A pluralised count uses `Intl.PluralRules`**, never `n > 1 ? 's' : ''`; the singular and
+   plural forms are two `ui_copy` keys (`leave.days_one` / `leave.days_other`).
+3. **A label whose inputs are all null is omitted, not rendered empty.** `daysLabel` with
+   `totalDays = null` is not `" days"` — the field does not appear.
+
+`serverTime` (`GET /me`) is the single clock the UI uses for "is this overdue", "is this
+window open" and every relative label. The SPA never calls `Date.now()` for a displayed
+value; `isOverdue`, `isDeclarationOpen`, `isOpen` and `canWithdraw` are **server-computed
+booleans** for exactly this reason.
 
 ## 13. Endpoints
 
@@ -1064,7 +1275,8 @@ No cookie is set at this step. The refresh family is created only after MFA succ
 
 Errors: `401 INVALID_CREDENTIALS` (**identical** for unknown email, wrong password and
 disabled-but-existing account — enumeration resistance) · `403 PASSWORD_CHANGE_REQUIRED`
-(returns a `changeToken` alongside the error's `details`) · `423 ACCOUNT_LOCKED` +
+(`details.changeToken`, a 900 s single-use token scoped to `POST /auth/password/forced-change`
+and to nothing else; no session, no cookie and no access token are issued) · `423 ACCOUNT_LOCKED` +
 `Retry-After` · `429 RATE_LIMITED` · `503 UNAVAILABLE` (rate-limit store down — auth fails
 **closed**).
 
@@ -1073,7 +1285,7 @@ an `audit_event` `LOGIN`; the progressive-lockout ladder of `SECURITY.md` §2.6.
 
 #### `POST /auth/mfa/challenge`
 
-**P** public (bearer-less; authorised by `mfaToken`) · **I** no · **RL** `user` 5/5min then 15 min cooldown
+**P** public (bearer-less; authorised by `mfaToken`) · **I** no · **RL** keyed on `sha256(mfaToken)` **and** on the `app_user_id` the token resolves to **and** on `ip`: 5/5 min on each, then a 15 min cooldown. There is no authenticated `user` at this point, so a `user` bucket would be unkeyable; the token's subject is the equivalent and is known before the code is compared. A recovery-code attempt consumes the same buckets.
 
 ```
 body: mfaToken z.string().min(20).max(512)
@@ -1144,7 +1356,7 @@ access token dies within ≤ 600 s), clears cookies, writes `LOGOUT` with
       "sessionId": "…",
       "isCurrent": true,
       "deviceLabel": "Chrome · macOS",
-      "ipCity": "Bengaluru",
+      "ipCity": "Bengaluru", // refresh_token.ip_city, persisted at issue; null when unresolved
       "issuedAt": "…",
       "lastRotatedAt": "…",
       "expiresAt": "…",
@@ -1154,8 +1366,14 @@ access token dies within ≤ 600 s), clears cookies, writes `LOGOUT` with
 }
 ```
 
-All fields from `refresh_token` (`device_label`, `ip_asn`-derived city best-effort,
-`issued_at`, `rotated_at`, `expires_at`, `mfa_satisfied_at`). The raw token and its hash are
+All fields from `refresh_token` (`device_label`, `ip_city`, `issued_at`, `rotated_at`,
+`expires_at`, `mfa_satisfied_at`). **`ip_city` is a persisted column written once at token
+issue** from the GeoIP lookup of the issuing request; it is never recomputed at read time and
+never inferred from an ASN in the mapper. When the lookup returned nothing the column is
+`NULL` and the field is `null`, which the SPA renders as `—`. A best-effort value derived on
+the fly would be a number-shaped string with no row behind it — exactly what Directive 2
+forbids.
+The raw token and its hash are
 never returned.
 
 #### `DELETE /auth/sessions/:sessionId`
@@ -1166,7 +1384,7 @@ never returned.
 
 #### `POST /auth/password/change`
 
-**P** `auth:login` · **I** yes · **S** **yes** · **RL** write
+**P** `auth:login` · **I** yes · **S** **yes** · **R** **yes** · **RL** write
 
 ```
 body: currentPassword z.string().min(12).max(256)
@@ -1181,6 +1399,61 @@ Errors: `401 INVALID_CREDENTIALS` (wrong `currentPassword`) ·
 `422 PASSWORD_REJECTED` (`details.reason` ∈ `TOO_SHORT|BREACHED|TOO_COMMON` — HIBP
 k-anonymity with graceful offline fallback, `SECURITY.md` §2.3) · `422 PASSWORD_REUSED` ·
 `403 MFA_STEP_UP_REQUIRED`.
+
+#### `POST /auth/reauth`
+
+**P** `auth:login` · **I** no · **RL** `user` 5/5min then 15 min cooldown · **CSRF** not required
+
+`body .strict(): { password z.string().min(12).max(256) }`
+**`200 OK`** `{ "accessToken", "expiresIn": 600, "tokenType": "Bearer" }` with a refreshed
+`reauth_at` claim. Nothing else changes: no cookie is rotated, no `token_epoch` moves.
+Errors: `401 INVALID_CREDENTIALS` (which also advances the progressive-lockout ladder of
+`SECURITY.md` §2.6, so this route cannot be used as an offline password oracle) ·
+`423 ACCOUNT_LOCKED` · `429 RATE_LIMITED`.
+
+#### `POST /auth/accept-invitation`
+
+**P** public (authorised by `invitationToken`) · **I** yes · **RL** `ip` 10/60min, `token` 5/60min
+
+```
+body .strict():
+  invitationToken z.string().min(32).max(256)
+  newPassword     z.string().min(12).max(256)
+  acceptTerms     z.literal(true)
+```
+
+This is the only way an invited account becomes usable: `POST /hr/employees/:id/invite`
+creates the `app_user` with `password_hash = NULL`, and **no default password exists anywhere
+in the system** (`SECURITY.md` §10.1), so without this route an invited employee could never
+sign in. Lookup is by `user_invitation.token_fpr`, then a constant-time hash compare;
+`attempt_count` is incremented on every failure and the invitation is revoked (with a
+`SECURITY_ALERT`) at 5.
+
+In one transaction (`WORKFLOWS.md` USR-2): set `password_hash` (Argon2id + pepper),
+`password_updated_at`, `email_verified_at`, `terms_accepted_at`; `app_user.status`
+`INVITED → ACTIVE`; `user_invitation.accepted_at`; grant the `EMPLOYEE` role; write
+`USER.ACTIVATED`.
+
+**`200 OK`** — `{ "status": "MFA_ENROLMENT_REQUIRED", "enrolmentToken": "<opaque, 900 s>" }`
+when the employee's persona set requires MFA (`HR`, `ACCOUNTS`, `MANAGER`) or
+`organization_setting.mfa_enforced_at` is set; otherwise the `AUTHENTICATED` body of
+`/auth/login` with the cookie pair. **No session is ever issued before the password is set.**
+Errors: `401 RESET_TOKEN_INVALID` (unknown, expired, used or revoked — one code for all four,
+for enumeration resistance) · `422 PASSWORD_REJECTED` · `429 RATE_LIMITED`.
+
+#### `POST /auth/password/forced-change`
+
+**P** public (authorised by `changeToken` from the `403 PASSWORD_CHANGE_REQUIRED` body) ·
+**I** yes · **RL** `ip` 10/60min
+
+`body .strict(): { changeToken, newPassword }`
+The forced-change path deliberately does **not** reuse `POST /auth/password/change`: that
+route requires a live session, `currentPassword` and a step-up assertion, none of which a
+user holding only a must-change credential can produce. Same transaction as
+§2.8 of `SECURITY.md` (hash, history append, `token_epoch += 1`, every refresh family
+deleted, lock cleared, `password_must_change` cleared, audit, `SECURITY_ALERT` email).
+**MFA is not bypassed** — the next login still requires TOTP. **`204`.**
+Errors: `401 RESET_TOKEN_INVALID` · `422 PASSWORD_REJECTED` · `422 PASSWORD_REUSED`.
 
 #### `POST /auth/password-reset/request`
 
@@ -1204,7 +1477,7 @@ Errors: `401 RESET_TOKEN_INVALID` (unknown/expired/used — one code for all thr
 
 #### `POST /auth/mfa/enrol`
 
-**P** `auth:login` · **I** yes · **S** **yes** (fresh password re-auth ≤ 5 min) · **RL** `user` 5/60min
+**P** `auth:login` · **I** yes · **R** **yes** (`reauth_at ≤ 300 s`, §4.3) · **S** no — a user with no confirmed credential cannot satisfy `mfa_at` · **RL** `user` 5/60min
 
 `body: {}` → **`201 Created`**
 
@@ -1224,7 +1497,7 @@ is rendered client-side from `otpauthUri`; the URI is never logged.
 
 #### `POST /auth/mfa/verify-enrolment`
 
-**P** `auth:login` · **I** yes · **S** yes · `body: { credentialId, code }`
+**P** `auth:login` · **I** yes · **R** yes · `body: { credentialId, code }`
 
 **`200 OK`**
 
@@ -1242,11 +1515,13 @@ Errors: `401 MFA_CODE_INVALID` · `409 CONFLICT` (`details.reason = "ALREADY_CON
 
 #### `POST /auth/mfa/recovery-codes`
 
+**P** `auth:login` · **I** yes · **S** yes · **R** yes · **RL** `user` 5/60min
 **P** `auth:login` · **I** yes · **S** yes · **RL** `user` 5/60min
 Regenerates the batch (invalidating the previous one). Same `recoveryCodes` response shape.
 
 #### `DELETE /auth/mfa/credentials/:id`
 
+**P** `auth:login` · **S** yes · **R** yes · **`204`**
 **P** `auth:login` · **S** yes · **`204`**
 Refused with `409 CONFLICT` (`details.reason = "MFA_MANDATORY_FOR_ROLE"`) when the user holds
 `HR`, `ACCOUNTS` or `MANAGER` — those personas cannot be MFA-less (`SECURITY.md` §2.7).
@@ -1298,13 +1573,15 @@ The single identity read. The SPA never decodes the JWT for display data.
     "id": "…",
     "displayName": "Widedrop",
     "portalName": "Employee portal",
-    "logoUrl": "/api/v1/files/…/download?mode=redirect",
+    "logoUrl": "/api/v1/org/logo"   // §11.1; null when organization.logo_file_object_id IS NULL,
     "timezone": "Asia/Kolkata",
     "locale": "en-IN",
     "currency": "INR",
     "currencyMinorUnitScale": 2,
     "helpdeskEmail": "helpdesk@widedroptech.com",
     "expenseCutoffDayOfMonth": 25,
+  "security": { "mfaEnrolled": true, "recoveryCodesRemaining": 8,
+                "mustReEnrolMfa": false, "graceExpiresAt": null },   // = GET /auth/mfa/status
   },
   "fiscalYear": {
     "id": "…",
@@ -1342,13 +1619,13 @@ derived; nothing new is invented.
 }
 ```
 
-| Field                        | Source                                                                                                                                                                                                                                           |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `nav.groups`                 | The static nav manifest in `packages/shared` **filtered by the token's permissions** (`approvals` needs `approval:task:read:any`; HR/Accounts groups need their persona permissions). Group order and labels are fixed by `DESIGN-SYSTEM.md` §6. |
-| `badges.approvals`           | `SELECT count(*) FROM approval_task WHERE assignee_employee_id = :me AND status='PENDING'` (index `ix_at__assignee_pending`). **`0` ⇒ the value is `0` and the SPA renders no badge element at all** — it does not render a "0" chip.            |
-| `badges.policiesPending`     | `count(policy_assignment WHERE employee_id=:me AND superseded_at IS NULL AND NOT EXISTS(acknowledgement))`                                                                                                                                       |
-| `badges.notificationsUnread` | `count(notification WHERE recipient_app_user_id=:u AND read_at IS NULL AND dismissed_at IS NULL)`                                                                                                                                                |
-| `todayLabel`                 | `now()` rendered in `organization.timezone`/`locale`                                                                                                                                                                                             |
+| Field                        | Source                                                                                                                                                                                                                                                                                                                                                                              |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `nav.groups`                 | The static nav manifest in `packages/shared` **filtered by the token's permissions** (`approvals` needs **`approval:task:read:team`** — the Manager grant of `DATA-MODEL.md` §3.3; `approval:task:read:any` is HR-only and is **not** what gates this item. HR and Accounts groups need their own persona permissions.). Group order and labels are fixed by `DESIGN-SYSTEM.md` §6. |
+| `badges.approvals`           | `SELECT count(*) FROM approval_task WHERE organization_id = :org AND assignee_employee_id = :me AND status = 'PENDING'` — identical to `GET /manager/approvals`.`page.total`, so the badge and the list can never disagree (index `ix_at__assignee_pending`). **`0` ⇒ the value is `0` and the SPA renders no badge element at all** — it does not render a "0" chip.               |
+| `badges.policiesPending`     | `count(policy_assignment WHERE employee_id=:me AND superseded_at IS NULL AND NOT EXISTS(acknowledgement))`                                                                                                                                                                                                                                                                          |
+| `badges.notificationsUnread` | `count(notification WHERE recipient_app_user_id=:u AND read_at IS NULL AND dismissed_at IS NULL)`                                                                                                                                                                                                                                                                                   |
+| `todayLabel`                 | `now()` rendered in `organization.timezone`/`locale`                                                                                                                                                                                                                                                                                                                                |
 
 #### `GET /me/home`
 
@@ -1377,6 +1654,8 @@ block collapses instead of fabricating a value.
   "todos": [ { "kind": "POLICY_ACK", "title": "Acknowledge Information Security Policy v4.2",
                "subtitle": "Due 15 Oct 2026 · IT & Security", "actionLabel": "Review",
                "tone": "AMBER", "deepLink": { "screen": "policies", "params": { "versionId": "…" } } } ]
+  ,
+  "partial": []                                   // block keys whose 400 ms budget expired (§18.6)
 }
 ```
 
@@ -1388,6 +1667,31 @@ Sources are exactly `DATA-MODEL.md` §20.2. Specifically:
 `AVAILABLE` green. `team` is **omitted** when the actor has no direct reports (the Manager
 column collapses). `todos` is `[]` when there is nothing — the SPA then omits the whole
 block, matching the prototype's `hasTodos`.
+
+**`todos[].kind` is a closed enum**, and every member is a persisted fact with a query behind
+it. There is no "suggested action" that is not one of these:
+
+| `kind`                    | Emitted when                                                         | `tone`                       | Source query                                                           |
+| ------------------------- | -------------------------------------------------------------------- | ---------------------------- | ---------------------------------------------------------------------- |
+| `POLICY_ACK`              | a live `policy_assignment` with no acknowledgement                   | `AMBER`, `RED` past `due_on` | `DATA-MODEL.md` §20.6 — one row per pending assignment                 |
+| `APPROVALS_PENDING`       | the actor has ≥ 1 `approval_task` `PENDING` assigned to them         | `BLUE`                       | the `badges.approvals` count; omitted at `0`                           |
+| `MFA_ENROL`               | `mfa_credential` has no `confirmed_at`                               | `RED`                        | `GET /auth/mfa/status`.`isEnrolled = false`                            |
+| `MFA_RECOVERY_LOW`        | `recoveryCodesRemaining ≤ 2`                                         | `AMBER`                      | `count(mfa_recovery_code WHERE used_at IS NULL)`                       |
+| `TAX_DECLARATION_DUE`     | the declaration window is open and the declaration is `DRAFT`/absent | `AMBER`                      | `fiscal_year.declaration_window_*` + `employee_tax_declaration.status` |
+| `TAX_PROOF_DUE`           | the proof window is open and `tax.all_items_have_proof` is false     | `AMBER`                      | `fiscal_year.proof_window_*`                                           |
+| `TICKET_AWAITING_YOU`     | a ticket of the actor's is `WAITING_ON_EMPLOYEE`                     | `AMBER`                      | `helpdesk_ticket.status`                                               |
+| `ATTENDANCE_APPROVAL_DUE` | the actor owns an `attendance_approval` slice that is `PENDING`      | `AMBER`, `RED` past `due_at` | `attendance_approval.status`                                           |
+
+`title`/`subtitle`/`actionLabel` come from `ui_copy` keys `todo.<kind>.*` with persisted
+params; the SPA composes none of them. An empty `todos` array is the normal steady state and
+is exactly what the prototype's "Needs your attention" block collapses on.
+
+**`partial`.** Each block has a 400 ms budget. A block that exceeds it returns `null`, its
+key is appended to `partial[]`, and the SPA refetches that one block from its dedicated
+endpoint (`GET /me/payslips`, `/me/leave/balances`, `/manager/approvals`,
+`/me/announcements`, `/leave/holidays`, `/me/reporting-line`). `partial` is `[]` on the happy
+path and is **never** used to hide an empty result — an empty block returns `[]`/`null` with
+its `emptyState`, not a `partial` entry.
 
 #### `GET /me/profile`
 
@@ -1449,9 +1753,9 @@ One field per call, deliberately: a mass unmask is N audit events, not one
 (`SECURITY.md` §7.5). Errors: `403 MFA_STEP_UP_REQUIRED` · `403 READ_SENSITIVE_DENIED` ·
 `404 NOT_FOUND` (no such statutory/bank row).
 
-#### `POST /me/profile/change-request`
+#### `POST /me/profile-change-requests` _(canonical; `/me/profile/change-request` is not routed)_
 
-**P** `profile:update:self` · **I** yes · **S** yes when `section='bank'` or `'statutory'` · **RL** write
+**P** `profile:change_request:create:self` · **I** yes · **S** yes when `section='bank'` or `'statutory'` · **RL** write
 
 ```
 body .strict():
@@ -1462,11 +1766,1769 @@ body .strict():
   proofFileId z.string().uuid().optional()    // required when section ∈ {bank, statutory} or fieldKey ∈ {FULL_NAME, DATE_OF_BIRTH}
 ```
 
-This is the prototype's "Request a change" button. It does **not** mutate the profile. In one
-transaction it creates a `helpdesk_ticket` with
-`ticket_category.code = 'DOCUMENTS'` (or `'PAYROLL_TAX'` for bank/statutory),
-`related_entity_type` ∈ `employee` | `employee_bank_account` | `employee_statutory_id`,
-`related_entity_id`, and the `email_outbox` row of §14.
+T
+h
+i
+s
+
+i
+s
+
+t
+h
+e
+
+p
+r
+o
+t
+o
+t
+y
+p
+e
+'
+s
+
+"
+R
+e
+q
+u
+e
+s
+t
+
+a
+
+c
+h
+a
+n
+g
+e
+"
+
+b
+u
+t
+t
+o
+n
+.
+
+I
+t
+
+d
+o
+e
+s
+
+-
+-
+
+n
+o
+t * *
+
+m
+u
+t
+a
+t
+e
+
+t
+h
+e
+
+p
+r
+o
+f
+i
+l
+e
+,
+
+a
+n
+d
+
+i
+t
+
+d
+o
+e
+s
+
+-
+-
+
+n
+o
+t * *
+
+o
+p
+e
+n
+
+a
+
+h
+e
+l
+p
+-
+
+d
+e
+s
+k
+
+t
+i
+c
+k
+e
+t
+:
+
+i
+t
+
+c
+r
+e
+a
+t
+e
+s
+
+a
+
+`p
+r
+o
+f
+i
+l
+e
+_
+c
+h
+a
+n
+g
+e
+_
+r
+e
+q
+u
+e
+s
+t`
+
+( +
+
+o
+n
+e
+
+`p
+r
+o
+f
+i
+l
+e
+_
+c
+h
+a
+n
+g
+e
+_
+r
+e
+q
+u
+e
+s
+t
+_
+f
+i
+e
+l
+d`
+
+r
+o
+w
+
+p
+e
+r
+
+f
+i
+e
+l
+d
+,
+
+h
+o
+l
+d
+i
+n
+g
+
+b
+o
+t
+h
+
+`p
+r
+o
+p
+o
+s
+e
+d
+_
+v
+a
+l
+u
+e`
+
+a
+n
+d
+
+`p
+r
+e
+v
+i
+o
+u
+s
+_
+v
+a
+l
+u
+e`
+,
+
+`
+D
+A
+T
+A
+-
+
+M
+O
+D
+E
+L
+.
+m
+d
+`
+
+§
+5
+.
+1
+1
+)
+,
+
+w
+h
+i
+c
+h
+
+h
+a
+s
+
+i
+t
+s
+
+o
+w
+n
+
+s
+t
+a
+t
+e
+
+m
+a
+c
+h
+i
+n
+e
+,
+
+i
+t
+s
+
+o
+w
+n
+
+H
+R
+
+q
+u
+e
+u
+e
+
+a
+n
+d
+
+i
+t
+s
+
+o
+w
+n
+
+a
+u
+d
+i
+t
+e
+d
+
+`A
+P
+P
+R
+O
+V
+E
+D
+→
+A
+P
+P
+L
+I
+E
+D`
+
+s
+y
+s
+t
+e
+m
+
+t
+r
+a
+n
+s
+i
+t
+i
+o
+n
+.
+
+R
+o
+u
+t
+i
+n
+g
+
+a
+
+p
+r
+o
+f
+i
+l
+e
+
+c
+h
+a
+n
+g
+e
+
+t
+h
+r
+o
+u
+g
+h
+
+`h
+e
+l
+p
+d
+e
+s
+k
+_
+t
+i
+c
+k
+e
+t`
+
+w
+o
+u
+l
+d
+
+l
+o
+s
+e
+
+t
+h
+e
+
+f
+i
+e
+l
+d
+-
+
+l
+e
+v
+e
+l
+
+b
+e
+f
+o
+r
+e
+/
+a
+f
+t
+e
+r
+
+t
+h
+a
+t
+
+m
+a
+k
+e
+s
+
+t
+h
+e
+
+c
+h
+a
+n
+g
+e
+
+r
+e
+v
+i
+e
+w
+a
+b
+l
+e
+,
+
+a
+n
+d
+
+w
+o
+u
+l
+d
+
+l
+e
+t
+
+a
+
+t
+i
+c
+k
+e
+t
+
+b
+e
+
+"
+r
+e
+s
+o
+l
+v
+e
+d
+"
+
+w
+i
+t
+h
+o
+u
+t
+
+t
+h
+e
+
+p
+r
+o
+f
+i
+l
+e
+
+e
+v
+e
+r
+
+c
+h
+a
+n
+g
+i
+n
+g
+.
+
+I
+n
+
+o
+n
+e
+
+t
+r
+a
+n
+s
+a
+c
+t
+i
+o
+n
+:
+
+i
+n
+s
+e
+r
+t
+
+t
+h
+e
+
+r
+e
+q
+u
+e
+s
+t
+
+w
+i
+t
+h
+
+`
+s
+t
+a
+t
+u
+s
+
+=
+
+S
+U
+B
+M
+I
+T
+T
+E
+D
+`
+,
+
+`s
+e
+c
+t
+i
+o
+n`
+,
+
+`r
+e
+a
+s
+o
+n`
+,
+
+`p
+r
+o
+o
+f
+_
+f
+i
+l
+e
+_
+o
+b
+j
+e
+c
+t
+_
+i
+d`
+;
+
+i
+n
+s
+e
+r
+t
+
+o
+n
+e
+
+f
+i
+e
+l
+d
+
+r
+o
+w
+
+p
+e
+r
+
+c
+h
+a
+n
+g
+e
+d
+
+f
+i
+e
+l
+d
+;
+
+c
+r
+e
+a
+t
+e
+
+o
+n
+e
+
+`a
+p
+p
+r
+o
+v
+a
+l
+_
+t
+a
+s
+k`
+
+(
+k
+i
+n
+d
+
+`P
+R
+O
+F
+I
+L
+E
+_
+C
+H
+A
+N
+G
+E
+_
+R
+E
+Q
+U
+E
+S
+T`
+)
+
+f
+o
+r
+
+t
+h
+e
+
+H
+R
+
+b
+u
+s
+i
+n
+e
+s
+s
+
+p
+a
+r
+t
+n
+e
+r
+;
+
+e
+m
+i
+t
+
+`P
+R
+O
+F
+I
+L
+E
+_
+C
+H
+A
+N
+G
+E
+_
+S
+U
+B
+M
+I
+T
+T
+E
+D`
+;
+
+w
+r
+i
+t
+e
+
+t
+h
+e
+
+`a
+u
+d
+i
+t
+_
+e
+v
+e
+n
+t`
+.
+
+A
+
+`S
+E
+C
+U
+R
+I
+T
+Y
+_
+A
+L
+E
+R
+T`
+
+e
+m
+a
+i
+l
+
+a
+d
+d
+i
+t
+i
+o
+n
+a
+l
+l
+y
+
+g
+o
+e
+s
+
+t
+o
+
+t
+h
+e
+
+e
+m
+p
+l
+o
+y
+e
+e
+
+f
+o
+r
+
+`
+s
+e
+c
+t
+i
+o
+n
+
+∈
+
+{
+b
+a
+n
+k
+,
+
+s
+t
+a
+t
+u
+t
+o
+r
+y
+}
+`
+
+(
+`W
+O
+R
+K
+F
+L
+O
+W
+S
+.
+m
+d`
+
+P
+C
+R
+-
+
+5
+)
+,
+
+b
+e
+c
+a
+u
+s
+e
+
+a
+
+b
+a
+n
+k
+-
+
+d
+e
+t
+a
+i
+l
+
+c
+h
+a
+n
+g
+e
+
+r
+e
+q
+u
+e
+s
+t
+
+i
+s
+
+t
+h
+e
+
+c
+l
+a
+s
+s
+i
+c
+
+p
+a
+y
+r
+o
+l
+l
+-
+
+d
+i
+v
+e
+r
+s
+i
+o
+n
+
+a
+t
+t
+a
+c
+k
+
+a
+n
+d
+
+t
+h
+e
+
+a
+c
+c
+o
+u
+n
+t
+
+h
+o
+l
+d
+e
+r
+
+m
+u
+s
+t
+
+l
+e
+a
+r
+n
+
+o
+f
+
+i
+t
+
+o
+u
+t
+
+o
+f
+
+b
+a
+n
+d
+.
+
+-
+-
+
+`
+2
+0
+1
+
+C
+r
+e
+a
+t
+e
+d
+` * *
+
+→
+
+`
+{
+
+"
+c
+h
+a
+n
+g
+e
+R
+e
+q
+u
+e
+s
+t
+"
+:
+
+P
+r
+o
+f
+i
+l
+e
+C
+h
+a
+n
+g
+e
+R
+e
+q
+u
+e
+s
+t
+D
+t
+o
+,
+
+"
+s
+l
+a
+H
+o
+u
+r
+s
+"
+:
+
+8
+
+}
+`
+
+—
+
+t
+h
+e
+
+t
+o
+a
+s
+t
+
+s
+h
+o
+w
+s
+
+t
+h
+e
+
+-
+-
+
+p
+e
+r
+s
+i
+s
+t
+e
+d * *
+
+`r
+e
+q
+u
+e
+s
+t
+N
+o`
+
+a
+n
+d
+
+t
+h
+e
+
+S
+L
+A
+
+f
+r
+o
+m
+
+`o
+r
+g
+a
+n
+i
+z
+a
+t
+i
+o
+n
+_
+s
+e
+t
+t
+i
+n
+g`
+.
+
+I
+t
+
+n
+e
+v
+e
+r
+
+s
+h
+o
+w
+s
+
+a
+
+g
+u
+e
+s
+s
+e
+d
+
+n
+u
+m
+b
+e
+r
+.
+
+`P
+r
+o
+f
+i
+l
+e
+C
+h
+a
+n
+g
+e
+R
+e
+q
+u
+e
+s
+t
+D
+t
+o`
+:
+
+`
+{
+
+i
+d
+,
+
+r
+e
+q
+u
+e
+s
+t
+N
+o
+,
+
+s
+e
+c
+t
+i
+o
+n
+,
+
+s
+t
+a
+t
+u
+s
+:
+
+C
+h
+i
+p
+D
+t
+o
+,
+
+r
+e
+a
+s
+o
+n
+,
+
+r
+e
+q
+u
+e
+s
+t
+e
+d
+A
+t
+,
+
+d
+e
+c
+i
+d
+e
+d
+A
+t
+,
+
+d
+e
+c
+i
+s
+i
+o
+n
+N
+o
+t
+e
+,
+
+a
+p
+p
+l
+i
+e
+d
+A
+t
+,
+
+f
+i
+e
+l
+d
+s
+:
+
+[
+{
+
+f
+i
+e
+l
+d
+K
+e
+y
+,
+
+l
+a
+b
+e
+l
+,
+
+p
+r
+o
+p
+o
+s
+e
+d
+V
+a
+l
+u
+e
+,
+
+p
+r
+e
+v
+i
+o
+u
+s
+V
+a
+l
+u
+e
+,
+
+i
+s
+M
+a
+s
+k
+e
+d
+
+}
+]
+,
+
+p
+r
+o
+o
+f
+:
+
+{
+
+f
+i
+l
+e
+I
+d
+,
+
+f
+i
+l
+e
+n
+a
+m
+e
+,
+
+s
+c
+a
+n
+S
+t
+a
+t
+u
+s
+
+}
+
+|
+
+o
+m
+i
+t
+t
+e
+d
+,
+
+v
+e
+r
+s
+i
+o
+n
+
+}
+`
+.
+
+`p
+r
+o
+p
+o
+s
+e
+d
+V
+a
+l
+u
+e`
+
+a
+n
+d
+
+`p
+r
+e
+v
+i
+o
+u
+s
+V
+a
+l
+u
+e`
+
+a
+r
+e
+
+-
+-
+
+m
+a
+s
+k
+e
+d
+
+t
+o
+
+t
+h
+e
+
+s
+a
+m
+e
+
+r
+u
+l
+e
+
+a
+s
+
+t
+h
+e
+
+p
+r
+o
+f
+i
+l
+e
+
+t
+a
+b
+
+t
+h
+e
+y
+
+c
+a
+m
+e
+
+f
+r
+o
+m * *
+,
+
+s
+o
+
+t
+h
+e
+
+c
+h
+a
+n
+g
+e
+-
+
+r
+e
+q
+u
+e
+s
+t
+
+s
+c
+r
+e
+e
+n
+
+c
+a
+n
+n
+o
+t
+
+b
+e
+c
+o
+m
+e
+
+a
+
+w
+a
+y
+
+t
+o
+
+r
+e
+a
+d
+
+a
+
+s
+t
+a
+t
+u
+t
+o
+r
+y
+
+i
+d
+
+i
+n
+
+t
+h
+e
+
+c
+l
+e
+a
+r
+.
 
 **`201 Created`** → `{ "ticket": TicketDto, "slaHours": 8 }` — the toast shows the
 **persisted** `ticket.ticketNo` and the SLA from
@@ -1480,8 +3542,13 @@ Errors: `400 VALIDATION_FAILED` · `422 BUSINESS_RULE_VIOLATED` (`details.rule="
 **P** `profile:read_sensitive:self` · **unpaged**
 `{ "data": [ { "id", "priority", "contactName": MaskedValueDto|string, "relationship",
                "relationshipLabel", "phone": MaskedValueDto|string } ] }`
-Full values for the owner; `contact_name_mask`/`phone_mask` for a manager or
-`profile:read_sensitive:any` holder (`DATA-MODEL.md` §20.5).
+This route is `/me`, so the subject is always the owner and values are always full. The
+masked projection (`contact_name_mask`/`phone_mask`) exists for the **manager and HR**
+surfaces — `GET /manager/employees/:employeeId/emergency-contacts`
+(**P** `profile:read:team`, scope `DIRECT_REPORTS`, depth 1 only, masked, audited
+`READ_SENSITIVE`) and `GET /hr/employees/:id` (**P** `profile:read_sensitive:any`, full) —
+and never on this one. A Manager holds no `profile:read_sensitive:*` code
+(`DATA-MODEL.md` §3.3), which is why the manager view is mask-only.
 
 #### `POST /me/emergency-contacts`
 
@@ -1576,7 +3643,13 @@ omits the strip entirely.
     },
     { "kind": "PERSON", "label": "Neha Kulkarni", "sub": "Software Engineer II", "…": "…" },
     { "kind": "POLICY", "label": "Leave Policy", "sub": "v2.4", "…": "…" },
-    { "kind": "PAYSLIP", "label": "August 2026", "sub": "₹1,27,560", "…": "…" },
+    {
+      "kind": "PAYSLIP",
+      "label": "August 2026",
+      "sub": null,
+      "params": { "netPay": { "amountMinor": 12756000, "currency": "INR" } },
+      "deepLink": { "screen": "payslips", "params": { "payslipId": "…" } },
+    },
   ],
 }
 ```
@@ -1585,15 +3658,25 @@ Four scoped sub-queries (`SECURITY.md` §4.10): `MODULE` over the permission-fil
 manifest; `PERSON` over the directory DTO (max 4); `POLICY` over the actor's
 `policy_assignment` join (max 3); `PAYSLIP` over the `payslip_publication` visibility gate
 (max 3). **Search can never surface a row the user could not open.** Zero results ⇒
-`data: []` and the SPA renders the prototype's "No matches for …" row. `sub` on a payslip is
-already formatted by the SPA from a `MoneyDto` carried in `params`; the API sends
-`{"netPay": MoneyDto}` in `params`, not a formatted string.
+`data: []` and the SPA renders the prototype's "No matches for …" row.
+`sub` is `null` on a `PAYSLIP` row and the SPA renders it from `params.netPay` with the
+locale rule of `DESIGN-SYSTEM.md` §10 — the API sends
+`{"netPay": MoneyDto}`, never a formatted currency string (§1.5).
 
 ### 13.4 Leave — `/api/v1/me/leave*`, `/api/v1/manager/leave-requests`
 
+> **Reference-data reads use `org:read`.** `DATA-MODEL.md` §3.1 seeds no
+> `<resource>:type:read` code, and CI invariant 4 (§17) forbids a `GET` from declaring a
+> write-class permission such as `leave:request:create:self`. Every reference collection in
+> this contract — leave types, expense categories, ticket categories, FAQ articles, letter
+> templates, benefit plans, tax sections, holiday calendars — therefore declares `org:read`,
+> which every persona holds, and filters rows by `is_active` plus any eligibility rule the
+> table itself carries. Reference data is not sensitive; what is sensitive is the _employee's_
+> data under it, and that is guarded by the route that returns it.
+
 #### `GET /leave/types`
 
-**P** `leave:request:create:self` · **unpaged** · reference data
+**P** `org:read` (reference data; a write-class code on a `GET` is forbidden by CI invariant 4, §17) + eligibility filtering by `leave_entitlement_rule` · **unpaged** · reference data
 `{ "data": [ { "id", "code": "EL", "name": "Earned leave", "shortName": "EL",
                "unit": "DAY", "isPaid": true, "minNoticeDays": 3,
                "requiresAttachmentAfterDays": null, "maxConsecutiveDays": null,
@@ -1741,6 +3824,2580 @@ Approvals aside note ("Upcoming: … Dussehra week has 1 approved leave"); **zer
 note is omitted entirely**, never replaced with "0 leaves".
 
 ### 13.5 Attendance — HR capture, Manager approval, Employee view
+
+-
+-
+
+S
+y
+s
+t
+e
+m
+
+t
+r
+a
+n
+s
+i
+t
+i
+o
+n
+s
+. * *
+
+S
+e
+v
+e
+r
+a
+l
+
+t
+r
+a
+n
+s
+i
+t
+i
+o
+n
+s
+
+i
+n
+
+t
+h
+i
+s
+
+w
+o
+r
+k
+f
+l
+o
+w
+
+a
+r
+e
+
+p
+e
+r
+f
+o
+r
+m
+e
+d
+
+b
+y
+
+t
+h
+e
+
+s
+e
+r
+v
+e
+r
+
+a
+s
+
+t
+h
+e
+
+c
+l
+o
+s
+i
+n
+g
+
+a
+c
+t
+
+o
+f
+
+a
+n
+o
+t
+h
+e
+r
+
+e
+n
+d
+p
+o
+i
+n
+t
+'
+s
+
+t
+r
+a
+n
+s
+a
+c
+t
+i
+o
+n
+,
+
+a
+n
+d
+
+t
+h
+e
+r
+e
+f
+o
+r
+e
+
+h
+a
+v
+e
+
+-
+-
+
+n
+o
+
+e
+n
+d
+p
+o
+i
+n
+t
+
+o
+f
+
+t
+h
+e
+i
+r
+
+o
+w
+n * *
+.
+
+T
+h
+e
+y
+
+a
+r
+e
+
+l
+i
+s
+t
+e
+d
+
+h
+e
+r
+e
+
+s
+o
+
+§
+1
+3
+.
+1
+9
+'
+s
+
+"
+o
+n
+e
+
+r
+o
+u
+t
+e
+
+p
+e
+r
+
+t
+r
+a
+n
+s
+i
+t
+i
+o
+n
+"
+
+r
+u
+l
+e
+
+i
+s
+
+c
+o
+m
+p
+l
+e
+t
+e
+
+r
+a
+t
+h
+e
+r
+
+t
+h
+a
+n
+
+s
+i
+l
+e
+n
+t
+l
+y
+
+v
+i
+o
+l
+a
+t
+e
+d
+,
+
+a
+n
+d
+
+s
+o
+
+n
+o
+
+c
+l
+i
+e
+n
+t
+
+e
+v
+e
+r
+
+w
+a
+i
+t
+s
+
+f
+o
+r
+
+a
+
+b
+u
+t
+t
+o
+n
+
+t
+h
+a
+t
+
+d
+o
+e
+s
+
+n
+o
+t
+
+e
+x
+i
+s
+t
+:
+
+|
+
+M
+a
+c
+h
+i
+n
+e
+
+|
+
+T
+r
+a
+n
+s
+i
+t
+i
+o
+n
+
+|
+
+P
+e
+r
+f
+o
+r
+m
+e
+d
+
+i
+n
+s
+i
+d
+e
+
+|
+
+G
+u
+a
+r
+d
+
+t
+h
+a
+t
+
+m
+u
+s
+t
+
+a
+l
+r
+e
+a
+d
+y
+
+h
+o
+l
+d
+
+|
+
+|
+-
+
+-
+-
+
+|
+-
+
+-
+-
+
+|
+-
+
+-
+-
+
+|
+-
+
+-
+-
+
+|
+
+|
+
+`a
+t
+t
+e
+n
+d
+a
+n
+c
+e
+_
+p
+e
+r
+i
+o
+d`
+
+|
+
+`
+H
+R
+_
+S
+U
+B
+M
+I
+T
+T
+E
+D
+
+→
+
+M
+A
+N
+A
+G
+E
+R
+_
+A
+P
+P
+R
+O
+V
+A
+L
+_
+P
+E
+N
+D
+I
+N
+G
+`
+
+|
+
+`
+P
+O
+S
+T
+
+/
+h
+r
+/
+a
+t
+t
+e
+n
+d
+a
+n
+c
+e
+/
+p
+e
+r
+i
+o
+d
+s
+/
+:
+i
+d
+/
+s
+u
+b
+m
+i
+t
+`
+
+|
+
+s
+l
+i
+c
+e
+s
+
+c
+r
+e
+a
+t
+e
+d
+
+≥
+
+1
+
+|
+
+|
+
+`a
+t
+t
+e
+n
+d
+a
+n
+c
+e
+_
+p
+e
+r
+i
+o
+d`
+
+|
+
+`
+M
+A
+N
+A
+G
+E
+R
+_
+A
+P
+P
+R
+O
+V
+A
+L
+_
+P
+E
+N
+D
+I
+N
+G
+
+→
+
+A
+P
+P
+R
+O
+V
+E
+D
+`
+
+|
+
+t
+h
+e
+
+-
+-
+
+l
+a
+s
+t * *
+
+`
+P
+O
+S
+T
+
+/
+m
+a
+n
+a
+g
+e
+r
+/
+a
+t
+t
+e
+n
+d
+a
+n
+c
+e
+/
+a
+p
+p
+r
+o
+v
+a
+l
+s
+/
+:
+i
+d
+/
+a
+p
+p
+r
+o
+v
+e
+`
+
+|
+
+e
+v
+e
+r
+y
+
+s
+l
+i
+c
+e
+
+`A
+P
+P
+R
+O
+V
+E
+D`
+
+|
+
+|
+
+`a
+t
+t
+e
+n
+d
+a
+n
+c
+e
+_
+p
+e
+r
+i
+o
+d`
+
+|
+
+`
+A
+P
+P
+R
+O
+V
+E
+D
+
+→
+
+L
+O
+C
+K
+E
+D
+`
+
+|
+
+`
+P
+O
+S
+T
+
+/
+p
+a
+y
+r
+o
+l
+l
+/
+c
+y
+c
+l
+e
+s
+/
+:
+i
+d
+/
+c
+a
+l
+c
+u
+l
+a
+t
+e
+`
+
+|
+
+r
+u
+n
+
+s
+t
+a
+r
+t
+e
+d
+
+|
+
+|
+
+`p
+a
+y
+r
+o
+l
+l
+_
+c
+y
+c
+l
+e`
+
+|
+
+`
+I
+N
+P
+U
+T
+S
+_
+L
+O
+C
+K
+E
+D
+
+→
+
+A
+T
+T
+E
+N
+D
+A
+N
+C
+E
+_
+S
+U
+B
+M
+I
+T
+T
+E
+D
+`
+
+|
+
+`
+P
+O
+S
+T
+
+/
+h
+r
+/
+a
+t
+t
+e
+n
+d
+a
+n
+c
+e
+/
+p
+e
+r
+i
+o
+d
+s
+/
+:
+i
+d
+/
+s
+u
+b
+m
+i
+t
+`
+
+|
+
+—
+
+|
+
+|
+
+`p
+a
+y
+r
+o
+l
+l
+_
+c
+y
+c
+l
+e`
+
+|
+
+`
+A
+T
+T
+E
+N
+D
+A
+N
+C
+E
+_
+S
+U
+B
+M
+I
+T
+T
+E
+D
+
+→
+
+A
+T
+T
+E
+N
+D
+A
+N
+C
+E
+_
+A
+P
+P
+R
+O
+V
+E
+D
+`
+
+|
+
+t
+h
+e
+
+l
+a
+s
+t
+
+s
+l
+i
+c
+e
+
+a
+p
+p
+r
+o
+v
+a
+l
+
+|
+
+e
+v
+e
+r
+y
+
+s
+l
+i
+c
+e
+
+`A
+P
+P
+R
+O
+V
+E
+D`
+
+|
+
+|
+
+`p
+a
+y
+r
+o
+l
+l
+_
+c
+y
+c
+l
+e`
+
+|
+
+`
+V
+A
+L
+I
+D
+A
+T
+I
+N
+G
+
+→
+
+V
+A
+L
+I
+D
+A
+T
+E
+D
+
+\
+|
+
+V
+A
+L
+I
+D
+A
+T
+I
+O
+N
+_
+F
+A
+I
+L
+E
+D
+`
+
+|
+
+t
+h
+e
+
+v
+a
+l
+i
+d
+a
+t
+i
+o
+n
+
+w
+o
+r
+k
+e
+r
+
+|
+
+`p
+a
+y
+r
+o
+l
+l
+.
+n
+o
+_
+e
+r
+r
+o
+r
+_
+v
+a
+l
+i
+d
+a
+t
+i
+o
+n
+s`
+
+|
+
+|
+
+`p
+a
+y
+r
+o
+l
+l
+_
+c
+y
+c
+l
+e`
+
+|
+
+`
+C
+A
+L
+C
+U
+L
+A
+T
+I
+N
+G
+
+→
+
+C
+A
+L
+C
+U
+L
+A
+T
+E
+D
+
+\
+|
+
+V
+A
+L
+I
+D
+A
+T
+I
+O
+N
+_
+F
+A
+I
+L
+E
+D
+`
+
+|
+
+t
+h
+e
+
+p
+a
+y
+r
+o
+l
+l
+
+r
+u
+n
+
+w
+o
+r
+k
+e
+r
+
+|
+
+`p
+a
+y
+r
+o
+l
+l
+.
+r
+u
+n
+_
+s
+u
+c
+c
+e
+e
+d
+e
+d`
+,
+
+`p
+a
+y
+r
+o
+l
+l
+.
+p
+a
+y
+s
+l
+i
+p
+_
+c
+o
+u
+n
+t
+_
+m
+a
+t
+c
+h
+e
+s
+_
+e
+m
+p
+l
+o
+y
+e
+e
+_
+c
+o
+u
+n
+t`
+,
+
+`p
+a
+y
+r
+o
+l
+l
+.
+c
+o
+n
+t
+r
+o
+l
+s
+_
+b
+a
+l
+a
+n
+c
+e`
+
+|
+
+|
+
+`p
+a
+y
+r
+o
+l
+l
+_
+r
+u
+n`
+
+|
+
+`
+Q
+U
+E
+U
+E
+D
+
+→
+
+R
+U
+N
+N
+I
+N
+G
+
+→
+
+S
+U
+C
+C
+E
+E
+D
+E
+D
+
+\
+|
+
+F
+A
+I
+L
+E
+D
+`
+
+|
+
+t
+h
+e
+
+p
+a
+y
+r
+o
+l
+l
+
+r
+u
+n
+
+w
+o
+r
+k
+e
+r
+,
+
+l
+e
+a
+s
+e
+-
+
+h
+e
+l
+d
+
+|
+
+`e
+s
+s
+_
+o
+p
+s
+.
+b
+a
+c
+k
+g
+r
+o
+u
+n
+d
+_
+j
+o
+b`
+
+l
+e
+a
+s
+e
+
+|
+
+|
+
+`p
+a
+y
+r
+o
+l
+l
+_
+i
+n
+p
+u
+t
+_
+b
+a
+t
+c
+h`
+
+|
+
+`
+U
+P
+L
+O
+A
+D
+I
+N
+G
+
+→
+
+P
+A
+R
+S
+E
+D
+
+\
+|
+
+P
+A
+R
+S
+E
+_
+F
+A
+I
+L
+E
+D
+`
+
+|
+
+`
+P
+O
+S
+T
+
+…
+/
+i
+n
+p
+u
+t
+-
+
+b
+a
+t
+c
+h
+e
+s
+`
+
+|
+
+`p
+a
+y
+r
+o
+l
+l
+.
+f
+i
+l
+e
+_
+c
+l
+e
+a
+n`
+
+|
+
+|
+
+`p
+r
+o
+f
+i
+l
+e
+_
+c
+h
+a
+n
+g
+e
+_
+r
+e
+q
+u
+e
+s
+t`
+
+|
+
+`
+A
+P
+P
+R
+O
+V
+E
+D
+
+→
+
+A
+P
+P
+L
+I
+E
+D
+`
+
+|
+
+t
+h
+e
+
+a
+p
+p
+l
+y
+
+w
+o
+r
+k
+e
+r
+
+|
+
+`p
+r
+o
+f
+i
+l
+e
+.
+t
+a
+r
+g
+e
+t
+_
+r
+o
+w
+_
+u
+n
+c
+h
+a
+n
+g
+e
+d
+_
+s
+i
+n
+c
+e
+_
+s
+u
+b
+m
+i
+t`
+
+|
+
+|
+
+`e
+x
+p
+e
+n
+s
+e
+_
+c
+l
+a
+i
+m`
+
+|
+
+`
+Q
+U
+E
+U
+E
+D
+_
+F
+O
+R
+_
+P
+A
+Y
+M
+E
+N
+T
+
+→
+
+R
+E
+I
+M
+B
+U
+R
+S
+E
+D
+`
+
+|
+
+`
+P
+O
+S
+T
+
+/
+p
+a
+y
+r
+o
+l
+l
+/
+c
+y
+c
+l
+e
+s
+/
+:
+i
+d
+/
+p
+u
+b
+l
+i
+s
+h
+`
+
+|
+
+t
+h
+e
+
+c
+l
+a
+i
+m
+'
+s
+
+b
+a
+t
+c
+h
+
+i
+s
+
+`S
+E
+N
+T
+_
+T
+O
+_
+P
+A
+Y
+R
+O
+L
+L`
+
+i
+n
+t
+o
+
+t
+h
+a
+t
+
+c
+y
+c
+l
+e
+
+|
+
+|
+
+`r
+e
+i
+m
+b
+u
+r
+s
+e
+m
+e
+n
+t
+_
+b
+a
+t
+c
+h`
+
+|
+
+`
+S
+E
+N
+T
+_
+T
+O
+_
+P
+A
+Y
+R
+O
+L
+L
+
+→
+
+P
+A
+I
+D
+`
+
+|
+
+`
+P
+O
+S
+T
+
+/
+p
+a
+y
+r
+o
+l
+l
+/
+c
+y
+c
+l
+e
+s
+/
+:
+i
+d
+/
+p
+u
+b
+l
+i
+s
+h
+`
+
+|
+
+a
+s
+
+a
+b
+o
+v
+e
+
+|
+
+|
+
+`b
+e
+n
+e
+f
+i
+t
+_
+e
+n
+r
+o
+l
+m
+e
+n
+t`
+
+|
+
+`
+E
+N
+R
+O
+L
+L
+E
+D
+
+\
+|
+
+P
+E
+N
+D
+I
+N
+G
+_
+D
+O
+C
+U
+M
+E
+N
+T
+S
+
+→
+
+L
+A
+P
+S
+E
+D
+`
+
+|
+
+t
+h
+e
+
+n
+i
+g
+h
+t
+l
+y
+
+`
+b
+e
+n
+e
+f
+i
+t
+-
+
+l
+a
+p
+s
+e
+`
+
+j
+o
+b
+
+|
+
+`e
+f
+f
+e
+c
+t
+i
+v
+e
+_
+t
+o`
+
+p
+a
+s
+s
+e
+d
+
+|
+
+|
+
+`a
+n
+n
+o
+u
+n
+c
+e
+m
+e
+n
+t`
+
+|
+
+`
+S
+C
+H
+E
+D
+U
+L
+E
+D
+
+→
+
+P
+U
+B
+L
+I
+S
+H
+E
+D
+`
+
+|
+
+t
+h
+e
+
+`
+a
+n
+n
+o
+u
+n
+c
+e
+m
+e
+n
+t
+-
+
+p
+u
+b
+l
+i
+s
+h
+`
+
+j
+o
+b
+
+|
+
+`p
+u
+b
+l
+i
+s
+h
+_
+a
+t`
+
+p
+a
+s
+s
+e
+d
+
+|
+
+E
+a
+c
+h
+
+w
+r
+i
+t
+e
+s
+
+i
+t
+s
+
+o
+w
+n
+
+`a
+u
+d
+i
+t
+_
+e
+v
+e
+n
+t`
+
+w
+i
+t
+h
+
+`
+a
+c
+t
+o
+r
+_
+a
+p
+p
+_
+u
+s
+e
+r
+_
+i
+d
+
+=
+
+N
+U
+L
+L
+`
+
+a
+n
+d
+
+`
+a
+c
+t
+o
+r
+_
+k
+i
+n
+d
+
+=
+
+'
+S
+Y
+S
+T
+E
+M
+'
+`
+,
+
+n
+a
+m
+i
+n
+g
+
+t
+h
+e
+
+t
+r
+i
+g
+g
+e
+r
+i
+n
+g
+
+`r
+e
+q
+u
+e
+s
+t
+_
+i
+d`
+,
+
+s
+o
+
+a
+
+s
+y
+s
+t
+e
+m
+
+t
+r
+a
+n
+s
+i
+t
+i
+o
+n
+
+i
+s
+
+a
+s
+
+t
+r
+a
+c
+e
+a
+b
+l
+e
+
+a
+s
+
+a
+
+h
+u
+m
+a
+n
+
+o
+n
+e
+.
+
+A
+
+s
+y
+s
+t
+e
+m
+
+t
+r
+a
+n
+s
+i
+t
+i
+o
+n
+
+i
+s
+
+-
+-
+
+n
+e
+v
+e
+r * *
+
+e
+x
+p
+o
+s
+e
+d
+
+a
+s
+
+a
+
+r
+o
+u
+t
+e
+,
+
+a
+n
+d
+
+C
+I
+
+i
+n
+v
+a
+r
+i
+a
+n
+t
+
+3
+a
+
+(
+§
+1
+7
+)
+
+a
+s
+s
+e
+r
+t
+s
+
+e
+x
+a
+c
+t
+l
+y
+
+t
+h
+a
+t
+:
+
+e
+v
+e
+r
+y
+
+`s
+t
+a
+t
+e
+_
+t
+r
+a
+n
+s
+i
+t
+i
+o
+n`
+
+s
+e
+e
+d
+
+r
+o
+w
+
+i
+s
+
+e
+i
+t
+h
+e
+r
+
+b
+o
+u
+n
+d
+
+t
+o
+
+o
+n
+e
+
+r
+o
+u
+t
+e
+
+-
+-
+
+o
+r * *
+
+m
+a
+r
+k
+e
+d
+
+`
+i
+s
+_
+s
+y
+s
+t
+e
+m
+
+=
+
+t
+r
+u
+e
+`
+
+a
+n
+d
+
+l
+i
+s
+t
+e
+d
+
+a
+b
+o
+v
+e
+.
 
 > This is steps 2 and 3 of the mandated payroll workflow. **Accounts holds neither
 > `attendance:submit` nor `attendance:approve:*`** — the payroll operator cannot manufacture
@@ -1915,9 +6572,16 @@ else HRBP escalation) · `409 STATE_TRANSITION_NOT_ALLOWED` · `409 VERSION_CONF
 #### `POST /hr/attendance/approvals/:id/escalate`
 
 **P** `attendance:approve:any` · **I** yes · **S** no
-`body: { reason z.string().trim().min(10).max(500) }`
+`body: { reason z.string().trim().min(10).max(500), escalateToEmployeeId z.string().uuid().optional() }`
 Guard `attendance.approval_overdue` — **HR may only escalate after `due_at` has passed**.
 Sets `status = AUTO_ESCALATED`, `escalated_to_user_id`, `escalation_reason`; audited.
+`escalateToEmployeeId` defaults, in order, to the slice manager's own **primary manager**,
+then to the employee's **HR business partner**, then to the actor. It must resolve to an
+`ACTIVE` employee who is **not** the slice manager and **not** the subject of any record in
+the slice (`ck_at__not_self` applies to the re-created task), else
+`422 BUSINESS_RULE_VIOLATED` (`rule="ESCALATION_TARGET_INVALID"`). The original slice's
+`approval_task` is closed and a new one is created for the escalation target, so the queue
+and the badge stay the same single query.
 `409 GUARD_FAILED` (`guardKey="attendance.approval_overdue"`, `details.dueAt`).
 
 #### `GET /me/attendance`
@@ -1925,7 +6589,7 @@ Sets `status = AUTO_ESCALATED`, `escalated_to_user_id`, `escalation_reason`; aud
 **P** `attendance:read:self` · **unpaged**
 `query: periodId uuid optional (default: the latest period whose status is APPROVED or LOCKED)`
 Returns the employee's own `AttendanceRecordDto` **minus** `manager`/`hrNote` (internal) plus
-`period` and the derived `payableLabel = payableDays + ' / ' + calendarDays`.
+`period` and the derived `payableLabel = payableDays + ' / ' + eligibleDays`, the same numerator and denominator `PayslipDetailDto` uses (`payslip.payable_days` / `payslip.total_days`, where `total_days = eligible_days`), so the prototype's `31 / 31` means the same thing on both screens.
 A record that is still `DRAFT` or `SUBMITTED` is **not** returned to the employee — they see
 `emptyState.code = "ATTENDANCE_NOT_FINALISED"` with `params.periodLabel` and
 `params.periodStatus`. No provisional day count is ever shown.
@@ -1939,20 +6603,38 @@ A record that is still `DRAFT` or `SUBMITTED` is **not** returned to the employe
 #### 13.6.1 The step tracker
 
 `PayrollCycleDto.stepTracker` is computed **from `payroll_cycle.status` alone** and renders
-the seven mandated stages:
+the seven mandated stages. Because enum ordering carries no meaning (§1.5), each stage's
+`DONE` test is an explicit membership list, written out here and seeded as `ui_copy` labels:
 
-| #   | `key`                  | `label`                            | `DONE` when `status` ≥ | Owner                   |
-| --- | ---------------------- | ---------------------------------- | ---------------------- | ----------------------- |
-| 1   | `INPUTS_UPLOADED`      | Accounts uploads payroll data      | `INPUTS_LOCKED`        | Accounts                |
-| 2   | `ATTENDANCE_SUBMITTED` | HR submits attendance              | `ATTENDANCE_SUBMITTED` | HR                      |
-| 3   | `ATTENDANCE_APPROVED`  | Managers approve attendance        | `ATTENDANCE_APPROVED`  | Manager                 |
-| 4   | `VALIDATED`            | System validates payroll inputs    | `VALIDATED`            | System                  |
-| 5   | `CALCULATED`           | Payroll and payslips generated     | `CALCULATED`           | System                  |
-| 6   | `APPROVED`             | Second Accounts approver signs off | `APPROVED`             | Accounts (≠ #5's actor) |
-| 7   | `PUBLISHED`            | Payslips visible to employees      | `PUBLISHED`            | Accounts                |
+| #   | `key`                  | `label`                            | `DONE` when `payroll_cycle.status IN (…)`                                                                                                                  | Owner                                       |
+| --- | ---------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| 1   | `INPUTS_UPLOADED`      | Accounts uploads payroll data      | `INPUTS_LOCKED, ATTENDANCE_SUBMITTED, ATTENDANCE_APPROVED, VALIDATING, VALIDATION_FAILED, VALIDATED, CALCULATING, CALCULATED, APPROVED, PUBLISHED, CLOSED` | Accounts                                    |
+| 2   | `ATTENDANCE_SUBMITTED` | HR submits attendance              | `ATTENDANCE_SUBMITTED, ATTENDANCE_APPROVED, VALIDATING, VALIDATION_FAILED, VALIDATED, CALCULATING, CALCULATED, APPROVED, PUBLISHED, CLOSED`                | HR                                          |
+| 3   | `ATTENDANCE_APPROVED`  | Managers approve attendance        | `ATTENDANCE_APPROVED, VALIDATING, VALIDATION_FAILED, VALIDATED, CALCULATING, CALCULATED, APPROVED, PUBLISHED, CLOSED`                                      | Manager                                     |
+| 4   | `VALIDATED`            | System validates payroll inputs    | `VALIDATED, CALCULATING, CALCULATED, APPROVED, PUBLISHED, CLOSED`                                                                                          | System                                      |
+| 5   | `CALCULATED`           | Payroll and payslips generated     | `CALCULATED, APPROVED, PUBLISHED, CLOSED`                                                                                                                  | System                                      |
+| 6   | `APPROVED`             | Second Accounts approver signs off | `APPROVED, PUBLISHED, CLOSED`                                                                                                                              | Accounts (a different user from #5's actor) |
+| 7   | `PUBLISHED`            | Payslips visible to employees      | `PUBLISHED, CLOSED`                                                                                                                                        | Accounts (a different user from #5's actor) |
 
-`state` is `DONE` / `CURRENT` / `PENDING`, or `BLOCKED` with `blockedReason` when the current
-step's guard is unsatisfied (e.g. step 4 blocked by `payroll.attendance_locked`).
+`state` resolution, in this order, so it is total and has no undefined case:
+
+1. the stage's `DONE` list contains `status` ⇒ `DONE`;
+2. else `status = 'CANCELLED'` ⇒ every non-`DONE` stage is `PENDING` and the tracker carries
+   `cycleCancelled: true` with `cancelReason`;
+3. else `status = 'VALIDATION_FAILED'` and this is stage 4 ⇒ `BLOCKED`, `blockedReason` from
+   the highest-severity unresolved `payroll_validation_result`;
+4. else this is the lowest-numbered non-`DONE` stage ⇒ `CURRENT`, and `BLOCKED` instead when
+   any guard of its transition is unsatisfied (`blockedReason` = that guard's message);
+5. else `PENDING`.
+
+`VALIDATING` and `CALCULATING` are _in-flight_ statuses: stage 4 / stage 5 is `CURRENT` with
+`blockedReason: null` and `isRunning: true`, which is what drives the spinner. The
+`stepTracker` labels are `ui_copy` keys `payroll.stage.<key>` and CI asserts the key set
+equals the seven `state_transition` stages, so a renamed stage cannot drift.
+
+This tracker is **back-office only**. The employee-facing projection of the same status is
+the coarse `stageKey` of §1.6, which collapses `VALIDATING`, `VALIDATION_FAILED` and
+`CALCULATING` to `IN_PROGRESS`.
 
 #### `GET /payroll/cycles`
 
@@ -1971,9 +6653,15 @@ body: periodCode z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/)   // 2026-08
 
 Creates the cycle **and** its 1:1 `attendance_period` (`label`, `start_date`, `end_date`,
 `total_calendar_days` derived from `periodCode` in `organization.timezone`).
-Guards `payroll.no_open_cycle_for_period`, `payroll.prior_cycle_closed`.
+Guards `payroll.no_open_cycle_for_period`, `payroll.prior_cycle_closed`,
+`payroll.dual_control_available` — the organisation must hold **at least two distinct,
+`ACTIVE`, MFA-enrolled `app_user` rows with the ACCOUNTS persona** (the exact query is in
+`DATA-MODEL.md` §3.3). Below two, the cycle cannot be created at all:
+`409 DUAL_CONTROL_UNAVAILABLE` with `details.currentDistinctUsers`. Refusing at creation is
+deliberate — refusing later, at `approve`, would leave a calculated cycle stranded and invite
+someone to "temporarily" grant ACCOUNTS to a second account of the same human.
 **`201`** `PayrollCycleDto` (status `DRAFT`).
-Errors: `409 GUARD_FAILED` · `409 DUPLICATE_RESOURCE` (`constraint="payroll_cycle_period"`).
+Errors: `409 GUARD_FAILED` · `409 DUAL_CONTROL_UNAVAILABLE` · `409 DUPLICATE_RESOURCE` (`constraint="payroll_cycle_period"`).
 
 #### `POST /payroll/cycles/:id/open-inputs`
 
@@ -2075,9 +6763,1667 @@ moves to `VALIDATED` (`payroll.no_error_validations`) or `VALIDATION_FAILED`.
 
 #### `POST /payroll/cycles/:id/validation-results/:resultId/resolve`
 
-**P** `payroll:validate` · `body: { note z.string().trim().min(10).max(500) }` ·
-**`200`** the result with `resolvedAt`. An `ERROR` that is resolved no longer blocks
-`CALCULATE`; the resolution is audited with its note.
+**P** `payroll:validate` · `body: { note z.string().trim().min(10).max(500) }` · * *
+P * *
+
+`p
+a
+y
+r
+o
+l
+l
+:
+v
+a
+l
+i
+d
+a
+t
+e`
+
+·
+
+`
+b
+o
+d
+y
+:
+
+{
+
+n
+o
+t
+e
+
+z
+.
+s
+t
+r
+i
+n
+g
+(
+)
+.
+t
+r
+i
+m
+(
+)
+.
+m
+i
+n
+(
+1
+0
+)
+.
+m
+a
+x
+(
+5
+0
+0
+)
+,
+
+a
+c
+c
+e
+p
+t
+R
+i
+s
+k
+
+z
+.
+b
+o
+o
+l
+e
+a
+n
+(
+)
+.
+d
+e
+f
+a
+u
+l
+t
+(
+f
+a
+l
+s
+e
+)
+
+}
+`
+
+·
+
+-
+-
+
+I * *
+
+y
+e
+s
+
+·
+
+-
+-
+
+I
+f
+-
+
+M
+a
+t
+c
+h * *
+
+o
+n
+
+t
+h
+e
+
+c
+y
+c
+l
+e
+
+-
+-
+
+`2
+0
+0` * *
+
+t
+h
+e
+
+r
+e
+s
+u
+l
+t
+
+w
+i
+t
+h
+
+`r
+e
+s
+o
+l
+v
+e
+d
+A
+t`
+,
+
+`r
+e
+s
+o
+l
+v
+e
+d
+B
+y
+U
+s
+e
+r
+I
+d`
+
+a
+n
+d
+
+`r
+e
+s
+o
+l
+u
+t
+i
+o
+n
+N
+o
+t
+e`
+.
+
+-
+-
+
+R
+e
+s
+o
+l
+v
+i
+n
+g
+
+a
+n
+
+E
+R
+R
+O
+R
+
+i
+s
+
+a
+
+s
+e
+c
+o
+n
+d
+
+s
+i
+g
+n
+a
+t
+u
+r
+e
+,
+
+n
+o
+t
+
+a
+
+d
+i
+s
+m
+i
+s
+s
+a
+l
+. * *
+
+A
+
+`W
+A
+R
+N
+I
+N
+G`
+
+o
+r
+
+`I
+N
+F
+O`
+
+r
+e
+s
+u
+l
+t
+
+i
+s
+
+r
+e
+s
+o
+l
+v
+e
+d
+
+b
+y
+
+a
+n
+y
+
+`p
+a
+y
+r
+o
+l
+l
+:
+v
+a
+l
+i
+d
+a
+t
+e`
+
+h
+o
+l
+d
+e
+r
+
+w
+i
+t
+h
+
+a
+
+n
+o
+t
+e
+.
+
+A
+n
+
+`E
+R
+R
+O
+R`
+
+r
+e
+s
+u
+l
+t
+
+i
+s
+
+d
+i
+f
+f
+e
+r
+e
+n
+t
+:
+
+i
+t
+
+i
+s
+
+t
+h
+e
+
+o
+n
+l
+y
+
+t
+h
+i
+n
+g
+
+s
+t
+a
+n
+d
+i
+n
+g
+
+b
+e
+t
+w
+e
+e
+n
+
+a
+
+w
+r
+o
+n
+g
+
+i
+n
+p
+u
+t
+
+a
+n
+d
+
+a
+
+p
+u
+b
+l
+i
+s
+h
+e
+d
+
+p
+a
+y
+s
+l
+i
+p
+,
+
+s
+o
+
+-
+
+r
+e
+s
+o
+l
+v
+i
+n
+g
+
+a
+n
+
+`E
+R
+R
+O
+R`
+
+r
+e
+q
+u
+i
+r
+e
+s
+
+`
+a
+c
+c
+e
+p
+t
+R
+i
+s
+k
+:
+
+t
+r
+u
+e
+`
+
+-
+-
+
+a
+n
+d * *
+
+`p
+a
+y
+r
+o
+l
+l
+:
+a
+p
+p
+r
+o
+v
+e`
+
+(
+n
+o
+t
+
+m
+e
+r
+e
+l
+y
+
+`p
+a
+y
+r
+o
+l
+l
+:
+v
+a
+l
+i
+d
+a
+t
+e`
+)
+,
+
+-
+-
+
+a
+n
+d * *
+
+t
+h
+e
+
+r
+e
+s
+o
+l
+v
+e
+r
+
+m
+u
+s
+t
+
+n
+o
+t
+
+b
+e
+
+t
+h
+e
+
+u
+s
+e
+r
+
+w
+h
+o
+
+u
+p
+l
+o
+a
+d
+e
+d
+
+t
+h
+e
+
+b
+a
+t
+c
+h
+
+t
+h
+e
+
+r
+e
+s
+u
+l
+t
+
+p
+o
+i
+n
+t
+s
+
+a
+t
+
+(
+`p
+a
+y
+r
+o
+l
+l
+_
+i
+n
+p
+u
+t
+_
+b
+a
+t
+c
+h
+.
+u
+p
+l
+o
+a
+d
+e
+d
+_
+b
+y
+_
+u
+s
+e
+r
+_
+i
+d`
+)
+
+⇒
+
+o
+t
+h
+e
+r
+w
+i
+s
+e
+
+`
+4
+0
+9
+
+S
+E
+G
+R
+E
+G
+A
+T
+I
+O
+N
+_
+R
+E
+Q
+U
+I
+R
+E
+D
+`
+
+w
+i
+t
+h
+
+`
+d
+e
+t
+a
+i
+l
+s
+.
+r
+e
+q
+u
+i
+r
+e
+s
+
+=
+
+"
+a
+
+s
+e
+c
+o
+n
+d
+
+A
+c
+c
+o
+u
+n
+t
+s
+
+a
+p
+p
+r
+o
+v
+e
+r
+"
+`
+;
+
+-
+
+a
+
+r
+u
+l
+e
+
+w
+h
+o
+s
+e
+
+`r
+u
+l
+e
+_
+c
+o
+d
+e`
+
+i
+s
+
+i
+n
+
+t
+h
+e
+
+-
+-
+
+n
+o
+n
+-
+
+o
+v
+e
+r
+r
+i
+d
+a
+b
+l
+e
+
+s
+e
+t * *
+
+c
+a
+n
+n
+o
+t
+
+b
+e
+
+r
+e
+s
+o
+l
+v
+e
+d
+
+a
+t
+
+a
+l
+l
+,
+
+o
+n
+l
+y
+
+f
+i
+x
+e
+d
+
+a
+t
+
+s
+o
+u
+r
+c
+e
+:
+
+`P
+A
+Y
+_
+N
+E
+G
+A
+T
+I
+V
+E
+_
+N
+E
+T`
+,
+
+`P
+A
+Y
+_
+G
+R
+O
+S
+S
+_
+M
+I
+S
+M
+A
+T
+C
+H`
+,
+
+`P
+A
+Y
+_
+C
+O
+N
+T
+R
+O
+L
+_
+T
+O
+T
+A
+L
+_
+M
+I
+S
+M
+A
+T
+C
+H`
+,
+
+`P
+A
+Y
+_
+D
+U
+P
+L
+I
+C
+A
+T
+E
+_
+P
+A
+Y
+S
+L
+I
+P`
+,
+
+`P
+A
+Y
+_
+A
+T
+T
+E
+N
+D
+A
+N
+C
+E
+_
+M
+I
+S
+S
+I
+N
+G`
+,
+
+`P
+A
+Y
+_
+A
+T
+T
+E
+N
+D
+A
+N
+C
+E
+_
+N
+O
+T
+_
+A
+P
+P
+R
+O
+V
+E
+D`
+,
+
+`P
+A
+Y
+_
+O
+R
+P
+H
+A
+N
+_
+I
+N
+P
+U
+T
+_
+E
+M
+P
+L
+O
+Y
+E
+E`
+,
+
+`P
+A
+Y
+_
+S
+A
+L
+A
+R
+Y
+_
+S
+T
+R
+U
+C
+T
+U
+R
+E
+_
+M
+I
+S
+S
+I
+N
+G`
+.
+
+A
+t
+t
+e
+m
+p
+t
+i
+n
+g
+
+i
+t
+
+i
+s
+
+`
+4
+0
+9
+
+G
+U
+A
+R
+D
+_
+F
+A
+I
+L
+E
+D
+`
+
+(
+`
+g
+u
+a
+r
+d
+K
+e
+y
+=
+
+"
+p
+a
+y
+r
+o
+l
+l
+.
+r
+u
+l
+e
+_
+n
+o
+t
+_
+o
+v
+e
+r
+r
+i
+d
+a
+b
+l
+e
+"
+`
+,
+
+`d
+e
+t
+a
+i
+l
+s
+.
+r
+u
+l
+e
+C
+o
+d
+e`
+)
+;
+
+-
+
+e
+v
+e
+r
+y
+
+`E
+R
+R
+O
+R`
+
+r
+e
+s
+o
+l
+u
+t
+i
+o
+n
+
+i
+s
+
+a
+
+`P
+A
+Y
+R
+O
+L
+L
+.
+V
+A
+L
+I
+D
+A
+T
+I
+O
+N
+_
+O
+V
+E
+R
+R
+I
+D
+D
+E
+N`
+
+a
+u
+d
+i
+t
+
+e
+v
+e
+n
+t
+
+a
+t
+
+`C
+R
+I
+T
+I
+C
+A
+L`
+
+s
+e
+v
+e
+r
+i
+t
+y
+,
+
+a
+p
+p
+e
+a
+r
+s
+
+o
+n
+
+t
+h
+e
+
+c
+y
+c
+l
+e
+
+a
+s
+
+`o
+v
+e
+r
+r
+i
+d
+d
+e
+n
+E
+r
+r
+o
+r
+C
+o
+u
+n
+t`
+,
+
+a
+n
+d
+
+i
+s
+
+r
+e
+p
+r
+o
+d
+u
+c
+e
+d
+
+v
+e
+r
+b
+a
+t
+i
+m
+
+o
+n
+
+t
+h
+e
+
+`a
+p
+p
+r
+o
+v
+e`
+
+s
+c
+r
+e
+e
+n
+
+s
+o
+
+t
+h
+e
+
+s
+e
+c
+o
+n
+d
+
+a
+p
+p
+r
+o
+v
+e
+r
+
+s
+i
+g
+n
+s
+
+w
+i
+t
+h
+
+t
+h
+e
+
+o
+v
+e
+r
+r
+i
+d
+e
+s
+
+i
+n
+
+f
+r
+o
+n
+t
+
+o
+f
+
+t
+h
+e
+m
+.
+
+T
+h
+e
+
+c
+o
+u
+n
+t
+
+i
+s
+
+a
+l
+s
+o
+
+a
+
+c
+o
+l
+u
+m
+n
+
+o
+n
+
+`p
+a
+y
+r
+o
+l
+l
+_
+r
+u
+n`
+,
+
+s
+o
+
+a
+
+p
+u
+b
+l
+i
+s
+h
+e
+d
+
+c
+y
+c
+l
+e
+
+p
+e
+r
+m
+a
+n
+e
+n
+t
+l
+y
+
+r
+e
+c
+o
+r
+d
+s
+
+h
+o
+w
+
+m
+a
+n
+y
+
+e
+r
+r
+o
+r
+s
+
+w
+e
+r
+e
+
+w
+a
+v
+e
+d
+
+t
+h
+r
+o
+u
+g
+h
+
+a
+n
+d
+
+b
+y
+
+w
+h
+o
+m
+.
+
+A
+n
+
+`E
+R
+R
+O
+R`
+
+t
+h
+a
+t
+
+i
+s
+
+r
+e
+s
+o
+l
+v
+e
+d
+
+u
+n
+d
+e
+r
+
+t
+h
+e
+s
+e
+
+c
+o
+n
+d
+i
+t
+i
+o
+n
+s
+
+n
+o
+
+l
+o
+n
+g
+e
+r
+
+b
+l
+o
+c
+k
+s
 
 #### `POST /payroll/cycles/:id/calculate`
 
@@ -2113,7 +8459,21 @@ cycle control totals in a sibling `controlTotals` object. Every read is `READ_SE
 
 **P** `payroll:approve` · **I** yes · **S** **yes** · **If-Match**
 `body: { note z.string().trim().max(500).optional() }`
-`CALCULATED → APPROVED`, guards `payroll.distinct_approver` + `payroll.controls_balance`.
+`CALCULATED → APPROVED`, guards `payroll.distinct_approver` + `payroll.controls_balance` +
+`payroll.no_unresolved_errors`.
+
+**`payroll.distinct_approver` is two comparisons, not one**, and each endpoint states which
+it enforces (`DATA-MODEL.md` §10.1–10.2):
+
+| Endpoint                                | Assertion                                                                                                                                                                                                                           |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST …/approve`                        | `actor.userId <> payroll_cycle.calculated_by_user_id`                                                                                                                                                                               |
+| `POST …/publish`                        | `actor.userId <> payroll_cycle.calculated_by_user_id` **and** `actor.userId <> payroll_cycle.approved_by_user_id` is **not** required — the approver may publish what they approved; what is forbidden is the calculator publishing |
+| `POST /payroll/corrections/:id/approve` | `actor.userId <> payroll_correction.raised_by_user_id`                                                                                                                                                                              |
+
+Both are DB `CHECK`s as well as guards, so a handler bug cannot bypass them. Publishing is
+additionally **step-up** gated, so a stolen session cannot complete the chain even if it
+somehow held both ids.
 **`200`** `PayrollCycleDto`.
 `409 SEGREGATION_REQUIRED` with `details.requires = "a second Accounts approver"` when the
 actor is `calculated_by_user_id` — also a DB `CHECK`, so it cannot be bypassed by a bug.
@@ -2126,7 +8486,12 @@ actor is `calculated_by_user_id` — also a DB `CHECK`, so it cannot be bypassed
 `payroll.every_payslip_generated`, `payroll.pay_date_set`.
 In one transaction: every payslip `GENERATED → PUBLISHED`; one `payslip_publication` per
 payslip; one `PAYSLIP_PUBLISHED` `notification` per employee; one `email_outbox` row per
-employee; `payslip_fy_rollup` refreshed; `tds_quarter` recomputed;
+`payslip_fy_rollup` refreshed by `fn_refresh_payslip_fy_rollup(employee, fiscal_year)` —
+which reads **only live publications**, so a later revocation reverses the YTD tiles rather
+than leaving a stale total on screen; `tds_quarter` recomputed from the same predicate;
+every `reimbursement_batch` that was `SENT_TO_PAYROLL` into this cycle moves to `PAID`, each
+of its `expense_claim`s to `REIMBURSED` with `paid_in_payroll_cycle_id` set, and one
+`EXPENSE_REIMBURSED` notification per claimant is queued;
 `payroll_cycle.actual_pay_date` set.
 **This is the only moment a payslip becomes visible to an employee.**
 **`200`** `{ "cycle": PayrollCycleDto, "publishedPayslipCount": 214, "notificationsQueued": 214, "emailsQueued": 214 }`.
@@ -2143,6 +8508,65 @@ employee; `payslip_fy_rollup` refreshed; `tds_quarter` recomputed;
 Allowed only from `DRAFT|INPUTS_OPEN|INPUTS_LOCKED|VALIDATION_FAILED`, guard
 `payroll.no_payslips_exist`. **There is no transition out of `PUBLISHED`** — a correction is
 a new cycle or an off-cycle superseding revision.
+
+#### `POST /payroll/corrections`
+
+**P** `payroll:correction:raise` · **I** yes · **S** yes · **RL** `user` 10/h
+
+```
+body .strict():
+  payrollCycleId  z.string().uuid()          // the PUBLISHED cycle being corrected
+  employeeIds     z.array(z.string().uuid()).min(1).max(500)
+  reason          z.string().trim().min(20).max(2000)
+  correctionKind  z.enum(['WRONG_INPUT','MISSING_INPUT','ATTENDANCE_RESTATED','STATUTORY_RESTATED'])
+```
+
+This is the **only** way a published figure is ever changed. `POST /payroll/cycles/:id/cancel`
+refuses from `PUBLISHED`, and `payslip` is immutable except `status`, `pdf_file_object_id`,
+`supersedes_payslip_id` and `revoked_*` (`trg_payslip_immutable`), so without this endpoint
+the system has a published wrong number and no lawful path to fix it — which is what forces
+people to edit rows by hand. Creates a `payroll_correction` in `PENDING_APPROVAL` and an
+`approval_task` for a **second** Accounts user. **`201`** the correction.
+Errors: `409 GUARD_FAILED` (`guardKey="payroll.cycle_published"`) ·
+`409 DUAL_CONTROL_UNAVAILABLE`.
+
+#### `POST /payroll/corrections/:id/approve` · `…/reject`
+
+**P** `payroll:correction:approve` · **I** yes · **S** yes · **If-Match**
+`body: { note z.string().trim().min(10).max(500) }` (required on reject)
+`payroll.distinct_approver` — the approver is not the raiser. On approve the system opens a
+**correction run** against the same cycle (`payroll_run.run_kind = 'CORRECTION'`), which on
+success produces, per affected employee, a new `payslip` with
+`revision = prior.revision + 1` and `supersedes_payslip_id = prior.id`, sets the prior
+payslip `SUPERSEDED`, sets the prior `payslip_publication.revoked_at` with the correction's
+reason, publishes the new one, and queues a `PAYSLIP_CORRECTED` notification and email to the
+employee. The net delta is written as a `payroll_input_item` of kind `ARREAR_ADJUSTMENT` into
+the next `INPUTS_OPEN` cycle — never paid outside payroll.
+**`200`** `{ correction, runId, affectedEmployeeCount }`.
+
+#### `GET /payroll/corrections` · `GET /payroll/corrections/:id`
+
+**P** `payroll:correction:read` · **page/limit**, sort `raised_at DESC`
+`{ id, correctionNo, cycle: { id, label }, status: ChipDto, correctionKind, reason,
+raisedAt, raisedBy: PersonRefDto, decidedAt, decidedBy: PersonRefDto, affectedEmployeeCount,
+runId, version }`. Empty ⇒ `emptyState.code = "PAYROLL_NO_CORRECTIONS"`.
+
+#### `POST /payroll/publications/:payslipId/revoke`
+
+**P** `payroll:correction:raise` · **I** yes · **S** **yes** · **If-Match** on the payslip's
+publication · **RL** `user` 10/h
+`body: { reason z.string().trim().min(20).max(2000) }`
+
+Withdraws visibility of a single published payslip **without** producing a replacement — used
+when a payslip was published to the wrong employee or against a cancelled employment. Sets
+`payslip_publication.revoked_at`, `revoked_by_user_id`, `revocation_reason`; sets
+`payslip.status = 'REVOKED'`; calls `fn_refresh_payslip_fy_rollup` and the `tds_quarter`
+recompute so the YTD tiles and quarterly TDS fall back in the same transaction; queues a
+`PAYSLIP_REVOKED` notification. The employee's `GET /me/payslips` then returns that payslip's
+absence with `emptyState.code = "PAYSLIPS_REVOKED"` when it was the only one.
+The row is **never deleted** and the PDF is **never** unlinked — the evidence stays.
+Guard `payroll.revocation_has_correction_or_reason`; audited `CRITICAL`.
+**`200`** `{ payslipId, status: "REVOKED", revokedAt }`.
 
 #### `GET /payroll/salary-structures/:employeeId`
 
@@ -2180,14 +8604,21 @@ pub.revoked_at IS NULL`. **No other path exists in the employee API.**
   "ytd": [ MetricDto, MetricDto, MetricDto, MetricDto ] }
 ```
 
-`ytd` is read from `payslip_fy_rollup` for (`:me`, `:fy`) — one indexed read, never a scan:
+`ytd` is read from `payslip_fy_rollup` for (`:me`, `:fy`) — one indexed read, never a scan.
+Its money columns are **envelope-encrypted** (`DATA-MODEL.md` class M1: a rollup is a
+ready-made annual-compensation table and is protected exactly like a payslip), so the mapper
+decrypts `gross_earned_minor_ct`, `net_credited_minor_ct`, `tds_minor_ct`,
+`employee_pf_minor_ct` and `employer_pf_minor_ct` — one AES-GCM operation each, on one row.
+The row itself is maintained only by `fn_refresh_payslip_fy_rollup`, which aggregates
+**live publications only**; it is refreshed on publish, on revocation and on correction, so
+a YTD tile can never outlive the payslips behind it:
 
-| Metric `key`     | `value`                                              | `subLabel`                                                                         |
-| ---------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `GROSS_EARNED`   | `gross_earned_minor`                                 | `first_period_label` + ' – ' + `last_period_label`, abbreviated → `Apr – Aug 2026` |
-| `NET_CREDITED`   | `net_credited_minor`                                 | `payslip_count + ' payslips'`                                                      |
-| `TDS_DEDUCTED`   | `tds_minor`                                          | `ui_copy` `payslips.tds_sub` → "Reflected in Form 26AS"                            |
-| `PF_CONTRIBUTED` | _(computed)_ `employee_pf_minor + employer_pf_minor` | `ui_copy` → "Employee + employer"                                                  |
+| Metric `key`     | `value`                                                                                       | `subLabel`                                                                                          |
+| ---------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `GROSS_EARNED`   | `gross_earned_minor_ct` (decrypted)                                                           | `first_period_label` + ' – ' + `last_period_label`, via `periodRange()` (§12.18) → `Apr – Aug 2026` |
+| `NET_CREDITED`   | `net_credited_minor_ct` (decrypted)                                                           | `payslip_count + ' payslips'`                                                                       |
+| `TDS_DEDUCTED`   | `tds_minor_ct` (decrypted)                                                                    | `ui_copy` `payslips.tds_sub` → "Reflected in Form 26AS"                                             |
+| `PF_CONTRIBUTED` | _(computed)_ `employee_pf_minor_ct + employer_pf_minor_ct`, both decrypted, summed in the API | `ui_copy` → "Employee + employer"                                                                   |
 
 **When nothing is published this endpoint returns `200` with `data: []`, `total: 0`, all four
 metrics `value: null`, and an `emptyState`.** It never returns `404`, never an error, and
@@ -2203,7 +8634,12 @@ never a sample payslip. The `emptyState.code` is derived from the earliest in-sc
 #### `GET /me/payslips/:id`
 
 **P** `payslip:read:self` · **unpaged** · returns `PayslipDetailDto`.
-Sets `payslip_publication.first_viewed_at` on the first successful read.
+Sets `payslip_publication.first_viewed_at` on the first successful read — a
+`UPDATE … SET first_viewed_at = now() WHERE payslip_id = $1 AND first_viewed_at IS NULL`,
+issued **after** the response is serialised and outside the read transaction, so a write
+failure never fails the read and the route stays safe to serve from a read replica for its
+`SELECT`. It is the only `GET` in this contract with a write side effect, and it is
+idempotent.
 The API asserts Σ lines == the stored totals before responding; a mismatch is
 `500 INTEGRITY_ASSERTION_FAILED` and a P1 page — never a silently corrected number.
 `404 NOT_FOUND` for any payslip not passing the visibility gate, including one belonging to
@@ -2266,7 +8702,8 @@ run yet"). Every figure then renders `—`. **Nothing is estimated client-side.*
                "tdsDeducted": MoneyDto|null,     // NULL while UPCOMING — a persisted absence
                "status": ChipDto,                // FILED green / IN_PROGRESS amber / UPCOMING gray / REVISED blue
                "payslipCount": 3, "form24qAckNo": "…", "filedAt": "…" } ] }`
-`tds_deducted_minor` is recomputed as Σ `payslip.tds_minor` over **published** payslips whose
+`tds_deducted_minor` is recomputed as Σ decrypted `payslip.tds_minor_ct` over payslips with a
+**live** `payslip_publication` (published, not revoked) whose
 `period_end` falls in the quarter, with `source_payslip_ids` retained for traceability. A
 `null` amount renders `—`; it is never shown as `₹0`.
 
@@ -2384,7 +8821,24 @@ not a stored guess. If there is no published payslip yet, `coverageValue` is `nu
 card shows `—` with `coverageEmptyState.code = "BENEFIT_AWAITING_PAYSLIP"`.
 `meta` is composed from `provider_name`, `policy_reference` and the covered dependents'
 names via `benefit_enrolment_dependent` → `dependent.full_name` (decrypted for the owner
-only). `action.kind = 'NONE'` ⇒ the SPA renders no button. Only `ENROLLED` enrolments appear;
+**`action` is a closed enum**, resolved server-side from `benefit_plan.action_kind` and the
+enrolment's own state. There is no free-form action and no client-side mapping:
+
+| `action.kind`         | Rendered              | `isEnabled` when                                                                   | `disabledReason` (`ui_copy` `benefit.action_disabled.<kind>` + persisted params)                                                           |
+| --------------------- | --------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `DOWNLOAD_ECARD`      | "Download e-card"     | `benefit_enrolment.ecard_file_object_id IS NOT NULL` and its `scan_status='CLEAN'` | `params.ecardAvailableFrom` = `benefit_plan_year.ecard_available_from`                                                                     |
+| `VIEW_PLAN_DOCUMENT`  | "View policy"         | `benefit_plan.document_file_object_id IS NOT NULL`                                 | — (button absent, not disabled)                                                                                                            |
+| `CHANGE_CONTRIBUTION` | "Change contribution" | the contribution window is open (`benefit_plan_year.contribution_window_*`)        | `params.opensOn`/`closesOn`; the action opens `POST /me/tickets` with `ticketCategoryId` = the `BENEFITS` category and a prefilled subject |
+| `ADD_DEPENDENT`       | "Add dependent"       | `benefit_plan_year.enrolment_window_*` is open                                     | `params.opensOn`/`closesOn`                                                                                                                |
+| `NONE`                | nothing               | —                                                                                  | —                                                                                                                                          |
+
+`disabledReason` is **never** a literal such as "E-cards are issued from 1 Oct": it is a
+`ui_copy` template interpolated with the persisted window dates, so when the window moves the
+sentence moves with it. A plan with no persisted date and no open window has
+`isEnabled: false, disabledReason: null`, and the SPA disables the button with no caption
+rather than inventing one.
+
+Only `ENROLLED` enrolments appear;
 none ⇒ `data: []` + `emptyState.code = "BENEFITS_NONE_ACTIVE"`.
 
 #### `GET /me/benefits/enrolments/:id/ecard` — signed URL per §11 · `409 CONFLICT` (`reason="ECARD_NOT_ISSUED"`).
@@ -2436,7 +8890,7 @@ body: fullName z.string().trim().min(2).max(120)
 
 #### `GET /expenses/categories`
 
-**P** `expense:claim:create:self` · **unpaged**
+**P** `org:read` (reference data) · **unpaged**
 `{ "data": [ { "id", "code": "REMOTE_WORK", "name": "Remote work",
                "requiresReceipt": true, "receiptRequiredAbove": MoneyDto|null,
                "requiresFinanceApproval": true, "displayOrder": 2,
@@ -2457,11 +8911,11 @@ Caps come from `expense_limit` resolved for the actor's employment type and job 
 
 `stats` from `expense_fy_rollup` (`DATA-MODEL.md` §20.9) — three indexed reads:
 
-| `key`               | `value`                        | `subLabel`                                                                                                                                                                                                       |
-| ------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AWAITING_APPROVAL` | `awaiting_amount_minor`        | `awaiting_count + ' claim(s) with ' + <current primary manager full_name>`                                                                                                                                       |
-| `APPROVED_UNPAID`   | `approved_unpaid_amount_minor` | `'With ' + payroll_cycle.label + ' salary'`, where the cycle is the next one with `status <= 'INPUTS_LOCKED'`. **No such cycle ⇒ the label drops the date and the sub reads "Awaiting the next payroll cycle."** |
-| `REIMBURSED_FY`     | `reimbursed_amount_minor`      | `reimbursed_count + ' claims since ' + to_char(fiscal_year.start_date,'Mon')`                                                                                                                                    |
+| `key`               | `value`                        | `subLabel`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AWAITING_APPROVAL` | `awaiting_amount_minor`        | `awaiting_count + ' claim(s) with ' + the **distinct approvers of those claims**, read from `expense_claim.manager_employee_id`— the snapshot taken at submit, **not** the employee's current primary manager (after a re-org the two differ, and naming the current manager would tell the employee their claim sits with someone who has never seen it). More than one distinct approver ⇒`'<n> approvers'`. `awaiting_count = 0` ⇒ the sub-label is **omitted**, not rendered with a name.                                                                                                                                              |
+| `APPROVED_UNPAID`   | `approved_unpaid_amount_minor` | A date is shown **only for claims actually queued into a cycle**: `payroll_cycle.scheduled_pay_date` reached through `expense_claim.reimbursement_batch_id → reimbursement_batch.payroll_cycle_id`, for claims in `QUEUED_FOR_PAYMENT`. A claim that is merely `FINANCE_APPROVED` is in no batch and has no pay date, so its share renders with `ui_copy` `expenses.not_yet_queued` ("Not yet queued for payment") rather than promising a date the system has not committed to. Mixed states ⇒ the earliest committed `scheduled_pay_date` plus `'and <n> not yet queued'`. **No enum-ordering scan for "the next cycle" exists** (§1.5). |
+| `REIMBURSED_FY`     | `reimbursed_amount_minor`      | `reimbursed_count + ' claims since ' + to_char(fiscal_year.start_date,'Mon')`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 No rollup row ⇒ all three `value: null` + `emptyState.code = "EXPENSES_NONE_IN_FY"`.
 
@@ -2536,7 +8990,7 @@ body: outcome z.enum(['APPROVE','REJECT'])
 **P** `expense:reimburse` · **I** yes
 `body: { cutoffDate z.string().date() }` → `DRAFT` batch, `batch_no` from a sequence.
 
-#### `POST /accounts/reimbursement-batches/:id/items`
+#### `POST /accounts/reimbursement-batches/:id/add` _(canonical; `…/items` is not routed)_
 
 `body: { expenseClaimIds: z.array(uuid).min(1).max(500) }` — every claim must be
 `FINANCE_APPROVED` (`reimb.all_claims_finance_approved`) else `409 GUARD_FAILED` listing the
@@ -2568,7 +9022,7 @@ with `paid_in_payroll_cycle_id` set, and emits `EXPENSE_REIMBURSED` —
 
 #### `GET /documents/letter-templates`
 
-**P** `document:request:create:self` · **unpaged**
+**P** `org:read` (reference data) · **unpaged**
 `{ "data": [ { "id", "code": "SALARY_CERTIFICATE", "name": "Salary certificate",
                "requiresAddressee": true, "slaWorkingDays": 1, "displayOrder": 1 } ] }`
 The form's "issued within 1 working day" is `slaWorkingDays` of the **selected** template —
@@ -2645,7 +9099,7 @@ Rows come from `policy_assignment` where `superseded_at IS NULL`, joined to
 assignment and lacks a broader `policy:read` scope. `bodySha256` is returned so the client
 echoes back exactly what it rendered.
 
-#### `POST /me/policies/:versionId/acknowledge`
+#### `POST /me/policy-versions/:versionId/acknowledge` _(canonical; `/me/policies/:versionId/acknowledge` is not routed)_
 
 **P** `policy:acknowledge:self` · **I** yes · **RL** `user` 30/h
 
@@ -2700,7 +9154,7 @@ stale body; it must reload before acknowledging) · `404 NOT_FOUND`.
 ```
 body: versionMajor z.number().int().min(0), versionMinor z.number().int().min(0)
       summary z.string().trim().min(20).max(2000)
-      bodyMarkdown z.string().trim().min(50).max(200_000)
+      bodyMarkdown z.string().trim().min(50).max(200_000)   // see the body-size note below
       appliesToLabel z.string().trim().max(200)
       effectiveFrom z.string().date()
       nextReviewOn z.string().date().optional()
@@ -2718,7 +9172,16 @@ body: versionMajor z.number().int().min(0), versionMinor z.number().int().min(0)
       pdfFileId z.string().uuid().optional()
 ```
 
-Creates a `DRAFT` version; `body_sha256` is computed server-side over `bodyMarkdown`.
+Creates a `DRAFT` version; `body_sha256` is computed server-side over the **NFC-normalised,
+LF-normalised** `bodyMarkdown` — the same normalisation the detail endpoint applies before
+hashing, so a client that renders what it was sent can always echo a matching hash.
+
+**Body-size exception.** The global request cap is 128 KiB (§2.3 `PAYLOAD_TOO_LARGE`), which
+a 200 000-character policy body would exceed. This route — and only this route and
+`PATCH /hr/policies/versions/:versionId` — declares `config.bodyLimitBytes: 1_048_576`
+(1 MiB). Nothing else in the contract raises the cap. Over 1 MiB the author attaches a PDF
+(`pdfFileId`) and keeps `bodyMarkdown` to the summary: a policy body nobody will read in a
+browser is not a reason to widen the parser for every route.
 **`201`** the version.
 
 #### `PATCH /hr/policies/versions/:versionId` — **If-Match** — allowed **only** while `DRAFT`;
@@ -2798,7 +9261,7 @@ after `canSee()` passes (`SECURITY.md` §4.10).
 
 #### `GET /help-desk/categories`
 
-**P** `ticket:create:self` · **unpaged**
+**P** `org:read` (reference data) · **unpaged**
 `{ "data": [ { "id", "code": "PAYROLL_TAX", "name": "Payroll & tax",
                "firstResponseSlaHours": 8, "isAnonymousAllowed": false, "displayOrder": 0 } ],
    "firstResponseSlaLabel": "within 1 working day" }`
@@ -2807,7 +9270,7 @@ organisation's working hours — persisted, not a caption.
 
 #### `GET /help-desk/faq`
 
-**P** `ticket:create:self` · **unpaged**, ordered by `display_order`
+**P** `org:read` (reference data) · **unpaged**, ordered by `display_order`
 `{ "data": [ { "id", "question", "answerMarkdown", "categoryId" } ] }`
 **No published rows ⇒ `data: []` and the SPA does not render the card at all**
 (`DATA-MODEL.md` §16.6).
@@ -2834,6 +9297,26 @@ body .strict():
                                           'expense_claim','leave_request','employee']),
                             id: z.string().uuid() }).optional()
 ```
+
+**`relatedEntity` is authorised, not merely typed.** The pair is resolved through the same
+`authzWhere` the owning module uses, for the actor, **before** the ticket is created. An id
+the actor cannot read is `404 NOT_FOUND` — indistinguishable from "does not exist", so this
+field cannot be used to probe for the existence of another employee's payslip or bank
+account. Only these types are accepted, each with the permission it is resolved under:
+`payslip` (`payslip:read:self`), `form16_document` (`tax:form16:read:self`),
+`employee_bank_account` (`profile:read_sensitive:self`, own row only),
+`expense_claim` (`expense:claim:read:self`), `leave_request` (`leave:request:read:self`),
+`employee` (must equal `actor.employeeId`). The stored link is `(type, id)` only; **no
+attribute of the related entity is copied into the ticket, the notification or the email.**
+
+**`isAnonymous` is anonymous to HR, not to the audit chain.** When true: `raised_by_employee_id`
+is still stored (an anonymous channel with no accountability is a harassment vector), but it
+is projected as `null` on every `ticket:read:any` surface, excluded from `TicketDto.raisedBy`,
+excluded from `template_data`, and `reply_to_address` is omitted. Only
+`audit:read` holders can join the ticket to a person, and doing so is itself a
+`READ_SENSITIVE` audit event. The HR queue renders `ui_copy` `ticket.anonymous_notice`
+("Anonymous — reply in the portal thread; email reply is not available"), so an anonymous
+ticket never looks unanswerable.
 
 **One transaction, both effects (Directive 8):**
 
@@ -2918,7 +9401,8 @@ same query (`DATA-MODEL.md` §20.14).
 
 #### `GET /manager/approvals`
 
-**P** `approval:task:read:any` (scoped by `assignee_employee_id = :me`) · **page/limit**,
+**P** `approval:task:read:team` (scope DIRECT_REPORTS/REPORTING_CHAIN, resolved as
+`assignee_employee_id = :me`) · **page/limit**,
 sort `priority_order, requested_at` (only value)
 `query: kind z.enum(['LEAVE_REQUEST','EXPENSE_CLAIM','ATTENDANCE_PERIOD','DOCUMENT_REQUEST']).optional()`
 
@@ -2932,8 +9416,28 @@ block.
 
 #### `GET /manager/approvals/history`
 
-**P** `approval:task:read:any` · **cursor**, sort `decided_at DESC`
+**P** `approval:task:read:team` · **cursor**, sort `decided_at DESC`
 `ApprovalTaskDto` with the `decision` object populated from `approval_decision`.
+Empty ⇒ `emptyState.code = "APPROVALS_NO_HISTORY"`.
+
+> **`approval:task:read:any` is not a Manager permission.** `DATA-MODEL.md` §3.3 grants
+> MANAGER `approval:task:read:team` and `approval:task:act` only; `:any` is held by **HR**,
+> for the escalation and audit surfaces (`GET /hr/approvals`, below). Under the RLS shape of
+> `DATA-MODEL.md` §1.8.3 a Manager holding `:any` would be able to read **every** manager's
+> queue org-wide — subject names, amounts and subtitles included — which is a privilege
+> escalation, not a convenience. Both `/manager/approvals` routes therefore declare `:team`
+> and additionally pin `assignee_employee_id = :me` in the query, so even an over-broad grant
+> cannot widen the result set.
+
+#### `GET /hr/approvals`
+
+**P** `approval:task:read:any` · **cursor**, sort `due_at`, filters `kind`, `status`,
+`assigneeEmployeeId`, `overdueOnly` · **HR only**
+The org-wide queue view used for chasing overdue approvals and for the attendance escalation
+screen. It returns `ApprovalTaskDto` **without** `amount` — HR holds no `expense:claim:read:*`
+beyond team scope and must not learn claim values from a queue — and never exposes a decision
+control; HR acts through `POST /hr/attendance/approvals/:id/escalate`, not by deciding on a
+manager's behalf. Empty ⇒ `emptyState.code = "APPROVALS_NONE_ORG_WIDE"`.
 
 #### `POST /manager/approvals/:id/decide`
 
@@ -2956,13 +9460,25 @@ endpoints (§13.4, §13.5, §13.10) remain available and behave identically.
 Guards: `approval.actor_is_assigned_approver`, plus `approval.note_required` on
 `REJECT`/`REASSIGN`, plus the entity's own guards.
 
+**`REASSIGN` is bounded, not free.** `reassignToEmployeeId` must resolve to an `ACTIVE`
+employee who (a) is not the actor, (b) is not the task's `subject_employee_id`
+(`ck_at__not_self` is re-asserted on the new row), and (c) is either the actor's own primary
+manager, or the subject's HR business partner, or a holder of the same approval permission
+within the subject's `employee_reporting_closure`. Anything else is
+`422 BUSINESS_RULE_VIOLATED` (`rule="REASSIGN_TARGET_INVALID"`). The original task is closed
+with outcome `REASSIGNED` and a **new** `approval_task` is created for the target, so the
+pending count, the badge and the queue remain one query; `approval_decision` records both
+sides. Reassignment does **not** move the underlying entity's state machine.
+`POST /manager/approvals/:id/decide` with `REASSIGN` is the only route that creates an
+approval task from a client request, and it can only move one that already exists.
+
 **`200 OK`** `{ "task": ApprovalTaskDto, "entity": <the module DTO>, "pendingCount": 2 }`
 — `pendingCount` is re-read so the badge updates from the server, not from a client decrement.
 
 Errors: `403 SELF_APPROVAL_FORBIDDEN` · `404 NOT_FOUND` (not assigned to the actor) ·
 `409 STATE_TRANSITION_NOT_ALLOWED` (already decided — the SPA refetches) ·
-`409 VERSION_CONFLICT` · `422 BUSINESS_RULE_VIOLATED` (`rule="NOTE_REQUIRED"` /
-`"APPROVED_AMOUNT_EXCEEDS_CLAIM"`).
+`409 VERSION_CONFLICT` · `422 NOTE_REQUIRED` · `422 APPROVED_AMOUNT_EXCEEDS_CLAIM` ·
+`422 BUSINESS_RULE_VIOLATED` (`rule="REASSIGN_TARGET_INVALID"`).
 
 ### 13.16 Notifications — `/api/v1/me/notifications`
 
@@ -3044,6 +9560,47 @@ anywhere in the system** (`SECURITY.md` §10.1).
 `body: { dateOfExit, reason (min 10) }` → sets `EXITED`, revokes every session, disables the
 user, and rebuilds the reporting closure.
 
+#### `POST /hr/employees/:id/resend-invitation`
+
+**P** `employee:create` · **I** yes · **`202`** · revokes the prior `user_invitation` and
+issues a new one. `409 CONFLICT` (`reason="ALREADY_ACTIVATED"`).
+
+#### `POST /hr/employees/:id/suspend` · `…/reinstate`
+
+**P** `employee:update:any` · **I** yes · **S** yes · **If-Match**
+`body: { reason z.string().trim().min(10).max(500), paySuspended z.boolean() }`
+(`WORKFLOWS.md` EMP-5/EMP-6). `suspend` sets `employment_status = 'SUSPENDED'`, disables the
+`app_user` (`token_epoch += 1`, every family revoked), sets
+`employee_employment.pay_suspended` per the decision, and emits `SECURITY_ALERT` to HR and
+the manager. `reinstate` reverses the employment status and re-enables the user; it does
+**not** restore sessions. Both audited with before/after.
+
+#### `POST /hr/employees/:id/resign` · `…/offboard`
+
+**P** `employee:update:any` / `employee:deactivate` · **I** yes · **S** yes on `offboard`
+`resign` records `notice_start_date`, `date_of_exit` and moves `ACTIVE → NOTICE_PERIOD`.
+`offboard` is the terminal transition to `EXITED` on or after `date_of_exit`: it revokes
+every session, disables the user, closes every live `user_role` grant with
+`valid_to = date_of_exit`, rebuilds `employee_reporting_closure`, and **reassigns every open
+`approval_task` assigned to that employee** to their primary manager — without which an
+offboarding silently strands their team's pending approvals. Guard
+`employee.no_open_payroll_cycle_scope`. `409 GUARD_FAILED` names the blocking cycle.
+
+#### `POST /admin/users/:userId/disable` · `…/enable`
+
+**P** `employee:deactivate` · **I** yes · **S** yes · `body: { reason (min 10) }` ·
+**`204`** (`WORKFLOWS.md` USR-5). The `app_user`-level twin of employment suspension, for the
+case where access must be cut without changing employment state.
+
+#### `GET /admin/role-grant-requests` · `POST /admin/role-grant-requests/:id/approve` · `…/reject`
+
+**P** `role:assign` · **I** yes · **S** yes · `body: { note (min 10) }` on reject
+The checker half of the two-phase grant below. The approver must be a **different** HR user
+from the requester (`409 SEGREGATION_REQUIRED`) and must hold `role:assign` at the time of
+approval, not merely when the request was raised. On approve the `user_role` row is created,
+`token_epoch += 1` on the target, and `PERMISSION_GRANT` is written naming **both** actors.
+Empty queue ⇒ `emptyState.code = "ROLE_GRANTS_NONE_PENDING"`.
+
 #### `GET /admin/roles` — **P** `role:read` · **unpaged** · the four personas with their
 
 permission sets (reference data).
@@ -3106,7 +9663,25 @@ query: from z.coerce.date(), to z.coerce.date()            // required, max 92-d
 `{ "data": [ { "sequenceNo", "occurredAt", "actorEmailSnapshot", "actorRolePersona",
                "actorPermissionCode", "action", "entityType", "entityId", "entityLabel",
                "stateMachine", "fromState", "toState", "changedFields", "reason",
+**Scope of `audit:read`differs by persona.** Both HR and Accounts hold`audit:read`
+(`DATA-MODEL.md` §3.3), but the audit log is the one place where every module's entity labels
+and actor identities meet, so the route resolves a persona predicate into the query rather
+than returning the whole table to both:
+
+| Persona                      | `entity_type` the query admits                                                                                                                                                                                                                                                                                                                                                            |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| HR                           | everything **except** `payslip`, `payslip_line`, `payroll_input_item`, `salary_structure`, `salary_structure_component`, `payslip_fy_rollup` — HR can see that payroll moved and who moved it (`payroll_cycle`, `payroll_run`, `payroll_correction`), never a per-employee amount, matching HR's lack of `payslip:read:any`                                                               |
+| ACCOUNTS                     | `payroll_*`, `payslip*`, `salary_structure*`, `expense_*`, `reimbursement_*`, `tax_*`, `form16_document`, `attendance_*`, `file_object`, `email_outbox`, `app_user`(own), plus every event whose `actor_app_user_id` is the actor — never `employee` personal satellites, `profile_change_request_field`, `dependent`, `emergency_contact`, `helpdesk_ticket` or `policy_acknowledgement` |
+| Anyone holding both personas | the union, and the read is flagged `metadata.sod_conflict = true`                                                                                                                                                                                                                                                                                                                         |
+
+An actor may always read events **they themselves caused**, whatever the entity type; that is
+what makes the log usable for self-defence. `before_data`/`after_data` stay redacted for
+everyone. A request for an `entityType` outside the actor's set is `200` with `data: []` and
+`emptyState.code = "AUDIT_NO_EVENTS_IN_RANGE"`, never `403` — the existence of events about
+an entity is itself information.
+
                "apiRoute", "httpStatus", "requestId" } ], "page": {…} }`
+
 `before_data`/`after_data` are **omitted from the list** and available only on the detail
 route, already redacted (`"<redacted:aes>"` for encrypted columns, money as minor-unit
 strings). **Reading the audit log itself writes an `audit_event`** with
@@ -3117,7 +9692,12 @@ strings). **Reading the audit log itself writes an `audit_event`** with
 #### `GET /admin/audit/chain/verify`
 
 **P** `audit:read` · **unpaged**
-`query: from z.coerce.date().optional(), to z.coerce.date().optional()` (default: last 24 h)
+`query: from z.coerce.date().optional(), to z.coerce.date().optional()` — **max 31-day span**
+(default: last 24 h). A wider range is `400 VALIDATION_FAILED`; verifying the whole chain is
+the job of the nightly `audit-chain-verify` worker, which walks it in leased batches and
+records its result in `ess_ops.background_job`, not of a synchronous HTTP request that would
+otherwise be an unauthenticated-cost amplification against the largest table in the database.
+**RL** `user` 6/h.
 
 ```jsonc
 {
@@ -3150,6 +9730,23 @@ what backs the HR screen's "chain verified through sequence N" banner.
 `{ "exportId": "…", "status": "QUEUED" }`; poll `GET /admin/exports/:id`, then download via
 a signed URL. The export itself is an `EXPORT` audit event. CSV cells are prefixed against
 formula injection (`SECURITY.md` §5.7).
+
+#### `GET /admin/exports/:id`
+
+**P** the permission of the export's own kind (`audit:export` for an audit export) ·
+**unpaged** · **RL** read
+`{ "id", "kind": "AUDIT", "status": "QUEUED"|"RUNNING"|"READY"|"FAILED"|"EXPIRED",
+   "requestedAt", "finishedAt", "rowCount": 4120, "format": "CSV",
+   "expiresAt": "2026-09-30T04:44:10Z", "errorMessage": null }`
+Poll interval 2 s, backing off to 10 s after 60 s. `rowCount` is `null` until `READY`.
+An export is readable **only by the user who requested it** (`requested_by_user_id = :me`),
+expires after 24 h, and its object is deleted by the `export-purge` job at `expiresAt`.
+
+#### `GET /admin/exports/:id/download`
+
+Signed URL per §11 · `409 CONFLICT` (`reason="PDF_NOT_READY"` — reused for any artefact still
+generating) while `status <> 'READY'` · `410 GONE` (`code: "CONFLICT"`,
+`details.reason = "EXPORT_EXPIRED"`) after `expiresAt`.
 
 #### `GET /admin/email-outbox` — **P** `org:manage` · **cursor** · operational view of
 
@@ -3191,71 +9788,87 @@ so the two documents describe one API:
 those of the `state_transition` seed row named in `DATA-MODEL.md`; every endpoint takes
 `If-Match` and, except where noted, `Idempotency-Key`.
 
-| Machine                  | Transition                             | Endpoint (`/api/v1` + namespace)                                                           | Body                                                                                                          |
-| ------------------------ | -------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| `leave_request`          | `NULL→DRAFT` / `NULL→PENDING_APPROVAL` | `POST /me/leave-requests` (`submit` flag)                                                  | §13.4                                                                                                         |
-|                          | `DRAFT→PENDING_APPROVAL`               | `POST /me/leave-requests/:id/submit`                                                       | `{}`                                                                                                          |
-|                          | `→APPROVED`                            | `POST /manager/leave-requests/:id/approve`                                                 | `{ note? }`                                                                                                   |
-|                          | `→REJECTED`                            | `POST /manager/leave-requests/:id/reject`                                                  | `{ note (min 10) }`                                                                                           |
-|                          | `→WITHDRAWN`                           | `POST /me/leave-requests/:id/withdraw`                                                     | `{ reason? }`                                                                                                 |
-|                          | `APPROVED→CANCELLED`                   | `POST /hr/leave-requests/:id/cancel`                                                       | `{ reason (min 10) }`                                                                                         |
-|                          | `DRAFT→CANCELLED`                      | `DELETE /me/leave-requests/:id`                                                            | — (no `Idempotency-Key`)                                                                                      |
-| `expense_claim`          | create                                 | `POST /me/expense-claims`                                                                  | §13.10                                                                                                        |
-|                          | `DRAFT→SUBMITTED`                      | `POST /me/expense-claims/:id/submit`                                                       | `{}`                                                                                                          |
-|                          | `→MANAGER_APPROVED`                    | `POST /manager/expense-claims/:id/manager-approve`                                         | `{ approvedAmountMinor?, note? }`                                                                             |
-|                          | `→MANAGER_REJECTED`                    | `POST /manager/expense-claims/:id/manager-reject`                                          | `{ note (min 10) }`                                                                                           |
-|                          | `→FINANCE_APPROVED`                    | `POST /accounts/expense-claims/:id/finance-approve`                                        | `{ approvedAmountMinor?, note? }`                                                                             |
-|                          | `→FINANCE_REJECTED`                    | `POST /accounts/expense-claims/:id/finance-reject`                                         | `{ note (min 10) }`                                                                                           |
-|                          | `→WITHDRAWN`                           | `POST /me/expense-claims/:id/withdraw`                                                     | `{ reason? }`                                                                                                 |
-|                          | `DRAFT→CANCELLED`                      | `DELETE /me/expense-claims/:id`                                                            | —                                                                                                             |
-| `attendance_period`      | `OPEN→HR_SUBMITTED`                    | `POST /hr/attendance/periods/:id/submit`                                                   | §13.5                                                                                                         |
-|                          | `→REOPENED`/`→OPEN`                    | `POST /hr/attendance/periods/:id/reopen`                                                   | `{ reason (min 10) }`                                                                                         |
-| `attendance_approval`    | `→APPROVED`                            | `POST /manager/attendance/approvals/:id/approve`                                           | `{ note? }`                                                                                                   |
-|                          | `→REJECTED`                            | `POST /manager/attendance/approvals/:id/return`                                            | `{ note (min 10) }`                                                                                           |
-|                          | `→AUTO_ESCALATED`                      | `POST /hr/attendance/approvals/:id/escalate`                                               | `{ reason (min 10) }`                                                                                         |
-| `payroll_cycle`          | `NULL→DRAFT`                           | `POST /payroll/cycles`                                                                     | §13.6                                                                                                         |
-|                          | `DRAFT→INPUTS_OPEN`                    | `POST /payroll/cycles/:id/open-inputs`                                                     | `{}`                                                                                                          |
-|                          | `INPUTS_OPEN→INPUTS_LOCKED`            | `POST /payroll/cycles/:id/lock-inputs`                                                     | `{}`                                                                                                          |
-|                          | `VALIDATION_FAILED→INPUTS_OPEN`        | `POST /payroll/cycles/:id/reopen-inputs`                                                   | `{ reason (min 10) }`                                                                                         |
-|                          | `→VALIDATING`                          | `POST /payroll/cycles/:id/validate`                                                        | `{}`                                                                                                          |
-|                          | `→CALCULATING`                         | `POST /payroll/cycles/:id/calculate`                                                       | `{}`                                                                                                          |
-|                          | `CALCULATED→VALIDATED`                 | `POST /payroll/cycles/:id/discard-run`                                                     | `{ reason (min 10) }` — supersedes the run, payslips → `SUPERSEDED`                                           |
-|                          | `→APPROVED`                            | `POST /payroll/cycles/:id/approve`                                                         | `{ note? }` — **step-up**, `payroll.distinct_approver`                                                        |
-|                          | `→PUBLISHED`                           | `POST /payroll/cycles/:id/publish`                                                         | `{ actualPayDate }` — **step-up**                                                                             |
-|                          | `→CLOSED`                              | `POST /payroll/cycles/:id/close`                                                           | `{}`                                                                                                          |
-|                          | `→CANCELLED`                           | `POST /payroll/cycles/:id/cancel`                                                          | `{ reason (min 10) }`                                                                                         |
-|                          | scope exclusion                        | `POST /payroll/cycles/:id/scope/:employeeId/defer`                                         | `{ reason (min 10) }` — removes one employee from the run before `CALCULATING`; audited per employee          |
-|                          | validation resolve                     | `POST /payroll/cycles/:id/validations/:validationId/resolve`                               | `{ note (min 10) }`                                                                                           |
-| `policy_version`         | create                                 | `POST /hr/policies/:policyId/versions`                                                     | §13.12                                                                                                        |
-|                          | `DRAFT→IN_REVIEW`                      | `POST /hr/policy-versions/:id/submit-review`                                               | `{ note? }`                                                                                                   |
-|                          | `IN_REVIEW→DRAFT`                      | `POST /hr/policy-versions/:id/return`                                                      | `{ note (min 10) }`                                                                                           |
-|                          | `IN_REVIEW→PUBLISHED`                  | `POST /hr/policy-versions/:id/publish`                                                     | `{}` — maker-checker ‡                                                                                        |
-|                          | `→WITHDRAWN`                           | `POST /hr/policy-versions/:id/withdraw`                                                    | `{ reason (min 10) }`                                                                                         |
-|                          | reviewer change                        | `POST /hr/policy-versions/:id/reassign`                                                    | `{ reviewerUserId, note (min 10) }`                                                                           |
-| `policy_acknowledgement` | `NULL→ACKNOWLEDGED`                    | `POST /me/policy-versions/:id/acknowledge`                                                 | §13.12                                                                                                        |
-|                          | `NULL→WAIVED`                          | `POST /hr/policy-assignments/:id/waive`                                                    | `{ reason (min 10) }` — **P** `policy:publish`                                                                |
-| `document_request`       | create                                 | `POST /me/document-requests`                                                               | §13.11                                                                                                        |
-|                          | `SUBMITTED→IN_REVIEW`                  | `POST /hr/document-requests/:id/claim`                                                     | `{}` — assigns to the actor                                                                                   |
-|                          | `IN_REVIEW→PROCESSING`                 | `POST /hr/document-requests/:id/start`                                                     | `{}`                                                                                                          |
-|                          | `PROCESSING→ISSUED`                    | `POST /hr/document-requests/:id/issue`                                                     | `{ employeeDocumentId \| fileId, note? }`                                                                     |
-|                          | `→REJECTED`                            | `POST /hr/document-requests/:id/reject`                                                    | `{ reason (min 10) }`                                                                                         |
-|                          | `SUBMITTED→CANCELLED`                  | `DELETE /me/document-requests/:id`                                                         | —                                                                                                             |
-| `helpdesk_ticket`        | create                                 | `POST /me/tickets`                                                                         | §13.14                                                                                                        |
-|                          | `OPEN→ASSIGNED`                        | `POST /hr/tickets/:id/assign`                                                              | `{ assigneeUserId }`                                                                                          |
-|                          | `ASSIGNED→IN_PROGRESS`                 | `POST /hr/tickets/:id/start`                                                               | `{}`                                                                                                          |
-|                          | `IN_PROGRESS→WAITING_ON_EMPLOYEE`      | `POST /hr/tickets/:id/request-info`                                                        | `{ body (min 1) }`                                                                                            |
-|                          | `WAITING_ON_EMPLOYEE→IN_PROGRESS`      | `POST /me/tickets/:id/comments`                                                            | `{ body }`                                                                                                    |
-|                          | `→RESOLVED`                            | `POST /hr/tickets/:id/resolve`                                                             | `{ resolutionSummary (min 10) }`                                                                              |
-|                          | `RESOLVED→CLOSED`                      | `POST /me/tickets/:id/close`                                                               | `{ satisfactionRating? }`                                                                                     |
-|                          | `RESOLVED→REOPENED`                    | `POST /me/tickets/:id/reopen`                                                              | `{ reason (min 10) }`                                                                                         |
-|                          | `OPEN→CANCELLED`                       | `DELETE /me/tickets/:id`                                                                   | —                                                                                                             |
-|                          | outbox retry                           | `POST /hr/tickets/:id/retry-notification`                                                  | `{}` — **P** `ticket:assign`; resets the `email_outbox` row (§13.14)                                          |
-| `profile_change_request` | create                                 | `POST /me/profile-change-requests`                                                         | §13.2 (`/me/profile/change-request` is an alias of this path; **`/me/profile-change-requests` is canonical**) |
-|                          | claim                                  | `POST /hr/profile-change-requests/:id/claim`                                               | `{}`                                                                                                          |
-|                          | apply                                  | `PATCH /hr/employees/:id`                                                                  | §13.17 — applying the change is an ordinary audited employee write                                            |
-| `reimbursement_batch`    | create / add / lock / send             | `POST /accounts/reimbursement-batches`, `…/:id/add`, `…/:id/lock`, `…/:id/send-to-payroll` | §13.10                                                                                                        |
+| Machine                  | Transition                             | Endpoint (`/api/v1` + namespace)                                                           | Body                                                                                                                                                                                                                              |
+| ------------------------ | -------------------------------------- | ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `leave_request`          | `NULL→DRAFT` / `NULL→PENDING_APPROVAL` | `POST /me/leave-requests` (`submit` flag)                                                  | §13.4                                                                                                                                                                                                                             |
+|                          | `DRAFT→PENDING_APPROVAL`               | `POST /me/leave-requests/:id/submit`                                                       | `{}`                                                                                                                                                                                                                              |
+|                          | `→APPROVED`                            | `POST /manager/leave-requests/:id/approve`                                                 | `{ note? }`                                                                                                                                                                                                                       |
+|                          | `→REJECTED`                            | `POST /manager/leave-requests/:id/reject`                                                  | `{ note (min 10) }`                                                                                                                                                                                                               |
+|                          | `→WITHDRAWN`                           | `POST /me/leave-requests/:id/withdraw`                                                     | `{ reason? }`                                                                                                                                                                                                                     |
+|                          | `APPROVED→CANCELLED`                   | `POST /hr/leave-requests/:id/cancel`                                                       | `{ reason (min 10) }`                                                                                                                                                                                                             |
+|                          | `DRAFT→CANCELLED`                      | `DELETE /me/leave-requests/:id`                                                            | — (no `Idempotency-Key`)                                                                                                                                                                                                          |
+| `expense_claim`          | create                                 | `POST /me/expense-claims`                                                                  | §13.10                                                                                                                                                                                                                            |
+|                          | `DRAFT→SUBMITTED`                      | `POST /me/expense-claims/:id/submit`                                                       | `{}`                                                                                                                                                                                                                              |
+|                          | `→MANAGER_APPROVED`                    | `POST /manager/expense-claims/:id/manager-approve`                                         | `{ approvedAmountMinor?, note? }`                                                                                                                                                                                                 |
+|                          | `→MANAGER_REJECTED`                    | `POST /manager/expense-claims/:id/manager-reject`                                          | `{ note (min 10) }`                                                                                                                                                                                                               |
+|                          | `→FINANCE_APPROVED`                    | `POST /accounts/expense-claims/:id/finance-approve`                                        | `{ approvedAmountMinor?, note? }`                                                                                                                                                                                                 |
+|                          | `→FINANCE_REJECTED`                    | `POST /accounts/expense-claims/:id/finance-reject`                                         | `{ note (min 10) }`                                                                                                                                                                                                               |
+|                          | `→WITHDRAWN`                           | `POST /me/expense-claims/:id/withdraw`                                                     | `{ reason? }`                                                                                                                                                                                                                     |
+|                          | `DRAFT→CANCELLED`                      | `DELETE /me/expense-claims/:id`                                                            | —                                                                                                                                                                                                                                 |
+| `attendance_period`      | `OPEN→HR_SUBMITTED`                    | `POST /hr/attendance/periods/:id/submit`                                                   | §13.5                                                                                                                                                                                                                             |
+|                          | `→REOPENED`/`→OPEN`                    | `POST /hr/attendance/periods/:id/reopen`                                                   | `{ reason (min 10) }`                                                                                                                                                                                                             |
+| `attendance_approval`    | `→APPROVED`                            | `POST /manager/attendance/approvals/:id/approve`                                           | `{ note? }`                                                                                                                                                                                                                       |
+|                          | `→REJECTED`                            | `POST /manager/attendance/approvals/:id/return`                                            | `{ note (min 10) }`                                                                                                                                                                                                               |
+|                          | `→AUTO_ESCALATED`                      | `POST /hr/attendance/approvals/:id/escalate`                                               | `{ reason (min 10) }`                                                                                                                                                                                                             |
+| `payroll_cycle`          | `NULL→DRAFT`                           | `POST /payroll/cycles`                                                                     | §13.6                                                                                                                                                                                                                             |
+|                          | `DRAFT→INPUTS_OPEN`                    | `POST /payroll/cycles/:id/open-inputs`                                                     | `{}`                                                                                                                                                                                                                              |
+|                          | `INPUTS_OPEN→INPUTS_LOCKED`            | `POST /payroll/cycles/:id/lock-inputs`                                                     | `{}`                                                                                                                                                                                                                              |
+|                          | `VALIDATION_FAILED→INPUTS_OPEN`        | `POST /payroll/cycles/:id/reopen-inputs`                                                   | `{ reason (min 10) }`                                                                                                                                                                                                             |
+|                          | `→VALIDATING`                          | `POST /payroll/cycles/:id/validate`                                                        | `{}`                                                                                                                                                                                                                              |
+|                          | `→CALCULATING`                         | `POST /payroll/cycles/:id/calculate`                                                       | `{}`                                                                                                                                                                                                                              |
+|                          | `CALCULATED→VALIDATED`                 | `POST /payroll/cycles/:id/discard-run`                                                     | `{ reason (min 10) }` — supersedes the run, payslips → `SUPERSEDED`                                                                                                                                                               |
+|                          | `→APPROVED`                            | `POST /payroll/cycles/:id/approve`                                                         | `{ note? }` — **step-up**, `payroll.distinct_approver`                                                                                                                                                                            |
+|                          | `→PUBLISHED`                           | `POST /payroll/cycles/:id/publish`                                                         | `{ actualPayDate }` — **step-up**                                                                                                                                                                                                 |
+|                          | `→CLOSED`                              | `POST /payroll/cycles/:id/close`                                                           | `{}`                                                                                                                                                                                                                              |
+|                          | `→CANCELLED`                           | `POST /payroll/cycles/:id/cancel`                                                          | `{ reason (min 10) }`                                                                                                                                                                                                             |
+|                          | scope exclusion                        | `POST /payroll/cycles/:id/scope/:employeeId/defer`                                         | `{ reason (min 10) }` — removes one employee from the run before `CALCULATING`; audited per employee                                                                                                                              |
+|                          | validation resolve                     | `POST /payroll/cycles/:id/validations/:validationId/resolve`                               | `{ note (min 10) }`                                                                                                                                                                                                               |
+| `policy_version`         | create                                 | `POST /hr/policies/:policyId/versions`                                                     | §13.12                                                                                                                                                                                                                            |
+|                          | `DRAFT→IN_REVIEW`                      | `POST /hr/policy-versions/:id/submit-review`                                               | `{ note? }`                                                                                                                                                                                                                       |
+|                          | `IN_REVIEW→DRAFT`                      | `POST /hr/policy-versions/:id/return`                                                      | `{ note (min 10) }`                                                                                                                                                                                                               |
+|                          | `IN_REVIEW→PUBLISHED`                  | `POST /hr/policy-versions/:id/publish`                                                     | `{}` — maker-checker ‡                                                                                                                                                                                                            |
+|                          | `→WITHDRAWN`                           | `POST /hr/policy-versions/:id/withdraw`                                                    | `{ reason (min 10) }`                                                                                                                                                                                                             |
+|                          | reviewer change                        | `POST /hr/policy-versions/:id/reassign`                                                    | `{ reviewerUserId, note (min 10) }`                                                                                                                                                                                               |
+| `policy_acknowledgement` | `NULL→ACKNOWLEDGED`                    | `POST /me/policy-versions/:id/acknowledge`                                                 | §13.12                                                                                                                                                                                                                            |
+|                          | `NULL→WAIVED`                          | `POST /hr/policy-assignments/:id/waive`                                                    | `{ reason (min 10) }` — **P** `policy:publish`                                                                                                                                                                                    |
+| `document_request`       | create                                 | `POST /me/document-requests`                                                               | §13.11                                                                                                                                                                                                                            |
+|                          | `SUBMITTED→IN_REVIEW`                  | `POST /hr/document-requests/:id/claim`                                                     | `{}` — assigns to the actor                                                                                                                                                                                                       |
+|                          | `IN_REVIEW→PROCESSING`                 | `POST /hr/document-requests/:id/start`                                                     | `{}`                                                                                                                                                                                                                              |
+|                          | `PROCESSING→ISSUED`                    | `POST /hr/document-requests/:id/issue`                                                     | `{ employeeDocumentId \| fileId, note? }`                                                                                                                                                                                         |
+|                          | `→REJECTED`                            | `POST /hr/document-requests/:id/reject`                                                    | `{ reason (min 10) }`                                                                                                                                                                                                             |
+|                          | `SUBMITTED→CANCELLED`                  | `DELETE /me/document-requests/:id`                                                         | —                                                                                                                                                                                                                                 |
+| `helpdesk_ticket`        | create                                 | `POST /me/tickets`                                                                         | §13.14                                                                                                                                                                                                                            |
+|                          | `OPEN→ASSIGNED`                        | `POST /hr/tickets/:id/assign`                                                              | `{ assigneeUserId }`                                                                                                                                                                                                              |
+|                          | `ASSIGNED→IN_PROGRESS`                 | `POST /hr/tickets/:id/start`                                                               | `{}`                                                                                                                                                                                                                              |
+|                          | `IN_PROGRESS→WAITING_ON_EMPLOYEE`      | `POST /hr/tickets/:id/request-info`                                                        | `{ body (min 1) }`                                                                                                                                                                                                                |
+|                          | `WAITING_ON_EMPLOYEE→IN_PROGRESS`      | `POST /me/tickets/:id/comments`                                                            | `{ body }`                                                                                                                                                                                                                        |
+|                          | `→RESOLVED`                            | `POST /hr/tickets/:id/resolve`                                                             | `{ resolutionSummary (min 10) }`                                                                                                                                                                                                  |
+|                          | `RESOLVED→CLOSED`                      | `POST /me/tickets/:id/close`                                                               | `{ satisfactionRating? }`                                                                                                                                                                                                         |
+|                          | `RESOLVED→REOPENED`                    | `POST /me/tickets/:id/reopen`                                                              | `{ reason (min 10) }`                                                                                                                                                                                                             |
+|                          | `OPEN→CANCELLED`                       | `DELETE /me/tickets/:id`                                                                   | —                                                                                                                                                                                                                                 |
+|                          | outbox retry                           | `POST /hr/tickets/:id/retry-notification`                                                  | `{}` — **P** `ticket:assign`; resets the `email_outbox` row (§13.14)                                                                                                                                                              |
+| `profile_change_request` | create                                 | `POST /me/profile-change-requests`                                                         | §13.2 — creates `profile_change_request` + `profile_change_request_field`, **not** a `helpdesk_ticket`                                                                                                                            |
+|                          | claim                                  | `POST /hr/profile-change-requests/:id/claim`                                               | `{}`                                                                                                                                                                                                                              |
+|                          | apply                                  | `PATCH /hr/employees/:id`                                                                  | §13.17 — HR _decides_ via `…/approve`; the **apply** to `employee` is the system transition of §13.5, guarded by `profile.target_row_unchanged_since_submit`. A direct `PATCH` is the manual fallback and is audited identically. |
+| `reimbursement_batch`    | create / add / lock / send             | `POST /accounts/reimbursement-batches`, `…/:id/add`, `…/:id/lock`, `…/:id/send-to-payroll` | §13.10                                                                                                                                                                                                                            |
+| `app_user`               | `INVITED→ACTIVE`                       | `POST /auth/accept-invitation`                                                             | `{ invitationToken, newPassword, acceptTerms }` — **public**, §13.1                                                                                                                                                               |
+|                          | invitation resend                      | `POST /hr/employees/:id/resend-invitation`                                                 | `{}`                                                                                                                                                                                                                              |
+|                          | `→DISABLED` / `→ACTIVE`                | `POST /admin/users/:userId/disable` · `…/enable`                                           | `{ reason (min 10) }`                                                                                                                                                                                                             |
+|                          | forced password change                 | `POST /auth/password/forced-change`                                                        | `{ changeToken, newPassword }` — **public**, §13.1                                                                                                                                                                                |
+| `employee`               | create                                 | `POST /hr/employees`                                                                       | §13.17                                                                                                                                                                                                                            |
+|                          | `→SUSPENDED` / `→ACTIVE`               | `POST /hr/employees/:id/suspend` · `…/reinstate`                                           | `{ reason (min 10), paySuspended }`                                                                                                                                                                                               |
+|                          | `→NOTICE_PERIOD`                       | `POST /hr/employees/:id/resign`                                                            | `{ noticeStartDate, dateOfExit, reason }`                                                                                                                                                                                         |
+|                          | `→EXITED`                              | `POST /hr/employees/:id/offboard` (alias `…/deactivate`)                                   | `{ dateOfExit, reason (min 10) }`                                                                                                                                                                                                 |
+| `profile_change_request` | `→APPROVED`                            | `POST /hr/profile-change-requests/:id/approve`                                             | `{ note? }` — **P** `profile:change_request:decide`                                                                                                                                                                               |
+|                          | `→REJECTED`                            | `POST /hr/profile-change-requests/:id/reject`                                              | `{ reason (min 10) }`                                                                                                                                                                                                             |
+|                          | `APPROVED→APPLIED`                     | _system_ (§13.5 system-transition table)                                                   | —                                                                                                                                                                                                                                 |
+| `payroll_correction`     | `NULL→PENDING_APPROVAL`                | `POST /payroll/corrections`                                                                | §13.6                                                                                                                                                                                                                             |
+|                          | `→APPROVED` / `→REJECTED`              | `POST /payroll/corrections/:id/approve` · `…/reject`                                       | `{ note (min 10) }` — **step-up**, `payroll.distinct_approver`                                                                                                                                                                    |
+| `payslip_publication`    | `→REVOKED`                             | `POST /payroll/publications/:payslipId/revoke`                                             | `{ reason (min 20) }` — **step-up**                                                                                                                                                                                               |
+| `role_grant_request`     | `→APPROVED` / `→REJECTED`              | `POST /admin/role-grant-requests/:id/approve` · `…/reject`                                 | `{ note (min 10) }` — maker-checker ‡                                                                                                                                                                                             |
+| `mfa_credential`         | enrol / confirm / disable              | `POST /auth/mfa/enrol` · `…/verify-enrolment` · `DELETE /auth/mfa/credentials/:id`         | §13.1 — **R** (re-auth), not **S**                                                                                                                                                                                                |
 
-Two naming decisions that must not drift:
+**Four naming decisions that must not drift:**
 
 - **`PATCH /me/profile` does not exist.** `WORKFLOWS.md` mentions it; an employee cannot
   mutate their own profile directly (Directive 5 — every profile change is a reviewable,
@@ -3268,6 +9881,32 @@ Two naming decisions that must not drift:
   `204`. Everything else is a named `POST` verb, so the audit trail records an intent rather
   than an absence.
 
+- **One path per transition — no aliases.** Three paths appeared twice in earlier drafts and
+  exactly one spelling of each is routed; the other returns `404` like any unknown route:
+
+  | Transition              | **Routed**                                        | Not routed                            |
+  | ----------------------- | ------------------------------------------------- | ------------------------------------- |
+  | policy acknowledgement  | `POST /me/policy-versions/:versionId/acknowledge` | `/me/policies/:versionId/acknowledge` |
+  | profile change request  | `POST /me/profile-change-requests`                | `/me/profile/change-request`          |
+  | reimbursement batch add | `POST /accounts/reimbursement-batches/:id/add`    | `…/items`                             |
+
+  An alias would break CI invariant 3a (exactly one route per `state_transition` seed row) and
+  would let two handlers drift apart while both look canonical. Where §13 above still shows a
+  non-routed spelling in prose, this table wins.
+
+- **Permissions that exist in `DATA-MODEL.md` §3.1 but are bound to no route in v1** are
+  listed so they are a conscious deferral rather than an unreachable capability:
+  `leave:balance:adjust`, `leave:config:manage`, `holiday:manage`, `benefit:manage`,
+  `dependent:verify`, `expense:config:manage`, `expense:claim:approve:skip_level`,
+  `document:type:manage`, `ticket:config:manage`, `payroll:component:manage`,
+  `payroll:statutory:manage`, `org:setting:update`, `role:manage`,
+  `report:{payroll,leave,expense}:read`, `leave:request:approve:any`,
+  `announcement:*` beyond the routes of §13.13, `tax:declaration:read:any`.
+  Each is either exercised by a seeded back-office screen out of scope for v1 or by a
+  migration/ops path; **none is reachable from the SPA**, and CI invariant 3b asserts that an
+  unbound permission appears on this list, so adding a permission without a route (or a
+  deferral note) fails the build.
+
 ---
 
 ## 14. Appendix A — prototype screen → endpoints
@@ -3278,15 +9917,19 @@ made once per session and cached by TanStack Query.
 
 ### Shell (every screen)
 
-| Element                                                             | Endpoint                                                                        |
-| ------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Sidebar org name / portal name / logo, user card, header name+title | `GET /me`                                                                       |
-| Nav groups, items, approvals badge, policy badge, unread dot        | `GET /me/bootstrap`                                                             |
-| Header date                                                         | `GET /me` → `serverTime` + `organization.timezone`                              |
-| Global search dropdown (`Module`/`Person`/`Policy`/`Payslip`)       | `GET /search?q=` (debounced 250 ms)                                             |
-| Notifications popover                                               | `GET /me/notifications?limit=20`; dot from `GET /me/notifications/unread-count` |
-| Notification click → deep link                                      | `deepLink.screen` + `deepLink.params`; then `POST /me/notifications/read`       |
-| "More" sheet nav list                                               | `GET /me/bootstrap` (same manifest)                                             |
+| Element                                                             | Endpoint                                                                                  |
+| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Sidebar org name / portal name / logo, user card, header name+title | `GET /me`                                                                                 |
+| Nav groups, items, approvals badge, policy badge, unread dot        | `GET /me/bootstrap`                                                                       |
+| Header date                                                         | `GET /me` → `serverTime` + `organization.timezone`                                        |
+| Global search dropdown (`Module`/`Person`/`Policy`/`Payslip`)       | `GET /search?q=` (debounced 250 ms)                                                       |
+| Notifications popover                                               | `GET /me/notifications?limit=20`; dot from `GET /me/notifications/unread-count`           |
+| Notification click → deep link                                      | `deepLink.screen` + `deepLink.params`; then `POST /me/notifications/read`                 |
+| "More" sheet nav list                                               | `GET /me/bootstrap` (same manifest)                                                       |
+| Org logo image                                                      | `GET /org/logo` (§11.1) — `null` ⇒ the SPA renders the wordmark, never a stock image      |
+| Server clock for every relative label                               | `GET /me` → `serverTime` (§12.18); the SPA never calls `Date.now()` for a displayed value |
+| Session list (security screen)                                      | `GET /auth/sessions`, `DELETE /auth/sessions/:sessionId`                                  |
+| Step-up dialog                                                      | `POST /auth/mfa/step-up`; password re-auth dialog `POST /auth/reauth`                     |
 
 ### Home (`isHome`)
 
@@ -3302,6 +9945,7 @@ made once per session and cached by TanStack Query.
 | Team today                                          | `GET /me/home` → `team` (omitted with no direct reports)                       |
 | "Needs your attention"                              | `GET /me/home` → `todos` (`[]` ⇒ block omitted)                                |
 | "Apply leave" / "Raise ticket" buttons              | client navigation only                                                         |
+| A block that timed out                              | `GET /me/home` → `partial[]` names it; the SPA refetches that block alone      |
 
 ### Payslips (`isPayslips`)
 
@@ -3325,13 +9969,13 @@ made once per session and cached by TanStack Query.
 
 ### My profile (`isProfile`)
 
-| Element                           | Endpoint                                                          |
-| --------------------------------- | ----------------------------------------------------------------- |
-| Header block + chips              | `GET /me/profile` → `header`                                      |
-| Tab strip + field grid + tab note | `GET /me/profile?tab=personal                                     | employment | bank | emergency` |
-| Emergency tab rows                | `GET /me/emergency-contacts`                                      |
-| "Request a change"                | `POST /me/profile/change-request` → toast shows `ticket.ticketNo` |
-| (Unmask a masked value)           | `POST /me/profile/unmask` after step-up                           |
+| Element                           | Endpoint                                                           |
+| --------------------------------- | ------------------------------------------------------------------ |
+| Header block + chips              | `GET /me/profile` → `header`                                       |
+| Tab strip + field grid + tab note | `GET /me/profile?tab=personal                                      | employment | bank | emergency` |
+| Emergency tab rows                | `GET /me/emergency-contacts`                                       |
+| "Request a change"                | `POST /me/profile-change-requests` → toast shows `ticket.ticketNo` |
+| (Unmask a masked value)           | `POST /me/profile/unmask` after step-up                            |
 
 ### Policies (`isPolicies`)
 
@@ -3340,7 +9984,7 @@ made once per session and cached by TanStack Query.
 | "N awaiting acknowledgement" chip                          | `GET /me/policies` → `pendingCount` (0 ⇒ chip omitted)                     |
 | List rows + status chips                                   | `GET /me/policies` → `data`                                                |
 | Detail (eyebrow, title, summary, 4-up meta, bullet points) | `GET /me/policies/:versionId`                                              |
-| "I have read and acknowledge" + "Due …"                    | `POST /me/policies/:versionId/acknowledge`; due from `dueOn`               |
+| "I have read and acknowledge" + "Due …"                    | `POST /me/policy-versions/:versionId/acknowledge`; due from `dueOn`        |
 | "Acknowledged on …"                                        | `acknowledgedAt` from the response / list                                  |
 | Download PDF                                               | `GET /me/policies/:versionId/download` (omitted when `pdfAvailable` false) |
 
@@ -3425,21 +10069,28 @@ made once per session and cached by TanStack Query.
 
 ### Back-office screens (new, role-gated groups appended after `Manager`)
 
-| Screen                             | Endpoints                                                                                                                                                    |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Payroll cycles** (Accounts)      | `GET /payroll/cycles`, `POST /payroll/cycles`, `…/open-inputs`; step tracker from `stepTracker`                                                              |
-| **Payroll inputs** (Accounts)      | `POST /files` (`PAYROLL_INPUT_UPLOAD`) → `POST /payroll/cycles/:id/input-batches` → `GET …/items` → `POST …/commit` → `POST /payroll/cycles/:id/lock-inputs` |
-| **Validation** (Accounts)          | `POST /payroll/cycles/:id/validate`, `GET …/validation-results`, `POST …/resolve`                                                                            |
-| **Calculate / register / publish** | `POST …/calculate`, `GET /payroll/runs/:runId`, `GET /payroll/cycles/:id/payslips`, `POST …/approve`, `POST …/publish`, `POST …/close`                       |
-| **Attendance capture** (HR)        | `GET /hr/attendance/periods`, `GET …/records`, `PUT …/records/:employeeId`, `POST …/records:bulk`                                                            |
-| **Attendance submission** (HR)     | `POST /hr/attendance/periods/:id/submit` — blocked with `submitBlockers[]` until Accounts locks inputs                                                       |
-| **Attendance approvals** (Manager) | `GET /manager/attendance/approvals`, `GET …/:id/records`, `POST …/:id/decide`                                                                                |
-| **Policy authoring** (HR)          | `GET/POST /hr/policies`, `POST /hr/policies/:id/versions`, `PATCH`, `POST …/publish`                                                                         |
-| **Policy compliance** (HR)         | `GET /hr/policies/versions/:versionId/compliance`                                                                                                            |
-| **Ticket queue** (HR)              | `GET /hr/tickets`, `POST …/assign`, `…/comments`, `…/resolve`                                                                                                |
-| **Employee admin** (HR)            | `GET/POST /hr/employees`, `PATCH /hr/employees/:id`, `POST …/invite`, `POST …/deactivate`                                                                    |
-| **Roles** (HR)                     | `GET /admin/roles`, `POST /admin/users/:id/roles`, `DELETE …/roles/:roleId`                                                                                  |
-| **Audit log** (HR, Accounts)       | `GET /admin/audit`, `GET /admin/audit/chain/verify`, `POST /admin/audit/export`                                                                              |
+| Screen                                              | Endpoints                                                                                                                                                    |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Payroll cycles** (Accounts)                       | `GET /payroll/cycles`, `POST /payroll/cycles`, `…/open-inputs`; step tracker from `stepTracker`                                                              |
+| **Payroll inputs** (Accounts)                       | `POST /files` (`PAYROLL_INPUT_UPLOAD`) → `POST /payroll/cycles/:id/input-batches` → `GET …/items` → `POST …/commit` → `POST /payroll/cycles/:id/lock-inputs` |
+| **Validation** (Accounts)                           | `POST /payroll/cycles/:id/validate`, `GET …/validation-results`, `POST …/resolve`                                                                            |
+| **Calculate / register / publish**                  | `POST …/calculate`, `GET /payroll/runs/:runId`, `GET /payroll/cycles/:id/payslips`, `POST …/approve`, `POST …/publish`, `POST …/close`                       |
+| **Attendance capture** (HR)                         | `GET /hr/attendance/periods`, `GET …/records`, `PUT …/records/:employeeId`, `POST …/records:bulk`                                                            |
+| **Attendance submission** (HR)                      | `POST /hr/attendance/periods/:id/submit` — blocked with `submitBlockers[]` until Accounts locks inputs                                                       |
+| **Attendance approvals** (Manager)                  | `GET /manager/attendance/approvals`, `GET …/:id/records`, `POST …/:id/decide`                                                                                |
+| **Policy authoring** (HR)                           | `GET/POST /hr/policies`, `POST /hr/policies/:id/versions`, `PATCH`, `POST …/publish`                                                                         |
+| **Policy compliance** (HR)                          | `GET /hr/policies/versions/:versionId/compliance`                                                                                                            |
+| **Ticket queue** (HR)                               | `GET /hr/tickets`, `POST …/assign`, `…/comments`, `…/resolve`                                                                                                |
+| **Employee admin** (HR)                             | `GET/POST /hr/employees`, `PATCH /hr/employees/:id`, `POST …/invite`, `POST …/deactivate`                                                                    |
+| **Roles** (HR)                                      | `GET /admin/roles`, `POST /admin/users/:id/roles`, `DELETE …/roles/:roleId`                                                                                  |
+| **Payroll corrections** (Accounts)                  | `GET/POST /payroll/corrections`, `POST /payroll/corrections/:id/approve`, `POST /payroll/publications/:payslipId/revoke`                                     |
+| **Profile change requests** (HR)                    | `GET /hr/profile-change-requests`, `POST …/:id/claim`, `…/approve`, `…/reject`, then `PATCH /hr/employees/:id`                                               |
+| **Employee lifecycle** (HR)                         | `POST /hr/employees/:id/{invite,resend-invitation,suspend,reinstate,resign,offboard}`                                                                        |
+| **Role grant approvals** (HR)                       | `GET /admin/role-grant-requests`, `POST …/:id/approve`, `…/reject`                                                                                           |
+| **Approval oversight** (HR)                         | `GET /hr/approvals`, `POST /hr/attendance/approvals/:id/escalate`                                                                                            |
+| **Email outbox** (HR)                               | `GET /admin/email-outbox`, `POST /admin/email-outbox/:id/retry`                                                                                              |
+| **Exports**                                         | `POST /admin/audit/export` → `GET /admin/exports/:id` → `GET /admin/exports/:id/download`                                                                    |
+| **Audit log** (HR scoped, Accounts scoped — §13.17) | `GET /admin/audit`, `GET /admin/audit/chain/verify`, `POST /admin/audit/export`                                                                              |
 
 ---
 
@@ -3448,27 +10099,37 @@ made once per session and cached by TanStack Query.
 Buckets follow `SECURITY.md` §9.1–9.4. Every route declares one; the boot assertion fails a
 route with none.
 
-| Route class                                                          | Key                            | Limit                                         |
-| -------------------------------------------------------------------- | ------------------------------ | --------------------------------------------- |
-| `POST /auth/login`                                                   | `ip` / `account` / `ip`(spray) | 10 / 15 min · 10 / 15 min · 60 / 60 min       |
-| `POST /auth/mfa/challenge`, `/auth/mfa/step-up`                      | `user`                         | 5 / 5 min, then 15 min cooldown               |
-| `POST /auth/mfa/enrol`, `/mfa/recovery-codes`                        | `user`                         | 5 / 60 min                                    |
-| `POST /auth/password-reset/request`                                  | `ip` / `account`               | 5 / 60 min · 3 / 60 min (still returns `202`) |
-| `POST /auth/password-reset/confirm`                                  | `ip`                           | 10 / 60 min                                   |
-| `POST /auth/refresh`                                                 | `session`                      | 60 / 5 min                                    |
-| `GET /search`                                                        | `user`                         | 30 / 1 min                                    |
-| `GET /directory/people`                                              | `user`                         | 60 / 1 min                                    |
-| `POST /files`                                                        | `user`                         | 20 / 1 h **and** 200 MiB / 24 h               |
-| Any `*/download` (signed-URL mint)                                   | `user`                         | 120 / 1 h                                     |
-| `POST /me/tickets`                                                   | `user`                         | 10 / 1 h                                      |
-| `POST /me/policies/:id/acknowledge`                                  | `user`                         | 30 / 1 h                                      |
-| Any `*/decide` (approval decisions)                                  | `user`                         | 200 / 1 h + `SECURITY.RATE_LIMIT_TRIPPED`     |
-| `POST /payroll/cycles/:id/input-batches`, `…/publish`, `…/calculate` | `user`                         | 10 / 1 h                                      |
-| `POST /me/profile/unmask`, `GET /payroll/salary-structures/:id`      | `user`                         | **30 / 1 h + CRITICAL alert on trip**         |
-| `POST /admin/audit/export`                                           | `user`                         | 3 / 1 h, max 1 concurrent                     |
-| General authenticated `GET`                                          | `user`                         | 300 / 1 min                                   |
-| General authenticated write                                          | `user`                         | 60 / 1 min                                    |
-| `GET /healthz`                                                       | `ip`                           | 60 / 1 min                                    |
+| Route class                                                                           | Key                            | Limit                                                                                                                  |
+| ------------------------------------------------------------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `POST /auth/login`                                                                    | `ip` / `account` / `ip`(spray) | 10 / 15 min · 10 / 15 min · 60 / 60 min                                                                                |
+| `POST /auth/mfa/challenge`, `/auth/mfa/step-up`                                       | `user`                         | 5 / 5 min, then 15 min cooldown                                                                                        |
+| `POST /auth/mfa/enrol`, `/mfa/recovery-codes`                                         | `user`                         | 5 / 60 min                                                                                                             |
+| `POST /auth/password-reset/request`                                                   | `ip` / `account`               | 5 / 60 min · 3 / 60 min (still returns `202`)                                                                          |
+| `POST /auth/password-reset/confirm`                                                   | `ip`                           | 10 / 60 min                                                                                                            |
+| `POST /auth/refresh`                                                                  | `session`                      | 60 / 5 min                                                                                                             |
+| `GET /search`                                                                         | `user`                         | 30 / 1 min                                                                                                             |
+| `GET /directory/people`                                                               | `user`                         | 60 / 1 min                                                                                                             |
+| `POST /files`                                                                         | `user`                         | 20 / 1 h **and** 200 MiB / 24 h                                                                                        |
+| Any `*/download` (signed-URL mint)                                                    | `user`                         | 120 / 1 h                                                                                                              |
+| `POST /me/tickets`                                                                    | `user`                         | 10 / 1 h                                                                                                               |
+| `POST /me/policies/:id/acknowledge`                                                   | `user`                         | 30 / 1 h                                                                                                               |
+| Any `*/decide` (approval decisions)                                                   | `user`                         | 200 / 1 h + `SECURITY.RATE_LIMIT_TRIPPED`                                                                              |
+| `POST /payroll/cycles/:id/input-batches`, `…/publish`, `…/calculate`                  | `user`                         | 10 / 1 h                                                                                                               |
+| `POST /me/profile/unmask`, `GET /payroll/salary-structures/:id`                       | `user`                         | **30 / 1 h + CRITICAL alert on trip**                                                                                  |
+| `POST /admin/audit/export`                                                            | `user`                         | 3 / 1 h, max 1 concurrent                                                                                              |
+| General authenticated `GET`                                                           | `user`                         | 300 / 1 min                                                                                                            |
+| General authenticated write                                                           | `user`                         | 60 / 1 min                                                                                                             |
+| `GET /healthz`                                                                        | `ip`                           | 60 / 1 min                                                                                                             |
+| `POST /auth/reauth`                                                                   | `user`                         | 5 / 5 min, then 15 min cooldown                                                                                        |
+| `POST /auth/accept-invitation`                                                        | `ip` / invitation `token_fpr`  | 10 / 60 min · 5 / 60 min (then the invitation is revoked at 5 failed hashes)                                           |
+| `POST /auth/password/forced-change`                                                   | `ip` / `changeToken`           | 10 / 60 min · 3 / 15 min                                                                                               |
+| `POST /payroll/corrections`, `…/:id/approve`, `POST /payroll/publications/:id/revoke` | `user`                         | 10 / 1 h + `SECURITY.RATE_LIMIT_TRIPPED` at CRITICAL                                                                   |
+| `GET /admin/audit/chain/verify`                                                       | `user`                         | 6 / 1 h (max 31-day span, §13.17)                                                                                      |
+| `GET /admin/exports/:id` (poll)                                                       | `user`                         | 120 / 1 h                                                                                                              |
+| `PUT /hr/attendance/periods/:id/records/:employeeId`                                  | `user`                         | 600 / 1 h — the HR grid is edited cell by cell and the general write bucket (60/min) would throttle legitimate capture |
+| `GET /me/home`, `GET /me/bootstrap`                                                   | `user`                         | 120 / 1 min (composites; the SPA must not poll them)                                                                   |
+| `POST /me/leave-requests`, `POST /me/expense-claims`, `POST /me/document-requests`    | `user`                         | 30 / 1 h each                                                                                                          |
+| Any unauthenticated request to a non-existent route                                   | `ip`                           | 120 / 1 min (404 flood / route-scanning brake)                                                                         |
 
 The limiter **fails closed on auth routes** (`503 UNAVAILABLE`) and fails open with a `WARN`
 on general reads if its store is unavailable.
@@ -3480,37 +10141,70 @@ on general reads if its store is unavailable.
 Every code, its owning endpoint, and the persisted `params` that make its message true. Copy
 lives in `ui_copy`; the SPA never composes these sentences.
 
-| Code                            | Endpoint                                 | `params`                                    |
-| ------------------------------- | ---------------------------------------- | ------------------------------------------- |
-| `PAYSLIPS_CYCLE_IN_PROGRESS`    | `GET /me/payslips`                       | `periodLabel`, `cycleStatus`                |
-| `PAYSLIPS_NO_CYCLE_YET`         | `GET /me/payslips`                       | `dateOfJoining`                             |
-| `PAYSLIPS_REVOKED`              | `GET /me/payslips`                       | `periodLabel`                               |
-| `LEAVE_NO_BALANCES`             | `GET /me/leave/balances`                 | `nextAccrualOn`                             |
-| `LEAVE_NO_REQUESTS`             | `GET /me/leave-requests`                 | `leavePeriodLabel`                          |
-| `ATTENDANCE_NOT_FINALISED`      | `GET /me/attendance`                     | `periodLabel`, `periodStatus`               |
-| `TAX_NO_PROJECTION`             | `GET /me/tax/summary`                    | `fiscalYearLabel`                           |
-| `TAX_NO_DECLARATION`            | `GET /me/tax/declaration`                | `declarationOpensOn`, `declarationClosesOn` |
-| `FORM16_NOT_ISSUED`             | `GET /me/tax/form16`                     | `fiscalYearLabel`, `expectedByDate`         |
-| `PROFILE_TAB_EMPTY`             | `GET /me/profile`                        | `tab`                                       |
-| `BENEFITS_NONE_ACTIVE`          | `GET /me/benefits`                       | `planYearLabel`                             |
-| `BENEFIT_AWAITING_PAYSLIP`      | `GET /me/benefits` (per card)            | `planName`                                  |
-| `DEPENDENTS_NONE`               | `GET /me/dependents`                     | `enrolmentOpensOn`, `enrolmentClosesOn`     |
-| `EXPENSES_NONE_IN_FY`           | `GET /me/expense-claims`                 | `fiscalYearLabel`                           |
-| `DOCUMENTS_NONE`                | `GET /me/documents`                      | —                                           |
-| `DOCUMENT_REQUESTS_NONE`        | `GET /me/document-requests`              | —                                           |
-| `POLICIES_NONE_ASSIGNED`        | `GET /me/policies`                       | —                                           |
-| `DIRECTORY_NO_MATCHES`          | `GET /directory/people`                  | `query`                                     |
-| `ANNOUNCEMENTS_NONE`            | `GET /me/announcements`                  | —                                           |
-| `TICKETS_NONE`                  | `GET /me/tickets`                        | —                                           |
-| `NOTIFICATIONS_NONE`            | `GET /me/notifications`                  | —                                           |
-| `APPROVALS_ALL_CAUGHT_UP`       | `GET /manager/approvals`                 | —                                           |
-| `APPROVALS_NO_HISTORY`          | `GET /manager/approvals/history`         | —                                           |
-| `PAYROLL_NO_CYCLES`             | `GET /payroll/cycles`                    | `fiscalYearLabel`                           |
-| `PAYROLL_NO_INPUT_BATCHES`      | `GET /payroll/cycles/:id/input-batches`  | `cycleLabel`, `cycleStatus`                 |
-| `PAYROLL_NO_VALIDATION_RESULTS` | `GET …/validation-results`               | `cycleLabel`                                |
-| `ATTENDANCE_NO_RECORDS`         | `GET /hr/attendance/periods/:id/records` | `periodLabel`                               |
-| `HR_NO_TICKETS_IN_QUEUE`        | `GET /hr/tickets`                        | —                                           |
-| `AUDIT_NO_EVENTS_IN_RANGE`      | `GET /admin/audit`                       | `from`, `to`                                |
+| Code                               | Endpoint                                                             | `params`                                    |
+| ---------------------------------- | -------------------------------------------------------------------- | ------------------------------------------- |
+| `PAYSLIPS_CYCLE_IN_PROGRESS`       | `GET /me/payslips`                                                   | `periodLabel`, `cycleStatus`                |
+| `PAYSLIPS_NO_CYCLE_YET`            | `GET /me/payslips`                                                   | `dateOfJoining`                             |
+| `PAYSLIPS_REVOKED`                 | `GET /me/payslips`                                                   | `periodLabel`                               |
+| `LEAVE_NO_BALANCES`                | `GET /me/leave/balances`                                             | `nextAccrualOn`                             |
+| `LEAVE_NO_REQUESTS`                | `GET /me/leave-requests`                                             | `leavePeriodLabel`                          |
+| `ATTENDANCE_NOT_FINALISED`         | `GET /me/attendance`                                                 | `periodLabel`, `periodStatus`               |
+| `TAX_NO_PROJECTION`                | `GET /me/tax/summary`                                                | `fiscalYearLabel`                           |
+| `TAX_NO_DECLARATION`               | `GET /me/tax/declaration`                                            | `declarationOpensOn`, `declarationClosesOn` |
+| `FORM16_NOT_ISSUED`                | `GET /me/tax/form16`                                                 | `fiscalYearLabel`, `expectedByDate`         |
+| `PROFILE_TAB_EMPTY`                | `GET /me/profile`                                                    | `tab`                                       |
+| `BENEFITS_NONE_ACTIVE`             | `GET /me/benefits`                                                   | `planYearLabel`                             |
+| `BENEFIT_AWAITING_PAYSLIP`         | `GET /me/benefits` (per card)                                        | `planName`                                  |
+| `DEPENDENTS_NONE`                  | `GET /me/dependents`                                                 | `enrolmentOpensOn`, `enrolmentClosesOn`     |
+| `EXPENSES_NONE_IN_FY`              | `GET /me/expense-claims`                                             | `fiscalYearLabel`                           |
+| `DOCUMENTS_NONE`                   | `GET /me/documents`                                                  | —                                           |
+| `DOCUMENT_REQUESTS_NONE`           | `GET /me/document-requests`                                          | —                                           |
+| `POLICIES_NONE_ASSIGNED`           | `GET /me/policies`                                                   | —                                           |
+| `DIRECTORY_NO_MATCHES`             | `GET /directory/people`                                              | `query`                                     |
+| `ANNOUNCEMENTS_NONE`               | `GET /me/announcements`                                              | —                                           |
+| `TICKETS_NONE`                     | `GET /me/tickets`                                                    | —                                           |
+| `NOTIFICATIONS_NONE`               | `GET /me/notifications`                                              | —                                           |
+| `APPROVALS_ALL_CAUGHT_UP`          | `GET /manager/approvals`                                             | —                                           |
+| `APPROVALS_NO_HISTORY`             | `GET /manager/approvals/history`                                     | —                                           |
+| `PAYROLL_NO_CYCLES`                | `GET /payroll/cycles`                                                | `fiscalYearLabel`                           |
+| `PAYROLL_NO_INPUT_BATCHES`         | `GET /payroll/cycles/:id/input-batches`                              | `cycleLabel`, `cycleStatus`                 |
+| `PAYROLL_NO_VALIDATION_RESULTS`    | `GET …/validation-results`                                           | `cycleLabel`                                |
+| `ATTENDANCE_NO_RECORDS`            | `GET /hr/attendance/periods/:id/records`                             | `periodLabel`                               |
+| `HR_NO_TICKETS_IN_QUEUE`           | `GET /hr/tickets`                                                    | —                                           |
+| `AUDIT_NO_EVENTS_IN_RANGE`         | `GET /admin/audit`                                                   | `from`, `to`                                |
+| `PAYSLIPS_NO_PUBLISHED_CYCLE`      | _(retired — use `PAYSLIPS_CYCLE_IN_PROGRESS`)_                       | —                                           |
+| `APPROVALS_NONE_ORG_WIDE`          | `GET /hr/approvals`                                                  | —                                           |
+| `ATTENDANCE_NO_PERIODS`            | `GET /hr/attendance/periods`                                         | `fiscalYearLabel`                           |
+| `ATTENDANCE_NO_SLICES`             | `GET /manager/attendance/approvals`                                  | `periodLabel`                               |
+| `PAYROLL_NO_PAYSLIPS_IN_CYCLE`     | `GET /payroll/cycles/:id/payslips`                                   | `cycleLabel`, `cycleStatus`                 |
+| `PAYROLL_NO_CORRECTIONS`           | `GET /payroll/corrections`                                           | `fiscalYearLabel`                           |
+| `PAYROLL_NO_INPUT_ITEMS`           | `GET …/input-batches/:batchId/items`                                 | `batchNo`                                   |
+| `HOLIDAYS_NONE_IN_RANGE`           | `GET /leave/holidays`                                                | `calendarName`, `from`, `to`                |
+| `LEAVE_TYPES_NONE_ELIGIBLE`        | `GET /leave/types`                                                   | `employmentType`                            |
+| `TEAM_CALENDAR_EMPTY`              | `GET /manager/leave/team-calendar`                                   | `from`, `to`                                |
+| `REPORTING_LINE_EMPTY`             | `GET /me/reporting-line`                                             | —                                           |
+| `EMERGENCY_CONTACTS_NONE`          | `GET /me/emergency-contacts`                                         | —                                           |
+| `NOMINEES_NONE`                    | `GET /me/nominees`                                                   | `planYearLabel`                             |
+| `SESSIONS_ONLY_CURRENT`            | `GET /auth/sessions`                                                 | —                                           |
+| `PROFILE_CHANGE_REQUESTS_NONE`     | `GET /me/profile-change-requests`, `GET /hr/profile-change-requests` | —                                           |
+| `HR_NO_DOCUMENT_REQUESTS`          | `GET /hr/document-requests`                                          | —                                           |
+| `POLICY_COMPLIANCE_NO_ASSIGNMENTS` | `GET /hr/policies/versions/:id/compliance`                           | `versionLabel`                              |
+| `HR_NO_EMPLOYEES_MATCH`            | `GET /hr/employees`                                                  | `query`                                     |
+| `ROLE_GRANTS_NONE_PENDING`         | `GET /admin/role-grant-requests`                                     | —                                           |
+| `EMAIL_OUTBOX_EMPTY`               | `GET /admin/email-outbox`                                            | `status`                                    |
+| `SEARCH_NO_MATCHES`                | `GET /search`                                                        | `query`                                     |
+| `EXPORTS_NONE`                     | `GET /admin/exports`                                                 | —                                           |
+
+Two rules make this table load-bearing rather than decorative:
+
+1. **Every `GET` collection or metric endpoint in §13 appears here or states in its own block
+   that it emits no `emptyState`** (because "there is nothing" needs no explanation —
+   `GET /me/payslips/:id`'s line arrays, for instance). CI invariant 17 (§17) calls every
+   `GET` against an empty database as each persona and asserts either a catalogued code or a
+   documented silent empty.
+2. **A code names one cause, not one screen.** Where two causes produce the same empty list
+   (no cycle yet vs. cycle in progress vs. revoked), there are three codes, because the copy
+   an employee needs differs and the SPA must not choose between them.
 
 ---
 
@@ -3520,26 +10214,55 @@ lives in `ui_copy`; the SPA never composes these sentences.
 build unless **all** of the following hold. These are the machine-checkable restatement of
 this contract.
 
-1. Every route declares exactly one of `config.permission` or `config.public` with a reason.
-2. The only `config.public` routes are the five of §4.1.
-3. Every `config.permission` string exists in the seeded `permission.code` set.
-4. No `GET`/`HEAD` route declares a write-class permission (`:create`, `:update`,
-   `:approve`, `:publish`, `:submit`, `:withdraw`, `:acknowledge`, `:assign`, `:reimburse`).
+1. Every route declares exactly one of `config.permission` (a single seeded code) or
+   `config.public` (with a `reason` and, where bearer-less, a `boundToken`). A second
+   capability is expressed as `config.alsoRequires` / `config.conditionalFields` (§5), never
+   as a second `config.permission`.
+2. The only `config.public` routes are the eight of §4.1, and `OPTIONS` (CORS preflight).
+3. Every `config.permission`, `alsoRequires` and `conditionalFields` key exists in the
+   seeded `permission.code` set of `DATA-MODEL.md` §3.1, **and** is granted to at least one
+   persona in §3.3 — a route guarded by a permission nobody holds is dead code, not security.
+   3a. Every `state_transition` seed row is bound to **exactly one** route, or is marked
+   `is_system = true` and appears in the system-transition table of §13.5. Two routes bound
+   to one transition (an alias) fails the build, which is what keeps §13.19's
+   "no aliases" table true.
+   3b. Every seeded permission is bound to at least one route **or** appears on the deferral
+   list at the end of §13.19.
+   3c. No route declares a permission held by MANAGER that ends in `:any`; the
+   assertion is written against the §3.3 grant sets, so re-introducing
+   `approval:task:read:any` on a `/manager/**` route fails the build.
+4. No `GET`/`HEAD` route declares a write-class permission — any code containing
+   `:create`, `:update`, `:write`, `:approve`, `:publish`, `:submit`, `:withdraw`,
+   `:acknowledge`, `:assign`, `:resolve`, `:reimburse`, `:capture`, `:commit`, `:upload`,
+   `:issue`, `:manage`, `:adjust`, `:verify`, `:act`, `:revoke` or `:reset`. Reference-data
+   reads declare `org:read` (§13.4).
 5. Every route declares `params`, `querystring`, `body` and `response` Zod schemas; every
    object schema is `.strict()` except `headers`, which is `.passthrough()`.
-6. Every `response` map includes `400`, `401`, `403`, `429` and `500` bound to `ErrorDto`.
+6. Every `response` map includes `400`, `429` and `500` bound to `ErrorDto`; every
+   **non-public** route additionally includes `401` and `403`; every route taking a path
+   parameter includes `404`; every route declaring `requireIfMatch` includes `409` and `428`;
+   every route declaring `idempotent` includes `409` and `422`. `GET /healthz` declares only
+   `200` and `429`. (The previous blanket rule was unsatisfiable for the public routes.)
 7. Every route declares `config.rateLimit` (or explicitly opts into the general bucket).
 8. Every endpoint in §8.2 declares `config.idempotent: true`, and no endpoint in §8.3 does.
 9. Every route whose resource table has `row_version` and whose method is
-   `PATCH`/`PUT`/state-changing `POST` declares `config.requireIfMatch: true`.
-10. Every route in the step-up set of §4.3 declares `config.stepUp: true`.
+   `PATCH`/`PUT`/state-changing `POST` declares `config.requireIfMatch: true`, **except** the
+   three set-addressed routes enumerated in §9, which are named in the test as a literal
+   allowlist so a fourth exemption cannot be added silently.
+10. Every route in the step-up set of §4.3 declares `config.stepUp: true`, and every route
+    in the re-auth set declares `config.reauth: true`. A route declaring `stepUp` that is not
+    in either list fails, so the set cannot quietly grow or shrink.
 11. No route handler returns a Prisma model object (ESLint `no-restricted-syntax`); every
     response passes through a named DTO mapper.
 12. Every `emptyState.code` emitted anywhere in the codebase exists in Appendix C **and** has
     a matching `ui_copy` key seeded.
 13. Every `error.code` emitted anywhere exists in the §2.3 catalogue.
 14. No response schema contains a field named `*_ct`, `*_iv`, `*_tag`, `*_dek_id`,
-    `password*`, `*token_hash`, `*secret*` or `sha256` of a credential.
+    `password*`, `*token_hash`, `*secret*`, `*_mask` (the DTO field is `masked`, not the
+    column), or `sha256` of a credential; and no response schema contains a `string` field
+    whose name ends in `Amount`, `Total`, `Pay`, `Salary` or `Minor` — money is an integer
+    field named `…Minor` inside a `MoneyDto`, so a formatted currency string cannot be
+    serialised anywhere (§1.5).
 15. Every collection route declares its pagination style, and its `page` object matches that
     style's schema exactly.
 16. A matrix-driven test issues a real request for every (persona, permission) pair marked
@@ -3555,12 +10278,40 @@ this contract.
     `POST /payroll/cycles/:id/validate` returns `409` before every attendance slice is
     approved; that `GET /me/payslips` returns `200` with `data: []` at every stage before
     `publish`; and that it returns the payslip immediately after.
+19. **Enum-ordering ban:** a lint rule and a repository-wide grep fail the build on any
+    Prisma/SQL comparison of an `ess_*` enum column with `lt`/`lte`/`gt`/`gte` or `<`/`>`
+    (§1.5). Allowed forms are `in`/`notIn` and equality.
+20. **No formatted money, ever:** a response-schema walker asserts no `emptyState.params`
+    value, no `notification` payload and no `email_outbox.template_data` schema admits a
+    string matching `/[₹$]|^\d[\d,]*\.\d{2}$/`.
+21. **Directive-7 test:** publishing a policy version and acknowledging it persists
+    `policy_acknowledgement` with `employee_id`, `policy_version_id`,
+    `acknowledged_body_sha256` and `acknowledged_at`; a second acknowledgement of the same
+    assignment returns `200` with the **same** id and timestamp; acknowledging with a stale
+    `bodySha256` is `422 BODY_HASH_MISMATCH`; and superseding the version leaves the old
+    acknowledgement row untouched while creating a new pending assignment.
+22. **Directive-8 test:** `POST /me/tickets` commits the `helpdesk_ticket` and exactly one
+    `email_outbox` row addressed to `helpdesk@widedroptech.com` in one transaction; forcing
+    the mail provider to fail leaves the ticket `OPEN`, assignable and commentable, and the
+    outbox row `QUEUED`→`FAILED` after `max_retries`, with the employee-facing `TicketDto`
+    never exposing `notificationEmailStatus`.
+23. **Payslip-visibility fuzz:** for every `payroll_cycle.status` and every combination of
+    `payslip.status` × publication presence × `revoked_at`, `GET /me/payslips` and
+    `GET /me/payslips/:id` return a payslip **iff** a live publication exists — asserted by
+    enumerating the cross product, not by sampling.
+24. **Composed-label provenance:** every string returned by a DTO mapper that is not a
+    verbatim column value is produced by a `ui_copy` lookup or a §12.18 formatter; a literal
+    template string in a mapper file fails an ESLint rule (`no-inline-user-copy`).
 
 ---
 
 ## 18. Open risks and reconciliations
 
-1. **Permission-string grammar.** `DATA-MODEL.md` §3.1 seeds codes as
+**Status key.** `RESOLVED` — this revision decided it and the decision is above;
+`OPEN` — it still needs a person. Nothing below is left for an implementer to invent: an
+`OPEN` item names who must decide and what the default is until they do.
+
+1. `RESOLVED` — **Permission-string grammar.** `DATA-MODEL.md` §3.1 seeds codes as
    `<resource>:<action>[:<scope>]` (`leave:request:approve:team`) with a `CHECK` on that
    shape; `SECURITY.md` §4.3 documents `verb:resource[:qualifier]` (`read:payslip:self`).
    **This contract uses the `DATA-MODEL.md` spelling throughout**, because those codes are
@@ -3569,58 +10320,79 @@ this contract.
    the security doc's form appears only in prose. `SECURITY.md` §4.3–4.4 should be rewritten
    to the seeded spelling before implementation, or a translation table pinned in
    `packages/shared/src/permissions.ts`. Leaving both forms alive is the single most likely
-   source of an authorization bug.
-2. **Token-epoch naming.** `DATA-MODEL.md` has `app_user.token_epoch` with claim `epc`;
+   source of an authorization bug. **Decision:** `packages/shared/src/permissions.ts` exports
+   the seeded set as a frozen const union, every `config.permission` is typed against it, and
+   CI invariant 3 asserts route↔seed equality. `SECURITY.md`'s prose form is non-normative.
+2. `RESOLVED` — **Token-epoch naming.** `DATA-MODEL.md` has `app_user.token_epoch` with claim `epc`;
    `SECURITY.md` has `user.token_version` with claim `ver`. This contract uses the column
-   `app_user.token_epoch` carried in the claim `ver`. Pick one pair before coding.
-3. **Refresh-token TTLs differ.** `SECURITY.md` §3.3: 7-day idle / 14-day absolute (and the
+   `app_user.token_epoch` carried in the claim `ver`. **This pairing is now normative**; the
+   other spelling must be edited out of `SECURITY.md`, not carried as an alternative.
+3. `RESOLVED` — **Refresh-token TTLs differ.** `SECURITY.md` §3.3: 7-day idle / 14-day absolute (and the
    cookie `Max-Age=604800` agrees). `DATA-MODEL.md` §6.1 column notes: 14-day idle / 30-day
    absolute. **This contract states the `SECURITY.md` values**; the DB column defaults must
    be changed to match, or the tighter value enforced in code and the defaults documented as
-   upper bounds.
-4. **Session table.** `SECURITY.md` references a `session` table and checks `sid` against it
+   upper bounds. **Decision:** 7-day idle / 14-day absolute is normative; the DB defaults are
+   upper bounds and the shorter value is enforced in `refresh_token` issuance.
+4. `RESOLVED` — **Session table.** `SECURITY.md` references a `session` table and checks `sid` against it
    on every request; `DATA-MODEL.md` has no such table — the family is
    `refresh_token.family_id`. This contract binds `sid = refresh_token.family_id` and the
    per-request check becomes "a live, unrevoked token exists in this family". If an explicit
    `session` row is wanted (for the Active-sessions screen's `device_label` without scanning
-   rotations) it must be added to the data model.
-5. **Error envelope shape.** `SECURITY.md` shows bare `{"code":…,"message":…}` in its
+   rotations) it must be added to the data model. **Decision:** no new table. `refresh_token`
+   gains `device_label` and `ip_city`, written once on the family's first row and copied on
+   rotation, which is what `GET /auth/sessions` reads (§13.1) — one row per family is
+   selected by `generation = 0`, so the screen never scans rotations.
+5. `RESOLVED` — **Error envelope shape.** `SECURITY.md` shows bare `{"code":…,"message":…}` in its
    examples. This contract mandates the wrapped `{ "error": { … } }` envelope per the product
-   directive; read the security doc's snippets as the **inner** object.
-6. **`GET /me/home` is a composite.** It trades REST purity for one round trip on the most
+   directive; read the security doc's snippets as the **inner** object. CI invariant 6 binds
+   every declared error response to `ErrorDto`, so a bare-object response cannot ship.
+6. `RESOLVED` — **`GET /me/home` is a composite.** It trades REST purity for one round trip on the most
    visited screen. The risk is a single slow block degrading the whole page. Mitigation: each
    block is independently nullable, has its own indexed query, and the handler has a 400 ms
    per-block budget after which that block returns `null` plus
    `partial: ["team"]` — the SPA then lazily refetches that one block from its dedicated
-   endpoint. **The alternative of six parallel calls is acceptable and should be measured
-   before committing to the composite.**
-7. **Synchronous policy publication.** `POST /hr/policies/versions/:id/publish` materialises
+   endpoint.
+   **Decision:** ship the composite with the 400 ms per-block budget and the `partial[]`
+   field now specified in §13.2; measure in staging against six parallel calls, and if the
+   composite's p95 is worse, drop to parallel calls **without** changing any block's shape —
+   each block already has a dedicated endpoint, so the migration is a client change only.
+7. `OPEN` — **Synchronous policy publication.** `POST /hr/policies/versions/:id/publish` materialises
    assignments inside the transaction so the response can state the real count. At a few
    hundred employees this is milliseconds; beyond ~20 000 it becomes a long transaction. The
    documented escape is to return `202` with a `jobId` and have the HR screen poll — but that
    changes the response contract, so it must be decided before v1, not after.
-8. **Synchronous payroll calculation.** `POST /payroll/cycles/:id/calculate` returns `202`
+8. `RESOLVED` — **Synchronous payroll calculation.** `POST /payroll/cycles/:id/calculate` returns `202`
    and is polled. The poll interval, the `payroll_run` lease and what the UI shows on a
    `FAILED` run are specified here; what is **not** specified is the behaviour if the API
-   process dies mid-run. `payroll_run` has `status = 'RUNNING'` with no lease column — the
-   run would appear stuck forever. **Recommendation: add `lease_owner` / `lease_expires_at`
-   to `payroll_run` (as `ess_ops.background_job` already has) and a reaper that marks an
-   expired RUNNING run `FAILED`.**
-9. **Idempotency and `4xx` caching.** Storing `4xx` responses against the key means a client
+   process dies mid-run: `payroll_run` had `status = 'RUNNING'` with no lease column, so the
+   run would appear stuck forever.
+   **Decision (adopted):** `payroll_run` gains `lease_owner text` and
+   `lease_expires_at timestamptz`, renewed every 30 s by the worker, exactly as
+   `ess_ops.background_job` already has. A reaper marks a `RUNNING` run whose lease expired
+   `FAILED` with `error_message = 'LEASE_EXPIRED'`, moves the cycle back to `VALIDATED`, and
+   pages on-call. `GET /payroll/runs/:runId` returns `leaseExpiresAt` so the UI can say
+   "still running" rather than spinning forever. Without this a crashed run strands a cycle
+   in `CALCULATING`, from which there is no transition.
+9. `RESOLVED` — **Idempotency and `4xx` caching.** Storing `4xx` responses against the key means a client
    that fixes its payload but reuses the key gets `422 IDEMPOTENCY_KEY_REUSED` rather than a
    retry. This is deliberate (a changed body with the same key is a client bug) but the SPA
    must mint a fresh key on every user-initiated submit, not once per form mount. Worth a
-   lint rule.
-10. **`GET /me/profile` writes an audit event on read.** A user who idles on the Personal tab
+   lint rule. **Adopted** — the rule and its rationale are now in §8.1.
+10. `RESOLVED` — **`GET /me/profile` writes an audit event on read.** A user who idles on the Personal tab
     with a polling refetch will generate `READ_SENSITIVE` volume. Mitigation: the SPA must not
     poll that endpoint, and the handler should coalesce repeat reads by the same actor for the
     same employee within 60 s into one event with a `metadata.repeatCount`. Not yet specified
-    in `DATA-MODEL.md` §17.1 — needs agreeing.
-11. **Anonymous tickets and `reply_to`.** An anonymous Town-hall ticket omits
+    in `DATA-MODEL.md` §17.1 — **adopted here**: the mapper coalesces repeat `READ_SENSITIVE`
+    events for the same (actor, entity, field-set) within 60 s into one row with
+    `metadata.repeatCount`, and the SPA is forbidden from polling `/me/profile`
+    (TanStack Query `staleTime: Infinity`, refetch only on explicit user action).
+11. `RESOLVED` — **Anonymous tickets and `reply_to`.** An anonymous Town-hall ticket omits
     `reply_to_address`, so the help desk cannot reply in thread. The portal thread remains the
     only channel. HR should be told this explicitly in the queue UI; otherwise anonymous
-    tickets look unanswerable.
-12. **`WORKFLOWS.md` transition coverage.** §13.19 binds every transition that document
+    tickets look unanswerable. **Resolved in §13.14**: `ui_copy` `ticket.anonymous_notice`
+    renders that sentence in the HR queue, and the raiser's identity is stored but projected
+    away, so the channel is anonymous to HR without being anonymous to the audit chain.
+12. `RESOLVED` — **`WORKFLOWS.md` transition coverage.** §13.19 binds every transition that document
     names to an endpoint, including several this contract did not originally expose
     (`/discard-run`, `/reopen-inputs`, `/scope/:employeeId/defer`, `/policy-versions/:id/{submit-review,return,reassign,withdraw}`,
     `/policy-assignments/:id/waive`, `/tickets/:id/{start,request-info,retry-notification}`,
@@ -3629,11 +10401,60 @@ this contract.
     should be extended to assert that every `state_transition` seed row with a non-null
     `required_permission_code` has exactly one route bound to it, so an unexposed transition
     fails the build rather than becoming dead workflow.
-13. **`PATCH /me/profile` was deliberately not created**, though `WORKFLOWS.md` mentions it.
+13. `RESOLVED` — **`PATCH /me/profile` was deliberately not created**, though `WORKFLOWS.md` mentions it.
     Confirm with the product owner that no profile field is directly self-editable; if one is
     (preferred name is the likely candidate), it needs its own narrow endpoint, its own
     permission and its own audit entry — not a general `PATCH`.
-14. **`stepTracker` duplicates workflow knowledge.** It is computed from `status` alone, so it
+14. `RESOLVED` — **`stepTracker` duplicates workflow knowledge.** It is computed from `status` alone, so it
     cannot drift from the state machine — but its **labels** are a second place the seven
     mandated stages are written down. They must be seeded in `ui_copy` and asserted in CI
     against the `state_transition` table, or a renamed stage will disagree with the workflow.
+
+15. `RESOLVED` — **The invitation flow had no landing route.** `POST /hr/employees/:id/invite`
+    created an `app_user` with `password_hash = NULL` and no endpoint existed to set it, so no
+    invited employee could ever sign in. `POST /auth/accept-invitation` (§13.1, public,
+    token-bound) closes the loop, and `POST /auth/password/forced-change` does the same for
+    `403 PASSWORD_CHANGE_REQUIRED`, which previously pointed at a route requiring the very
+    session the user could not obtain.
+16. `RESOLVED` — **MFA enrolment required a step-up it could not satisfy.** The enrolment
+    routes were marked **S** (`mfa_at ≤ 300 s`) while the user's first credential did not yet
+    exist. §4.3 now separates `reauth_at` (password) from `mfa_at` (second factor); enrolment
+    takes `reauth_at`.
+17. `RESOLVED` — **`approval:task:read:any` on the Manager queue was a privilege escalation.**
+    `DATA-MODEL.md` §3.3 grants MANAGER `:team`; `:any` is HR-only. §13.15 and the bootstrap
+    nav gate now declare `:team`, CI invariant 3c asserts no `/manager/**` route holds an
+    `:any` code, and the org-wide view moved to the new HR-only `GET /hr/approvals`.
+18. `RESOLVED` — **Published payroll had no lawful correction path.** `cancel` refuses from
+    `PUBLISHED`, `payslip` is immutable, yet `payslip_publication.revoked_at`,
+    `payslip.revision`, `supersedes_payslip_id` and `payroll:correction:*` all existed with no
+    endpoint. §13.6 now specifies `POST /payroll/corrections`, its dual-controlled approval,
+    the correction run, and `POST /payroll/publications/:payslipId/revoke`.
+19. `RESOLVED` — **Two enum-ordering comparisons would have produced invented numbers.** The
+    step tracker's `status ≥` and the Expenses tile's "next cycle with `status <=
+'INPUTS_LOCKED'`" are both forbidden by `DATA-MODEL.md` §20.9. The tracker is now explicit
+    `IN (…)` lists; the tile now shows a pay date **only** for claims actually queued into a
+    batch, which was the fabrication this contract most easily permitted.
+20. `RESOLVED` — **`profile_change_request` vs `helpdesk_ticket`.** §13.2 previously created a
+    ticket, which would have lost the field-level before/after and let a "resolved" ticket
+    leave the profile unchanged. It now creates the `profile_change_request` of
+    `DATA-MODEL.md` §5.11, with its own HR queue and its own audited apply.
+21. `OPEN` — **Directory search and the `q` predicate.** `full_name || title || department ||
+city` with `ILIKE %q%` needs a `pg_trgm` GIN index to stay sub-100 ms at scale, and
+    `DATA-MODEL.md` must add it. Until it does, `GET /directory/people` is capped at
+    `limit: 25` and 60 requests/min, which bounds the damage. **Owner: data model.**
+22. `OPEN` — **`GET /api/v1/version` is readable by every employee.** `gitSha` and
+    `payrollEngineVersion` are low-value individually but are free reconnaissance. Default
+    until decided: keep `auth:login`, because the SPA shows the build id in the support
+    footer and a support ticket without it is harder to trace. **Owner: security review.**
+    If narrowed, move it to `org:manage` and have the SPA read only `apiVersion` from a
+    public `GET /healthz` extension.
+23. `OPEN` — **HR's `audit:read` is scoped by `entity_type` in this contract but not yet in
+    `DATA-MODEL.md`'s RLS policy.** §13.17's persona table must be mirrored as an RLS
+    predicate, or a direct `psql` session under the HR role would see payroll amounts the API
+    withholds. **Owner: data model §17.1.** Until mirrored, the API-level predicate is the
+    only control and is asserted by CI invariant 16.
+24. `OPEN` — **`ui_copy` coverage is a build dependency, not a runtime one.** Every
+    `emptyState`, chip label, `todo` title, `disabledReason` and guard message named in this
+    document needs a seeded key before the corresponding screen can ship. The seed list is
+    generated from this document by `scripts/extract-ui-copy-keys.ts`; the first run will
+    surface keys nobody has written copy for. **Owner: product + People Ops.**

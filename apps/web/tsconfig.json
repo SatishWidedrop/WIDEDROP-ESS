@@ -1,4 +1,7 @@
 {
+  // Not project references: Vite type-checks the app and the tooling configs
+  // separately, and references would require declaration emit from a project
+  // that deliberately emits nothing.
   "files": [],
-  "references": [{ "path": "./tsconfig.app.json" }, { "path": "./tsconfig.node.json" }]
+  "references": []
 }

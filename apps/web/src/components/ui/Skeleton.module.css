@@ -1,0 +1,36 @@
+/*
+ * A loading placeholder shaped like the content it is standing in for.
+ *
+ * Shaped, not generic, because a block the size of the real thing stops the
+ * layout jumping when the data lands — and a shimmer that never resolves is
+ * still more honest than a zero that looks like an answer.
+ */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-raised) 25%,
+    var(--surface-hover) 37%,
+    var(--surface-raised) 63%
+  );
+  background-size: 400% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+}
+
+.text {
+  height: 1em;
+  margin: 0.25em 0;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+    background: var(--surface-raised);
+  }
+}

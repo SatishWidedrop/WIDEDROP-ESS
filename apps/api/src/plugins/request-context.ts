@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import { runWithContext, type RequestContext } from '../lib/request-context.js';
@@ -23,7 +22,9 @@ declare module 'fastify' {
 export const requestContextPlugin = fp(
   async (app: FastifyInstance, options: { trustProxy: boolean }) => {
     app.addHook('onRequest', (request, reply, done) => {
-      const requestId = randomUUID();
+      // Minted by Fastify's genReqId, never taken from the client: an attacker
+      // who chose their own could collide or poison log correlation.
+      const requestId = request.id;
       const upstreamId = request.headers['x-request-id'];
 
       const context: RequestContext = {
@@ -43,8 +44,6 @@ export const requestContextPlugin = fp(
       if (typeof upstreamId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(upstreamId)) {
         request.log = request.log.child({ upstreamRequestId: upstreamId });
       }
-      request.log = request.log.child({ requestId });
-
       runWithContext(context, done);
     });
   },

@@ -1,0 +1,112 @@
+.page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: var(--space-10) var(--space-8);
+  background: var(--surface-page);
+}
+
+.card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--surface-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-16);
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-6);
+  margin-bottom: var(--space-14);
+  text-align: center;
+}
+
+.logo {
+  height: 44px;
+  width: 44px;
+  object-fit: contain;
+}
+
+.title {
+  font-size: var(--text-heading);
+  font-weight: var(--weight-semibold);
+}
+
+.subtitle {
+  font-size: var(--text-meta);
+  color: var(--text-muted);
+  letter-spacing: var(--tracking-eyebrow);
+  text-transform: uppercase;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.label {
+  font-size: var(--text-meta);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+}
+
+.input {
+  padding: 11px 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: var(--text-body);
+}
+
+.input:focus-visible {
+  border-color: var(--accent);
+}
+
+.input::placeholder {
+  color: var(--text-dim);
+}
+
+.error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-5);
+  padding: var(--space-6) var(--space-7);
+  background: var(--tone-red-bg);
+  border: 1px solid var(--tone-red-fg);
+  border-radius: var(--radius-md);
+  color: var(--tone-red-fg);
+  font-size: var(--text-meta);
+  line-height: var(--leading-normal);
+}
+
+.footer {
+  margin-top: var(--space-10);
+  text-align: center;
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  line-height: var(--leading-relaxed);
+}
+
+.hint {
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+}
+
+.codeInput {
+  font-family: var(--font-mono);
+  font-size: var(--text-heading);
+  letter-spacing: 0.3em;
+  text-align: center;
+}

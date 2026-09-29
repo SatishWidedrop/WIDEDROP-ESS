@@ -1,0 +1,45 @@
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-eyebrow);
+  font-weight: var(--weight-semibold);
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+/*
+ * A dot beside the label, so status is never carried by colour alone — which
+ * would leave it unreadable to the roughly one in twelve men with a colour
+ * vision deficiency.
+ */
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-circle);
+  background: currentColor;
+  flex: none;
+}
+
+.green {
+  background: var(--tone-green-bg);
+  color: var(--tone-green-fg);
+}
+.amber {
+  background: var(--tone-amber-bg);
+  color: var(--tone-amber-fg);
+}
+.red {
+  background: var(--tone-red-bg);
+  color: var(--tone-red-fg);
+}
+.blue {
+  background: var(--tone-blue-bg);
+  color: var(--tone-blue-fg);
+}
+.gray {
+  background: var(--tone-gray-bg);
+  color: var(--tone-gray-fg);
+}

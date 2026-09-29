@@ -1,0 +1,343 @@
+/*
+ * The shell, reproducing the prototype's structure exactly:
+ *
+ *   page  ->  shell  ->  [ sidebar | column ]
+ *                          column -> [ header, main, tabbar ]
+ *
+ * The sidebar is replaced by a header and a bottom tab bar once the shell is
+ * narrower than 880px. That switch is driven by a ResizeObserver on the shell
+ * itself, so it responds to the space the app has rather than to the window.
+ */
+
+.page {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--surface-page);
+}
+
+.shell {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  background: var(--surface-shell);
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+}
+
+/* ── Sidebar ──────────────────────────────────────────────────────── */
+
+.sidebar {
+  width: var(--sidebar-width);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-panel);
+  border-right: 1px solid var(--border-subtle);
+  height: 100%;
+}
+
+.sidebarCollapsed {
+  width: var(--sidebar-width-collapsed);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-9) var(--space-9) var(--space-7);
+  min-height: var(--header-height);
+}
+
+.brandLogo {
+  height: 30px;
+  width: 30px;
+  object-fit: contain;
+  flex: none;
+}
+
+.brandText {
+  min-width: 0;
+}
+
+.brandName {
+  font-size: 14px;
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+.brandSub {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  letter-spacing: var(--tracking-eyebrow);
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+
+.nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-5) var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+}
+
+.groupLabel {
+  font-size: var(--text-eyebrow);
+  letter-spacing: var(--tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-dim);
+  font-weight: var(--weight-medium);
+  padding: var(--space-2) var(--space-5) var(--space-3);
+}
+
+.groupItems {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+  background: transparent;
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.navItem:hover {
+  background: var(--surface-hover-nav);
+  text-decoration: none;
+  color: var(--text-secondary);
+}
+
+.navItemActive,
+.navItemActive:hover {
+  background: var(--surface-selected);
+  color: var(--text-invert);
+}
+
+.navLabel {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.badge {
+  font-size: var(--text-eyebrow);
+  font-weight: var(--weight-semibold);
+  background: var(--accent);
+  color: var(--surface-on-accent);
+  border-radius: var(--radius-pill);
+  padding: 1px 7px;
+  line-height: 1.5;
+  flex: none;
+}
+
+.userCard {
+  padding: var(--space-7);
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.userInfo {
+  min-width: 0;
+  flex: 1;
+}
+
+.userName {
+  font-size: var(--text-body-sm);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.userMeta {
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Main column ──────────────────────────────────────────────────── */
+
+.column {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  position: relative;
+}
+
+.topBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-6) var(--space-16);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-panel);
+  flex: none;
+  min-height: var(--header-height);
+}
+
+.mobileHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-6) var(--space-8);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-panel);
+  flex: none;
+}
+
+.mobileLogo {
+  height: 26px;
+  width: 26px;
+  object-fit: contain;
+}
+
+.mobileTitle {
+  flex: 1;
+  font-size: var(--text-title);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.main {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--content-padding);
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .main {
+    scroll-behavior: auto;
+  }
+}
+
+.mainInner {
+  max-width: var(--content-max-width);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+}
+
+/* ── Bottom tab bar ───────────────────────────────────────────────── */
+
+.tabBar {
+  display: flex;
+  align-items: stretch;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-panel);
+  flex: none;
+  /* Clears the home indicator on a device with a rounded display. */
+  padding-bottom: env(safe-area-inset-bottom, 0);
+  z-index: var(--z-tabbar);
+}
+
+.tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-2);
+  min-height: var(--tabbar-height);
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  text-decoration: none;
+  position: relative;
+}
+
+.tab:hover {
+  text-decoration: none;
+  color: var(--text-secondary);
+}
+
+.tabActive,
+.tabActive:hover {
+  color: var(--accent-soft);
+}
+
+.tabBadge {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  margin-left: 4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--surface-on-accent);
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  line-height: 16px;
+  text-align: center;
+}
+
+/* ── Overlays ─────────────────────────────────────────────────────── */
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(7, 11, 18, 0.72);
+  z-index: var(--z-sheet);
+  animation: fade var(--duration-base) var(--ease);
+}
+
+.sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 80%;
+  overflow-y: auto;
+  background: var(--surface-panel);
+  border-top: 1px solid var(--border);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: var(--space-8) var(--space-8) calc(var(--space-8) + env(safe-area-inset-bottom, 0));
+  box-shadow: var(--shadow-sheet);
+  animation: sheet var(--duration-slow) var(--ease);
+  z-index: var(--z-sheet);
+}
+
+.sheetHandle {
+  width: 36px;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--border-strong);
+  margin: 0 auto var(--space-8);
+}
+
+.sheetGroup + .sheetGroup {
+  margin-top: var(--space-7);
+}

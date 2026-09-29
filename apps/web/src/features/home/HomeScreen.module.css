@@ -1,0 +1,249 @@
+.greeting {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.greetingTitle {
+  font-size: var(--text-heading-lg);
+  font-weight: var(--weight-semibold);
+}
+
+.greetingSub {
+  font-size: var(--text-body);
+  color: var(--text-muted);
+}
+
+.split {
+  display: grid;
+  grid-template-columns: var(--grid-calendar-current);
+  gap: var(--space-10);
+  align-items: start;
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+  min-width: 0;
+}
+
+/* ── To-do list ───────────────────────────────────────────────────── */
+
+.todo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-7) 0;
+  border-bottom: 1px solid var(--border);
+  text-decoration: none;
+  color: inherit;
+}
+
+.todo:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.todo:first-child {
+  padding-top: 0;
+}
+
+.todo:hover {
+  text-decoration: none;
+}
+
+.todoDot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-circle);
+  flex: none;
+}
+
+.todoText {
+  flex: 1;
+  min-width: 0;
+}
+
+.todoTitle {
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+}
+
+.todoSub {
+  font-size: var(--text-meta);
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* ── Latest payslip ───────────────────────────────────────────────── */
+
+.payslip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  flex-wrap: wrap;
+}
+
+.payslipAmount {
+  font-size: var(--text-metric-lg);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.payslipMeta {
+  flex: 1;
+  min-width: 140px;
+  font-size: var(--text-meta);
+  color: var(--text-muted);
+}
+
+/* ── Leave balances ───────────────────────────────────────────────── */
+
+.balances {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.balance {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.balanceHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-5);
+}
+
+.balanceName {
+  font-size: var(--text-body-sm);
+  color: var(--text-secondary);
+}
+
+.balanceValue {
+  font-size: var(--text-body-sm);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.bar {
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+
+.barFill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+/* ── Announcements and holidays ───────────────────────────────────── */
+
+.listItem {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-6);
+  padding: var(--space-7) 0;
+  border-bottom: 1px solid var(--border);
+  text-decoration: none;
+  color: inherit;
+}
+
+.listItem:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.listItem:first-child {
+  padding-top: 0;
+}
+
+.listItem:hover {
+  text-decoration: none;
+}
+
+.listTitle {
+  font-size: var(--text-body-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+}
+
+.listMeta {
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.dateBlock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  padding: var(--space-3) 0;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  flex: none;
+}
+
+.dateDay {
+  font-size: var(--text-title);
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+}
+
+.dateMonth {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-eyebrow);
+  margin-top: 2px;
+}
+
+/* ── Team ─────────────────────────────────────────────────────────── */
+
+.teamRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-6) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.teamRow:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.teamRow:first-child {
+  padding-top: 0;
+}
+
+.teamInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.teamName {
+  font-size: var(--text-body-sm);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.teamTitle {
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

@@ -8,9 +8,7 @@
     "jsx": "react-jsx",
     "types": ["vite/client"],
     "noEmit": true,
-    "declaration": false,
-    "declarationMap": false,
-    "composite": true,
+    "composite": false,
     "allowImportingTsExtensions": true,
     "baseUrl": ".",
     "paths": {

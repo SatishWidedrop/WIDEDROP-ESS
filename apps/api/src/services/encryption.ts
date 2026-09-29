@@ -37,10 +37,14 @@ export interface EncryptedColumns {
   keyVersion: string;
 }
 
+/**
+ * What a write produces. Typed as `Uint8Array` because that is what Prisma's
+ * `Bytes` columns accept, and a `Buffer` is one.
+ */
 export interface EncryptedWrite {
-  ct: Buffer;
-  iv: Buffer;
-  tag: Buffer;
+  ct: Uint8Array<ArrayBuffer>;
+  iv: Uint8Array<ArrayBuffer>;
+  tag: Uint8Array<ArrayBuffer>;
   keyVersion: string;
 }
 
@@ -68,10 +72,15 @@ export class EncryptionService {
       keyVersion: this.keyVersion,
       context,
     });
+    // Copied into a plain Uint8Array rather than handed over as a Buffer: a
+    // Buffer may be a view onto Node's shared allocation pool, and the database
+    // driver's byte columns want an array that owns its own memory.
+    const bytes = (base64: string): Uint8Array<ArrayBuffer> =>
+      Uint8Array.from(Buffer.from(base64, 'base64'));
     return {
-      ct: Buffer.from(sealed.c, 'base64'),
-      iv: Buffer.from(sealed.i, 'base64'),
-      tag: Buffer.from(sealed.t, 'base64'),
+      ct: bytes(sealed.c),
+      iv: bytes(sealed.i),
+      tag: bytes(sealed.t),
       // The per-record salt travels with the key version so the envelope stays
       // three columns rather than four.
       keyVersion: `${sealed.v}:${sealed.s}`,
