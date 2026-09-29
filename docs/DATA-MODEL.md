@@ -374,9 +374,9 @@ CONSTRAINT fk_state_transition__permission FOREIGN KEY (required_permission_code
 ```
 Indexes: `ix_state_transition__machine_from (machine, from_state)`.
 
-The full seeded contents are listed per module (§8.4 leave, §9.5 attendance,
+The full seeded contents are listed per module (§8.6 leave, §9.5 attendance,
 §10.2 payroll cycle, §13.3 expenses, §14.3 document requests, §15.4 policy
-acknowledgement, §16.4 help desk, §12.x tax declaration, §19 approval tasks).
+acknowledgement, §16.4 help desk, §12.3 tax declaration, §19 approval tasks).
 
 ---
 
@@ -730,6 +730,33 @@ CONSTRAINT ux_fiscal_quarter__fy_no UNIQUE (fiscal_year_id, quarter_no),
 CONSTRAINT ck_fiscal_quarter__no CHECK (quarter_no BETWEEN 1 AND 4),
 CONSTRAINT ck_fiscal_quarter__range CHECK (end_date > start_date)
 ```
+
+### 4.7 `ui_copy` — persisted interface copy (reference data, seeded)
+
+Explanatory strings the prototype hardcodes (the four profile-tab notes, the Payslips
+"Reflected in Form 26AS" caption, the Documents letterhead note, every empty-state
+headline and explanation) are rows here, so that copy is reviewable, translatable and
+changeable by HR without a deploy. They are **configuration, never operational data** —
+they carry no counts, amounts, dates or statuses.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` | PK |
+| `organization_id` | `uuid` | no | — | FK → `organization(id)` `ON DELETE RESTRICT` |
+| `key` | `citext` | no | — | `profile.tab_note.bank`, `payslips.ytd.tds.sub`, `empty.payslips.none`, … |
+| `locale` | `text` | no | `'en-IN'` | |
+| `value` | `text` | no | — | The rendered string |
+| `description` | `text` | yes | — | Where it appears, for the HR editor |
+| `is_active` | `boolean` | no | `true` | |
+
+```sql
+CONSTRAINT ux_ui_copy__org_key_locale UNIQUE (organization_id, key, locale),
+CONSTRAINT ck_ui_copy__key_shape CHECK (key ~ '^[a-z0-9_]+([.][a-z0-9_]+)+$'),
+CONSTRAINT ck_ui_copy__value CHECK (length(btrim(value)) > 0)
+```
+Index: `ix_ui_copy__org_locale (organization_id, locale) WHERE is_active`.
+A missing key is a build-time failure (the shared package enumerates every key the web
+app reads), never a blank string rendered to a user.
 
 ---
 
@@ -3445,3 +3472,842 @@ The unique dedupe constraint is what stops a retried job from producing two iden
 notifications — the count on the bell is therefore exact, not approximate.
 
 ---
+## 17. Cross-cutting: audit, files, keys, email, ops
+
+### 17.1 `audit_event` — append-only, hash-chained
+
+The tamper-evidence record for every sensitive HR, payroll, approval, policy and
+administrative action. It is append-only at the database level and chained, so removing
+or editing a row breaks verification.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` | PK |
+| `organization_id` | `uuid` | no | — | FK → `organization(id)` `ON DELETE RESTRICT` |
+| `sequence_no` | `bigint` | no | *(from `audit_event_seq`)* | Monotonic per organization; the chain order |
+| `occurred_at` | `timestamptz` | no | `now()` | |
+| `actor_kind` | `ess_actor_kind` | no | — | |
+| `actor_user_id` | `uuid` | yes | — | FK → `app_user(id)` `ON DELETE RESTRICT`. NULL only for `SYSTEM`/`SCHEDULER`/`MIGRATION`. |
+| `actor_employee_id` | `uuid` | yes | — | FK → `employee(id)` `ON DELETE RESTRICT` |
+| `actor_email_snapshot` | `citext` | yes | — | Frozen: the actor's address at the time, so a later email change does not rewrite history |
+| `actor_role_persona` | `ess_persona` | yes | — | **The persona the action was performed under** — for a multi-persona user this is the persona whose permission authorised it |
+| `actor_permission_code` | `text` | yes | — | The exact permission that authorised the action |
+| `on_behalf_of_user_id` | `uuid` | yes | — | FK → `app_user(id)` `ON DELETE RESTRICT` — impersonation support |
+| `action` | `ess_audit_action` | no | — | |
+| `entity_type` | `text` | no | — | Table name, e.g. `payslip` |
+| `entity_id` | `uuid` | yes | — | NULL for bulk/collection actions |
+| `entity_label` | `text` | yes | — | Human anchor, e.g. `WDT-PS-2608-1847` |
+| `state_machine` | `text` | yes | — | Set when `action = 'STATE_TRANSITION'` |
+| `from_state` | `text` | yes | — | |
+| `to_state` | `text` | yes | — | |
+| `before_data` | `jsonb` | yes | — | **Redacted.** Encrypted columns appear as `"<redacted:aes>"`; money as minor-unit strings; never a ciphertext, IV, tag, secret, token hash or password hash. |
+| `after_data` | `jsonb` | yes | — | Same redaction rules |
+| `changed_fields` | `text[]` | yes | — | Column names that differ |
+| `reason` | `text` | yes | — | The mandatory note on guarded transitions |
+| `ip_address` | `inet` | yes | — | |
+| `user_agent` | `text` | yes | — | Truncated to 512 chars |
+| `request_id` | `uuid` | no | — | Correlates the whole HTTP request, the access log and any `login_attempt` |
+| `session_family_id` | `uuid` | yes | — | `refresh_token.family_id` |
+| `api_route` | `text` | yes | — | `POST /api/v1/leave-requests/:id/approve` |
+| `http_status` | `smallint` | yes | — | |
+| `metadata` | `jsonb` | no | `'{}'` | Non-PII context |
+| `prev_hash` | `bytea` | yes | — | 32 bytes. `NULL` **only** for the organisation's genesis row. |
+| `row_hash` | `bytea` | no | — | 32 bytes, see below |
+
+**Hash chain.** Computed by `BEFORE INSERT` trigger `trg_audit_chain`, which takes
+`pg_advisory_xact_lock(hashtext('audit:' || organization_id))` so the chain cannot fork
+under concurrency:
+
+```
+prev_hash := (SELECT row_hash FROM audit_event
+              WHERE organization_id = NEW.organization_id
+              ORDER BY sequence_no DESC LIMIT 1)          -- NULL for genesis
+row_hash  := sha256(
+    coalesce(prev_hash, '\x00'::bytea)
+ || convert_to(NEW.id::text, 'UTF8')
+ || convert_to(NEW.sequence_no::text, 'UTF8')
+ || convert_to(to_char(NEW.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.USOF'), 'UTF8')
+ || convert_to(NEW.actor_kind::text, 'UTF8')
+ || convert_to(coalesce(NEW.actor_user_id::text, ''), 'UTF8')
+ || convert_to(coalesce(NEW.actor_role_persona::text, ''), 'UTF8')
+ || convert_to(NEW.action::text, 'UTF8')
+ || convert_to(NEW.entity_type, 'UTF8')
+ || convert_to(coalesce(NEW.entity_id::text, ''), 'UTF8')
+ || convert_to(coalesce(NEW.from_state, ''), 'UTF8')
+ || convert_to(coalesce(NEW.to_state, ''), 'UTF8')
+ || convert_to(coalesce(jsonb_canonical(NEW.before_data), ''), 'UTF8')
+ || convert_to(coalesce(jsonb_canonical(NEW.after_data), ''), 'UTF8')
+ || convert_to(NEW.request_id::text, 'UTF8'))
+```
+
+`jsonb_canonical()` is a deterministic serialiser (sorted keys, no insignificant
+whitespace) so the hash is stable across Postgres versions.
+
+```sql
+PRIMARY KEY (id),
+CONSTRAINT ux_audit_event__org_sequence UNIQUE (organization_id, sequence_no),
+CONSTRAINT ux_audit_event__row_hash UNIQUE (row_hash),
+CONSTRAINT ck_audit_event__hash_len CHECK (octet_length(row_hash) = 32 AND (prev_hash IS NULL OR octet_length(prev_hash) = 32)),
+CONSTRAINT ck_audit_event__actor CHECK (actor_kind <> 'USER' OR actor_user_id IS NOT NULL),
+CONSTRAINT ck_audit_event__transition CHECK (
+  (action = 'STATE_TRANSITION') = (state_machine IS NOT NULL AND to_state IS NOT NULL))
+```
+Indexes:
+- `ux_audit_event__org_sequence (organization_id, sequence_no)` — the verification scan
+- `ix_audit_event__entity (entity_type, entity_id, occurred_at DESC)`
+- `ix_audit_event__actor (actor_user_id, occurred_at DESC)`
+- `ix_audit_event__request (request_id)`
+- `ix_audit_event__action_time (organization_id, action, occurred_at DESC)`
+- `ix_audit_event__sensitive (organization_id, occurred_at DESC) WHERE action IN ('READ_SENSITIVE','EXPORT','DOWNLOAD','PERMISSION_GRANT','PERMISSION_REVOKE','IMPERSONATE')`
+
+**Append-only enforcement.** `trg_audit_immutable` raises on `UPDATE` and `DELETE`
+unconditionally. `REVOKE UPDATE, DELETE, TRUNCATE ON ess.audit_event FROM ess_app, ess_job;`
+Only `ess_migrator` may `TRUNCATE`, and only in a non-production environment.
+Partitioned monthly by `RANGE (occurred_at)`; each partition inherits the triggers.
+
+**Verification job.** `audit-chain-verify` runs hourly, walks the last 24 hours of rows
+per organisation, recomputes `row_hash`, and compares. A mismatch pages on-call and is
+itself recorded as a `CONFIG_CHANGE` event on a separate chain. A daily job signs the
+latest `(organization_id, sequence_no, row_hash)` triple and writes it to append-only
+object storage with Object Lock, so even a full database compromise cannot silently
+rewrite history.
+
+**What must be audited** (non-exhaustive; the service layer has an `@Audited` decorator
+that makes this automatic): every `state_transition`; every login, logout, MFA change,
+password change and session revocation; every read of an encrypted field
+(`READ_SENSITIVE`); every payslip, Form 16, document and expense-bill download; every
+`role_permission`/`user_role` change; every payroll cycle transition, input commit,
+validation override and publication; every policy publication and acknowledgement;
+every HR edit to another employee's profile; every audit export; every bulk export.
+
+### 17.2 `file_object`
+
+Every uploaded or generated binary. Bytes live in S3-compatible object storage; this
+table is the only index into it, and no URL is ever stored — links are minted as
+short-lived (5 min) pre-signed URLs at read time, after the authorization check.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` | PK |
+| `organization_id` | `uuid` | no | — | FK → `organization(id)` `ON DELETE RESTRICT` |
+| `storage_bucket` | `text` | no | — | |
+| `storage_key` | `text` | no | — | `org/<org>/payslip/<fy>/<uuid>.pdf`. Opaque, non-guessable, never derived from user input. |
+| `storage_region` | `text` | no | — | |
+| `purpose` | `ess_file_purpose` | no | — | Drives the retention class and the authorization rule |
+| `original_filename` | `text` | no | — | Sanitised; the display name |
+| `mime_type` | `text` | no | — | **Server-detected** from the magic bytes, never trusted from the client |
+| `size_bytes` | `bigint` | no | — | |
+| `sha256` | `bytea` | no | — | 32 bytes; deduplication and integrity |
+| `scan_status` | `ess_file_scan_status` | no | `'PENDING'` | |
+| `scan_engine` | `text` | yes | — | |
+| `scanned_at` | `timestamptz` | yes | — | |
+| `scan_detail` | `text` | yes | — | |
+| `is_encrypted_at_rest` | `boolean` | no | `true` | SSE-KMS on the bucket |
+| `uploaded_by_user_id` | `uuid` | yes | — | FK → `app_user(id)` `ON DELETE SET NULL`. NULL for system-generated files. |
+| `owner_employee_id` | `uuid` | yes | — | FK → `employee(id)` `ON DELETE RESTRICT` — the subject of the file, for the RLS self policy |
+| `download_count` | `integer` | no | `0` | |
+| `retention_until` | `date` | yes | — | Computed from `purpose` at insert |
+| `deleted_at` | `timestamptz` | yes | — | Set when the object is purged; the row survives for audit |
+
+```sql
+CONSTRAINT ux_file_object__bucket_key UNIQUE (storage_bucket, storage_key),
+CONSTRAINT ck_file_object__sha CHECK (octet_length(sha256) = 32),
+CONSTRAINT ck_file_object__size CHECK (size_bytes > 0 AND size_bytes <= 26214400),  -- 25 MiB
+CONSTRAINT ck_file_object__mime CHECK (mime_type IN (
+  'application/pdf','image/jpeg','image/png','image/webp','image/heic',
+  'text/csv','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')),
+CONSTRAINT ck_file_object__scanned CHECK (
+  scan_status = 'PENDING' OR scanned_at IS NOT NULL)
+```
+Indexes:
+- `ix_file_object__owner (owner_employee_id, purpose)`
+- `ix_file_object__sha (organization_id, sha256)`
+- `ix_file_object__scan_queue (scan_status) WHERE scan_status = 'PENDING'`
+- `ix_file_object__retention (retention_until) WHERE deleted_at IS NULL`
+
+**Rule:** a file with `scan_status <> 'CLEAN'` is never served, never attached to an
+outbound email, and never linked from a payslip or document. Upload endpoints return
+`202` and the UI shows a "Scanning…" state.
+
+### 17.3 `data_encryption_key`
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` | PK |
+| `organization_id` | `uuid` | no | — | FK → `organization(id)` `ON DELETE RESTRICT` |
+| `version` | `integer` | no | — | Monotonic per organization |
+| `purpose` | `text` | no | — | `FIELD_DEFAULT`, `PAYROLL`, `MFA` — separate key domains |
+| `wrapped_key` | `bytea` | no | — | The DEK, encrypted by the KMS master key. The plaintext DEK exists only in process memory. |
+| `kms_key_arn` | `text` | no | — | The master key identifier |
+| `algorithm` | `text` | no | `'AES-256-GCM'` | |
+| `status` | `text` | no | `'ACTIVE'` | `PENDING` \| `ACTIVE` \| `RETIRED` \| `COMPROMISED` |
+| `activated_at` | `timestamptz` | yes | — | |
+| `retired_at` | `timestamptz` | yes | — | A retired key still decrypts; it no longer encrypts |
+| `rotation_due_on` | `date` | no | — | 365 days after activation |
+
+```sql
+CONSTRAINT ux_dek__org_purpose_version UNIQUE (organization_id, purpose, version),
+CONSTRAINT ux_dek__one_active UNIQUE (organization_id, purpose, status) WHERE status = 'ACTIVE',
+CONSTRAINT ck_dek__status CHECK (status IN ('PENDING','ACTIVE','RETIRED','COMPROMISED'))
+```
+No plaintext key material is ever stored, logged, or included in an audit event.
+
+### 17.4 `email_outbox`
+
+Transactional outbox. A row is inserted **in the same transaction** as the state change
+that causes the email, so an email is never sent for an action that rolled back, and an
+action never completes without its email being durably queued.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` | PK |
+| `organization_id` | `uuid` | no | — | FK → `organization(id)` `ON DELETE RESTRICT` |
+| `kind` | `ess_email_kind` | no | — | |
+| `status` | `ess_email_status` | no | `'QUEUED'` | |
+| `to_addresses` | `citext[]` | no | — | For the help desk: `{helpdesk@widedroptech.com}` |
+| `cc_addresses` | `citext[]` | no | `'{}'` | |
+| `reply_to_address` | `citext` | yes | — | The raiser's work email, so the help desk can reply in thread |
+| `from_address` | `citext` | no | — | `no-reply@widedroptech.com` |
+| `subject` | `text` | no | — | `[HD-4821] Payroll & tax — Form 16 (FY 2025–26) shows an incorrect PAN` |
+| `template_code` | `text` | no | — | |
+| `template_data` | `jsonb` | no | `'{}'` | **Redacted.** No salary figures, no bank details, no tokens — only identifiers and labels. |
+| `body_text` | `text` | yes | — | Rendered at send time; nulled after `SENT` |
+| `body_html` | `text` | yes | — | Nulled after `SENT` |
+| `attachment_file_object_ids` | `uuid[]` | no | `'{}'` | Only `CLEAN` files |
+| `entity_type` | `text` | yes | — | `helpdesk_ticket` |
+| `entity_id` | `uuid` | yes | — | |
+| `idempotency_key` | `text` | no | — | `<kind>:<entity_type>:<entity_id>:<discriminator>` — unique per organization |
+| `provider` | `text` | yes | — | `ses`, `postmark` |
+| `provider_message_id` | `text` | yes | — | Returned on success |
+| `retry_count` | `smallint` | no | `0` | |
+| `max_retries` | `smallint` | no | `5` | |
+| `next_attempt_at` | `timestamptz` | no | `now()` | Exponential backoff: `2^retry_count` minutes, capped at 60 |
+| `last_error` | `text` | yes | — | |
+| `queued_at` | `timestamptz` | no | `now()` | |
+| `sent_at` | `timestamptz` | yes | — | |
+| `failed_at` | `timestamptz` | yes | — | |
+
+```sql
+CONSTRAINT ux_email_outbox__org_idempotency UNIQUE (organization_id, idempotency_key),
+CONSTRAINT ck_email_outbox__to CHECK (cardinality(to_addresses) BETWEEN 1 AND 20),
+CONSTRAINT ck_email_outbox__retries CHECK (retry_count >= 0 AND retry_count <= max_retries),
+CONSTRAINT ck_email_outbox__sent CHECK ((status = 'SENT') = (sent_at IS NOT NULL)),
+CONSTRAINT ck_email_outbox__sent_provider CHECK (status <> 'SENT' OR provider_message_id IS NOT NULL),
+CONSTRAINT ck_email_outbox__failed CHECK ((status = 'FAILED') = (failed_at IS NOT NULL)),
+CONSTRAINT ck_email_outbox__failed_reason CHECK (status <> 'FAILED' OR last_error IS NOT NULL),
+CONSTRAINT ck_email_outbox__entity CHECK (num_nulls(entity_type, entity_id) IN (0, 2))
+```
+Indexes:
+- `ix_email_outbox__dispatch (next_attempt_at) WHERE status IN ('QUEUED','SENDING')` — the dispatcher's claim query (`FOR UPDATE SKIP LOCKED`)
+- `ix_email_outbox__entity (entity_type, entity_id)`
+- `ix_email_outbox__failed (organization_id, failed_at DESC) WHERE status = 'FAILED'`
+
+**Help-desk dispatch (the mandated behaviour).** Creating a `helpdesk_ticket` inserts, in
+the same transaction, one `email_outbox` row with `kind = 'HELPDESK_TICKET_CREATED'`,
+`to_addresses = {ticket_category.routing_email}` (which defaults to
+`organization.helpdesk_email` = `helpdesk@widedroptech.com`),
+`reply_to_address = employee.work_email` (omitted when `is_anonymous`),
+`idempotency_key = 'HELPDESK_TICKET_CREATED:helpdesk_ticket:<id>:v1'`, and
+`template_data` limited to `{ticketNo, categoryName, subject, raisedByName?, raisedAt, priority, portalUrl}`.
+`helpdesk_ticket.email_outbox_id` is set to that row. If the ticket insert rolls back, no
+email exists; if it commits, the dispatcher will deliver or exhaust retries and mark
+`FAILED`, which surfaces in the HR queue as a banner on the ticket. The ticket itself is
+persisted regardless of email outcome — delivery is never a precondition for the record.
+
+### 17.5 Operational tables (`ess_ops` schema)
+
+| Table | Purpose | Key columns |
+|---|---|---|
+| `ess_ops.idempotency_key` | De-duplicates unsafe HTTP requests | `id uuid PK`, `organization_id uuid NOT NULL`, `app_user_id uuid NOT NULL`, `key text NOT NULL`, `route text NOT NULL`, `request_hash bytea NOT NULL`, `response_status smallint`, `response_body jsonb`, `locked_at timestamptz`, `completed_at timestamptz`, `expires_at timestamptz NOT NULL DEFAULT now() + interval '24 hours'`. `UNIQUE (organization_id, app_user_id, key, route)`. A replay with a different `request_hash` → `422`. |
+| `ess_ops.rate_limit_counter` | Durable fallback for the Redis token buckets | `id uuid PK`, `bucket_key text NOT NULL`, `window_start timestamptz NOT NULL`, `window_seconds integer NOT NULL`, `hit_count integer NOT NULL DEFAULT 0`, `UNIQUE (bucket_key, window_start)`. Buckets: `ip:<cidr>`, `user:<id>`, `route:<route>:<user>`, `login:<email_fpr>`. |
+| `ess_ops.background_job` | Scheduled and queued work | `id uuid PK`, `job_name text NOT NULL`, `scheduled_for timestamptz NOT NULL`, `started_at`, `finished_at`, `status text NOT NULL` (`PENDING`/`RUNNING`/`SUCCEEDED`/`FAILED`), `attempt smallint NOT NULL DEFAULT 0`, `payload jsonb NOT NULL DEFAULT '{}'`, `error text`, `lease_owner text`, `lease_expires_at timestamptz`. Index `(status, scheduled_for) WHERE status IN ('PENDING','RUNNING')`. |
+| `ess_ops.schema_guard` | Records the hash of the applied schema so CI can detect drift from this document | `id uuid PK`, `migration_name text`, `schema_sha256 bytea`, `applied_at timestamptz` |
+
+Named jobs: `leave-accrual`, `leave-carry-forward`, `leave-lapse`,
+`leave-balance-verify`, `policy-assignment`, `policy-due-reminder`,
+`announcement-publish`, `ticket-sla-escalation`, `ticket-auto-close`,
+`email-dispatch`, `file-virus-scan`, `file-retention-purge`, `session-sweep`,
+`audit-chain-verify`, `audit-anchor-sign`, `reporting-closure-verify`,
+`dependent-age-refresh`, `tds-quarter-refresh`, `crypto-rewrap`,
+`attendance-approval-reminder`, `payroll-cycle-open`.
+
+---
+
+## 18. Reference data, retention and immutability
+
+### 18.1 What may be seeded at boot in production
+
+These tables hold **configuration**. A production deploy runs
+`npm run db:seed:reference`, which is idempotent (upsert by natural key) and writes an
+`audit_event` with `actor_kind = 'MIGRATION'` for every insert or change.
+
+| Table | Seeded content |
+|---|---|
+| `permission` | The full permission-code list (§3.1) |
+| `role` | Exactly four rows: Employee, Manager, HR, Accounts |
+| `role_permission` | The persona → permission mapping (§3.3) |
+| `state_transition` | Every machine's allowed transitions (§2.1 and each module) |
+| `organization` | **One** row: the Widedrop tenant, from environment configuration |
+| `department`, `location`, `cost_centre`, `designation` | The organisation's structure, from a reviewed CSV — HR may edit afterwards |
+| `fiscal_year`, `fiscal_quarter` | Generated for the configured year range |
+| `leave_period` | Generated from `organization.leave_year_start_month` |
+| `leave_type` | EL, CL, SL, Comp-off, Restricted holiday, LOP, Maternity, Paternity, Bereavement |
+| `leave_scheme`, `leave_entitlement_rule` | The published Leave Policy's numbers |
+| `holiday_calendar`, `holiday` | The gazetted calendar per location |
+| `pay_component` | The earning/deduction catalogue |
+| `tax_regime` | Old and New, with slabs for each seeded FY |
+| `benefit_plan`, `benefit_plan_year` | The plans the organisation offers |
+| `expense_category`, `expense_limit` | Categories and caps from the T&E Policy |
+| `document_type`, `letter_template` | Document taxonomy and letter bodies |
+| `ticket_category` | The seven help-desk categories |
+| `ui_copy` | Every interface string listed in §4.7, including all empty-state copy |
+| `faq_article` | The Common-questions content |
+| `data_encryption_key` | One `ACTIVE` DEK per purpose, wrapped by KMS |
+
+Reference tables carry no employee-specific data and no amounts owed to anyone.
+
+### 18.2 What must start EMPTY in production
+
+Every operational table starts with **zero rows**, and the UI renders its designed empty
+state until real activity creates data. No fixtures, no demo employees, no sample
+payslips, no seeded announcements, no synthetic balances — at any point, in any
+environment that serves real users.
+
+```
+app_user (except the single bootstrap HR account, created interactively by the
+          operator via `npm run bootstrap:admin`, which forces MFA enrolment and a
+          password change on first login)
+employee, employee_employment, employee_manager, employee_reporting_closure,
+employee_personal_detail, employee_statutory_id, employee_bank_account,
+employee_emergency_contact, user_role (beyond the bootstrap grant)
+refresh_token, mfa_credential, mfa_recovery_code, login_attempt, password_reset_token
+employee_leave_scheme, leave_balance, leave_balance_ledger, leave_request, leave_request_day
+attendance_period, attendance_record, attendance_submission, attendance_approval
+payroll_cycle, payroll_input_batch, payroll_input_item, payroll_validation_result,
+payroll_run, payslip, payslip_line, payslip_publication, payslip_fy_rollup,
+salary_structure, salary_structure_component
+employee_tax_regime_election, employee_tax_declaration, employee_tax_declaration_item,
+employee_tax_projection, tds_quarter, form16_document
+benefit_enrolment, benefit_enrolment_dependent, dependent, nominee
+expense_claim, expense_claim_line, expense_attachment, expense_fy_rollup,
+reimbursement_batch, reimbursement_batch_item
+employee_document, document_request
+policy, policy_version, policy_version_point, policy_applicability_rule,
+policy_assignment, policy_acknowledgement
+announcement, announcement_audience, announcement_read
+helpdesk_ticket, ticket_comment, ticket_attachment
+approval_task, approval_decision
+notification, file_object, email_outbox, audit_event
+```
+
+`policy` and `policy_version` are deliberately in this list: policies are authored
+through the HR surface and version-controlled from their first publication, so that
+`policy_acknowledgement` always points at a version with a real author, timestamp and
+`body_sha256`. A seeded policy would have none of those.
+
+CI enforces this with `npm run test:seed-purity`, which boots a fresh database, runs the
+production seed, and asserts every table above has `count(*) = 0`.
+
+### 18.3 Immutability rules
+
+| Rule | Enforcement |
+|---|---|
+| `audit_event` is append-only | `trg_audit_immutable` rejects `UPDATE`/`DELETE`; `REVOKE UPDATE, DELETE` from the app role; hash chain makes silent edits detectable |
+| `payslip` and `payslip_line` are immutable once generated | `trg_payslip_immutable` allows only `status`, `pdf_file_object_id`, `supersedes_payslip_id`, `revoked_at/reason`; `DELETE` always rejected. Corrections create `revision + 1`. |
+| `policy_version` and `policy_version_point` never mutate after leaving `DRAFT` | `trg_policy_version_immutable`; a change is a new version |
+| `policy_acknowledgement` is append-only | `trg_append_only_policy_ack` |
+| `leave_balance_ledger` is append-only | `trg_append_only_leave_ledger`; a mistake is corrected by a compensating `ADJUSTMENT` row |
+| `login_attempt` is append-only | `trg_append_only_login_attempt` |
+| `attendance_submission` is immutable except `superseded_by_submission_id` | `trg_immutable_attendance_submission` |
+| `salary_structure` is immutable once a payslip references it | `trg_immutable_referenced_structure` |
+| `payroll_input_batch` is immutable once `COMMITTED` | `trg_immutable_committed_batch` (only `superseded_by_batch_id` may change) |
+| No operational row is ever hard-deleted | No `DELETE` grant on the app role for any table in §18.2; lifecycle is expressed by status columns |
+| `file_object` rows survive object purge | `deleted_at` is set; the row and its `sha256` remain for audit |
+
+### 18.4 Retention
+
+| Class | Retention | Mechanism |
+|---|---|---|
+| `payslip`, `payslip_line`, `payslip_publication` | 8 years after the FY ends (Indian statutory) | Never deleted inside the window; after it, HR-initiated, audited archival export |
+| `form16_document`, `tds_quarter` | 8 years after the FY | as above |
+| `audit_event` | 8 years, partitioned monthly | Old partitions detached to cold storage with Object Lock, never dropped while in window |
+| `attendance_record`, `attendance_submission`, `attendance_approval` | 8 years | as payslips |
+| `leave_balance_ledger`, `leave_request` | 5 years after the leave period closes | |
+| `expense_claim` + lines + attachments | 8 years (tax evidence) | `file_object.retention_until` set at upload |
+| `policy_version`, `policy_acknowledgement` | Permanent while the organisation exists | Never purged — they are the compliance record |
+| `employee`, `employee_employment` and satellites | 8 years after `date_of_exit`, then pseudonymised | `employee-pseudonymise` job nulls the personal envelopes, keeps `employee_number` and the audit trail |
+| `login_attempt` | 1 year | `session-sweep` |
+| `refresh_token` | 90 days after `expires_at` | `session-sweep` |
+| `email_outbox` body columns | Nulled immediately after `SENT`; the row kept 2 years | `email-dispatch` |
+| `notification` | 1 year after `occurred_at` | swept |
+| `ess_ops.idempotency_key` | 24 hours | swept |
+| Uploaded files | `document_type.retention_years`, or the class above for payroll evidence | `file-retention-purge` deletes the object, sets `deleted_at`, writes an audit event |
+
+Retention deletion is itself audited, batched, and requires the job to run as
+`ess_job` — never as a request-scoped role.
+
+---
+
+## 19. Approvals: `approval_task`, `approval_decision`, and the guard catalogue
+
+### 19.1 `approval_task` — the unified Manager queue
+
+The Approvals screen mixes leave and expense items and shows a single pending count on
+the sidebar badge. That count must be one indexed read, not a union of scans, and the
+"who must act" answer must survive a re-org. Hence one task row per pending decision.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` | PK |
+| `organization_id` | `uuid` | no | — | FK → `organization(id)` `ON DELETE RESTRICT` |
+| `kind` | `ess_approval_task_kind` | no | — | Renders the card's kind chip (`Leave` blue, `Expense` amber) |
+| `status` | `ess_approval_task_status` | no | `'PENDING'` | |
+| `subject_employee_id` | `uuid` | no | — | FK → `employee(id)` `ON DELETE RESTRICT` — whose request it is (name + initials on the card) |
+| `assignee_employee_id` | `uuid` | no | — | FK → `employee(id)` `ON DELETE RESTRICT` — who must decide |
+| `assignee_app_user_id` | `uuid` | yes | — | FK → `app_user(id)` `ON DELETE SET NULL` — denormalised for the badge query |
+| `entity_type` | `text` | no | — | `leave_request`, `expense_claim`, `attendance_approval`, `document_request` |
+| `entity_id` | `uuid` | no | — | Polymorphic; uniqueness enforced per (kind, entity_id) |
+| `leave_request_id` | `uuid` | yes | — | FK → `leave_request(id)` `ON DELETE CASCADE` — a real FK for the kinds we support, so the card can be built with one join |
+| `expense_claim_id` | `uuid` | yes | — | FK → `expense_claim(id)` `ON DELETE CASCADE` |
+| `attendance_approval_id` | `uuid` | yes | — | FK → `attendance_approval(id)` `ON DELETE CASCADE` |
+| `document_request_id` | `uuid` | yes | — | FK → `document_request(id)` `ON DELETE CASCADE` |
+| `title` | `text` | no | — | `Earned leave · 5 – 9 Oct 2026 (5 days)` — composed server-side from persisted fields at creation |
+| `subtitle` | `text` | yes | — | `Family wedding in Kolkata · Balance after: 9.5 days` |
+| `amount_minor` | `money_minor` | yes | — | For expense tasks — the employee's own claim amount, visible to their manager by definition |
+| `requested_at` | `timestamptz` | no | — | Renders "Requested 27 Sep" |
+| `due_at` | `timestamptz` | yes | — | SLA for escalation |
+| `decided_at` | `timestamptz` | yes | — | |
+| `priority_order` | `smallint` | no | `0` | Queue ordering: overdue first, then oldest |
+| `row_version` | `integer` | no | `1` | |
+
+```sql
+CONSTRAINT ux_approval_task__kind_entity UNIQUE (kind, entity_id),
+CONSTRAINT ck_at__entity_fk CHECK (
+  (kind = 'LEAVE_REQUEST'     AND leave_request_id IS NOT NULL AND entity_id = leave_request_id)
+OR (kind = 'EXPENSE_CLAIM'    AND expense_claim_id IS NOT NULL AND entity_id = expense_claim_id)
+OR (kind = 'ATTENDANCE_PERIOD' AND attendance_approval_id IS NOT NULL AND entity_id = attendance_approval_id)
+OR (kind = 'DOCUMENT_REQUEST' AND document_request_id IS NOT NULL AND entity_id = document_request_id)
+OR (kind = 'PROFILE_CHANGE')),
+CONSTRAINT ck_at__decided CHECK ((status <> 'PENDING') = (decided_at IS NOT NULL)),
+CONSTRAINT ck_at__not_self CHECK (subject_employee_id <> assignee_employee_id),
+CONSTRAINT ck_at__amount CHECK (amount_minor IS NULL OR amount_minor > 0)
+```
+Indexes:
+- `ix_at__assignee_pending (assignee_employee_id, priority_order, requested_at) WHERE status = 'PENDING'` — the queue **and** the sidebar badge count
+- `ix_at__assignee_history (assignee_employee_id, decided_at DESC) WHERE status <> 'PENDING'` — the History tab
+- `ix_at__subject (subject_employee_id, requested_at DESC)`
+- `ix_at__overdue (due_at) WHERE status = 'PENDING'`
+
+`ck_at__not_self` is a structural anti-self-approval control: a manager can never be
+assigned a task about their own request. Where a manager's own request would route to
+themselves (e.g. they are the top of the chain), the task is assigned to the next
+ancestor in `employee_reporting_closure`; if none exists, to the HR business partner
+from `employee_employment.hr_business_partner_employee_id`.
+
+### 19.2 `approval_decision` — append-only decision log
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` | PK |
+| `organization_id` | `uuid` | no | — | FK → `organization(id)` `ON DELETE RESTRICT` |
+| `approval_task_id` | `uuid` | no | — | FK → `approval_task(id)` `ON DELETE RESTRICT` |
+| `outcome` | `ess_approval_decision_outcome` | no | — | |
+| `decided_by_user_id` | `uuid` | no | — | FK → `app_user(id)` `ON DELETE RESTRICT` |
+| `decided_by_employee_id` | `uuid` | no | — | FK → `employee(id)` `ON DELETE RESTRICT` |
+| `acting_persona` | `ess_persona` | no | — | Which persona authorised it |
+| `note` | `text` | yes | — | Mandatory for `REJECTED`, `REASSIGNED`, `AUTO_ESCALATED` |
+| `approved_amount_minor` | `money_minor` | yes | — | Partial approval of an expense |
+| `reassigned_to_employee_id` | `uuid` | yes | — | FK → `employee(id)` `ON DELETE SET NULL` |
+| `ip_address` | `inet` | yes | — | |
+| `audit_event_id` | `uuid` | yes | — | FK → `audit_event(id)` `ON DELETE SET NULL` |
+| `decided_at` | `timestamptz` | no | `now()` | |
+
+```sql
+CONSTRAINT ck_ad__note CHECK (outcome NOT IN ('REJECTED','REASSIGNED','AUTO_ESCALATED') OR note IS NOT NULL),
+CONSTRAINT ck_ad__reassign CHECK ((outcome = 'REASSIGNED') = (reassigned_to_employee_id IS NOT NULL))
+```
+Append-only (`trg_append_only_approval_decision`).
+Index: `ix_ad__task (approval_task_id, decided_at DESC)`.
+
+State machine `machine = 'approval_task'`: `NULL→PENDING` (system) ·
+`PENDING→APPROVED` / `PENDING→REJECTED` (`approval:task:act`, guard
+`approval.actor_is_assigned_approver`) · `PENDING→WITHDRAWN` (system, when the
+underlying request is withdrawn) · `PENDING→EXPIRED` (system, on SLA exhaustion) ·
+`PENDING→REASSIGNED` (`approval:task:act` or `role:assign`, guard
+`approval.note_required`, creates a replacement task).
+
+### 19.3 Guard catalogue
+
+Every `state_transition.guard_key` referenced anywhere in this document, with its exact
+predicate. Guards are pure functions of persisted state; they never consult the clock
+beyond `now()`.
+
+| Guard key | Predicate |
+|---|---|
+| `approval.actor_is_assigned_approver` | The acting employee is the task's `assignee_employee_id`, **or** holds `…:approve:any` **and** an escalation reason is supplied |
+| `approval.note_required` | The request supplies a non-empty `note`/`reason` of ≥ 10 characters |
+| `leave.self_only` | `leave_request.employee_id = actor_employee_id` |
+| `leave.sufficient_balance` | `leave_balance.available_days - leave_balance.pending_days >= total_days`, unless `leave_type.allows_negative_balance` |
+| `leave.no_overlap` | No `PENDING_APPROVAL`/`APPROVED` request of the same employee overlaps the dates (backed by `ex_leave_request__no_self_overlap`) |
+| `leave.min_notice` | `start_date - CURRENT_DATE >= leave_type.min_notice_days`, waived when HR acts |
+| `leave.attachment_if_required` | `total_days <= leave_type.requires_attachment_after_days` or `attachment_file_object_id IS NOT NULL` with `scan_status = 'CLEAN'` |
+| `leave.manager_exists` | A current `PRIMARY` `employee_manager` row exists, or an HRBP fallback resolves |
+| `leave.period_open` | `leave_period.closed_at IS NULL` |
+| `leave.starts_in_future` | `start_date > CURRENT_DATE` |
+| `leave.not_yet_locked_by_attendance` | `leave_request.attendance_record_id IS NULL` |
+| `attendance.cycle_exists` | A `payroll_cycle` exists for the same period |
+| `attendance.all_active_employees_have_records` | `count(attendance_record) = count(active employees on end_date)` |
+| `attendance.day_identity_holds` | No record violates `ck_ar__day_identity` (re-checked in bulk) |
+| `attendance.payroll_inputs_locked` | The linked `payroll_cycle.status = 'INPUTS_LOCKED'` — **this is the enforcement of "Accounts uploads before HR submits"** |
+| `attendance.slices_created` | One `attendance_approval` per distinct `manager_employee_id` in the period |
+| `attendance.every_slice_approved` | No `attendance_approval` for the period has `status <> 'APPROVED'` |
+| `attendance.any_slice_rejected` | At least one slice is `REJECTED` |
+| `attendance.approval_overdue` | `attendance_approval.due_at < now()` |
+| `attendance.period_is_hr_submitted` | `attendance_period.status = 'HR_SUBMITTED'` |
+| `attendance.cycle_not_calculated` | `payroll_cycle.status` is before `CALCULATING` |
+| `attendance.cycle_not_published` | `payroll_cycle.status NOT IN ('PUBLISHED','CLOSED')` |
+| `attendance.cycle_left_attendance_approved` | `payroll_cycle.status` is at or after `VALIDATING` |
+| `payroll.no_open_cycle_for_period` | No non-terminal cycle exists for `period_code` |
+| `payroll.prior_cycle_closed` | The previous period's cycle is `CLOSED` or `CANCELLED` |
+| `payroll.attendance_period_open` | The linked `attendance_period.status = 'OPEN'` |
+| `payroll.at_least_one_committed_batch` | ≥ 1 `payroll_input_batch` with `status = 'COMMITTED'` |
+| `payroll.no_uncommitted_batches` | No batch in `UPLOADING`/`PARSED`/`PARSE_FAILED` |
+| `payroll.all_batches_validated` | Every non-discarded batch is `COMMITTED` and its declared total matched |
+| `payroll.attendance_locked` | `attendance_period.status IN ('APPROVED','LOCKED')` |
+| `payroll.no_error_validations` | §10.6 predicate |
+| `payroll.has_error_validations` | Its negation |
+| `payroll.validated_recently` | `validated_at > now() - interval '24 hours'` **and** no `payroll_input_item` or `attendance_record` in scope has `updated_at > validated_at` |
+| `payroll.run_succeeded` | The live `payroll_run.status = 'SUCCEEDED'` |
+| `payroll.run_failed` | `= 'FAILED'` |
+| `payroll.payslip_count_matches_employee_count` | `payroll_cycle.payslip_count = payroll_cycle.employee_count` |
+| `payroll.controls_balance` | Σ payslip gross = `control_gross_minor`, Σ net = `control_net_minor`, and `gross - deductions = net` for every payslip (computed in the API over decrypted values, inside the transaction) |
+| `payroll.distinct_approver` | `approved_by_user_id <> calculated_by_user_id` (also a DB `CHECK`) |
+| `payroll.every_payslip_generated` | Every payslip in the run has `status = 'GENERATED'` |
+| `payroll.pay_date_set` | `actual_pay_date IS NOT NULL` |
+| `payroll.pay_date_passed` | `actual_pay_date <= CURRENT_DATE` |
+| `payroll.reimbursements_settled` | Every linked `reimbursement_batch` is `PAID` or `CANCELLED` |
+| `payroll.no_payslips_exist` | No `payslip` rows reference the cycle |
+| `payroll.bank_verified` | Every in-scope employee has a verified primary bank account (raised as a validation, not a hard stop, so HR can fix it) |
+| `expense.self_only` | `expense_claim.employee_id = actor_employee_id` |
+| `expense.has_lines` | ≥ 1 `expense_claim_line` |
+| `expense.receipt_if_required` | Category requires a receipt ⇒ a `CLEAN` attachment exists for each line above the threshold |
+| `expense.within_hard_limits` | Every line with `is_hard_limit` caps is within them |
+| `expense.spend_within_claim_window` | `CURRENT_DATE - spend_date <= 30` (the T&E policy's window, read from `expense_limit`/policy config) |
+| `expense.manager_exists` | As `leave.manager_exists` |
+| `expense.not_yet_decided` | `manager_decided_at IS NULL` |
+| `expense.category_requires_finance` | `expense_category.requires_finance_approval` |
+| `expense.category_skips_finance` | Its negation |
+| `reimb.all_claims_finance_approved` | Every item's claim is `FINANCE_APPROVED` |
+| `reimb.batch_open` | A `DRAFT` batch exists for the current cutoff |
+| `reimb.cycle_inputs_open` | The target `payroll_cycle.status IN ('INPUTS_OPEN')` |
+| `reimb.cycle_published` | `payroll_cycle.status IN ('PUBLISHED','CLOSED')` |
+| `policy.has_body` | `body_markdown` non-empty and `body_sha256` matches it |
+| `policy.effective_date_set` | `effective_from IS NOT NULL` |
+| `policy.applicability_defined` | ≥ 1 `policy_applicability_rule` with `is_include` |
+| `policy.assignment_open` | A `policy_assignment` exists for (employee, version) with `superseded_at IS NULL` and no acknowledgement yet |
+| `tax.declaration_window_open` | `CURRENT_DATE BETWEEN fiscal_year.declaration_window_opens_on AND …closes_on` |
+| `tax.proof_window_open` | `CURRENT_DATE BETWEEN fiscal_year.proof_window_opens_on AND …closes_on` |
+| `tax.all_items_have_proof` | Every item has a `CLEAN` `proof_file_object_id` |
+| `docreq.self_only` | `document_request.employee_id = actor_employee_id` |
+| `docreq.document_attached` | `employee_document_id IS NOT NULL` and its file is `CLEAN` |
+| `ticket.self_only` | `raised_by_employee_id = actor_employee_id` |
+| `ticket.resolution_summary_present` | `resolution_summary` non-empty |
+| `ticket.within_reopen_window` | `resolved_at > now() - interval '14 days'` |
+
+---
+## 20. Query-pattern appendix — every displayed value, sourced
+
+Notation: `:me` = `ess.actor_employee_id`, `:u` = `ess.actor_user_id`,
+`:org` = `ess.organization_id`, `:today` = `CURRENT_DATE` in `organization.timezone`,
+`:fy` = the current `fiscal_year.id`, `:lp` = the current `leave_period.id`.
+Every query below additionally runs under the RLS policies of §1.8.
+
+**Rendering rules that apply everywhere:**
+- A money value is `'₹' + Math.round(minor / 100).toLocaleString('en-IN')`.
+- A date is `toLocaleDateString('en-IN', {day:'numeric', month:'short', year:'numeric'})`.
+- **When a query returns no row, the tile renders `—` in `--text-muted` with the stated
+  sub-label, and a list renders the designed empty state. No zero is ever substituted
+  for a missing measurement, and no value is ever computed in the browser from anything
+  other than what the endpoint returned.**
+
+### 20.1 Shell — sidebar, header, search, notifications
+
+| UI element | Source |
+|---|---|
+| `Widedrop` / `Employee portal` | `organization.display_name`, `organization.portal_name` |
+| Logo | `organization.logo_file_object_id` → pre-signed URL |
+| Nav groups and items | Static nav manifest in `packages/shared`, **filtered by the token's `scopes`**: `approvals` requires `approval:task:read:any`; HR and Accounts groups require their persona permissions. The server also re-checks on every route. |
+| Approvals badge count | `SELECT count(*) FROM approval_task WHERE assignee_employee_id = :me AND status = 'PENDING'` (index `ix_at__assignee_pending`). `0` ⇒ no badge element is rendered at all. |
+| Sidebar user card name | `employee.full_name` |
+| Sidebar user card sub | `employee.employee_number \|\| ' · ' \|\| location.city` via `employment_as_of(:me, :today)` |
+| Avatar initials | `employee.initials`; tint = `department.accent_colour_hex`, else `#1B365D` |
+| Header date | `now()` rendered in `organization.timezone` |
+| Header name / title | `employee.full_name`, `designation.title` from `employment_as_of(:me, :today)` |
+| Notification bell dot | `EXISTS (SELECT 1 FROM notification WHERE recipient_app_user_id = :u AND read_at IS NULL AND dismissed_at IS NULL)` |
+| Notification list | `SELECT title, context_label, occurred_at, tone, deep_link_screen, deep_link_params FROM notification WHERE recipient_app_user_id = :u AND dismissed_at IS NULL ORDER BY occurred_at DESC LIMIT 20`. Dot colour from `tone` (Design System §1). Empty ⇒ "You're all caught up". |
+| Global search — `Module` | The RBAC-filtered nav manifest, `ILIKE '%q%'` on the label |
+| Global search — `Person` | `SELECT full_name, designation.title FROM employee … WHERE is_directory_listed AND employment_status IN ('ACTIVE','ON_LEAVE','NOTICE_PERIOD') AND (full_name \|\| ' ' \|\| work_email) % :q ORDER BY similarity DESC LIMIT 4` (index `ix_employee__search_trgm`) |
+| Global search — `Policy` | `SELECT p.name, pv.version_label FROM policy_version pv JOIN policy p … WHERE pv.status = 'PUBLISHED' AND p.name ILIKE '%'\|\|:q\|\|'%' AND EXISTS (assignment for :me) LIMIT 3` |
+| Global search — `Payslip` | `SELECT period_label, net_pay FROM payslip … <the §10.7 visibility gate> AND period_label ILIKE '%'\|\|:q\|\|'%' LIMIT 3` — net formatted after decryption in the API |
+| "No matches for …" | Zero rows across all four kinds |
+
+### 20.2 Home
+
+| UI element | Source |
+|---|---|
+| Greeting word | `hour(now() in org tz) < 12 ? 'Good morning' : < 17 ? 'Good afternoon' : 'Good evening'` |
+| Greeting name | `employee.preferred_name ?? employee.first_name` |
+| Sub-header line | `now()` weekday + full date in org tz, `location.city`, `location.site_label` from `employment_as_of(:me, :today)` |
+| **Latest payslip — month** | `SELECT period_label … <visibility gate> ORDER BY period_end DESC LIMIT 1` |
+| **Latest payslip — net** | `net_pay_minor` of that row, decrypted in the API |
+| **Latest payslip — "credited"** | `payslip.pay_date` |
+| *Empty* | No published payslip ⇒ value `—`, sub-label from the earliest in-scope `payroll_cycle.status`: e.g. "August payroll is being processed" (`status < 'PUBLISHED'`) or "Your first payslip appears after your first full pay period" (no cycle) |
+| **Leave balance — top 3** | `SELECT lt.name, lb.available_days, lb.entitlement_days FROM leave_balance lb JOIN leave_type lt ON lt.id = lb.leave_type_id WHERE lb.employee_id = :me AND lb.leave_period_id = :lp AND lt.is_active ORDER BY lt.display_order LIMIT 3` |
+| Progress bar width | `round(available_days / nullif(entitlement_days, 0) * 100)`; `entitlement_days = 0` ⇒ bar hidden, value shown as a plain count |
+| *Empty* | No rows ⇒ empty state "Balances start after your first accrual" |
+| **Approvals count** | The sidebar badge query |
+| Approvals preview (2) | `SELECT subject_employee.initials, subject_employee.full_name, title FROM approval_task WHERE assignee_employee_id = :me AND status = 'PENDING' ORDER BY priority_order, requested_at LIMIT 2` |
+| "request(s) awaiting your action" | Singular/plural on the count |
+| *Empty* | Count `0` ⇒ the whole Approvals card renders its empty state ("Nothing waiting on you") |
+| **Announcements (3)** | `SELECT a.title, a.category_label, a.published_at FROM announcement a WHERE a.status='PUBLISHED' AND a.archived_at IS NULL AND (a.expires_at IS NULL OR a.expires_at > now()) AND <audience matches :me> ORDER BY a.is_pinned DESC, a.published_at DESC LIMIT 3` |
+| **Upcoming holidays (4)** | `SELECT h.name, h.holiday_date FROM holiday h WHERE h.holiday_calendar_id = holiday_calendar_for(:me, :today) AND h.kind='PUBLIC' AND h.holiday_date >= :today ORDER BY h.holiday_date LIMIT 4`; `day`/`mon`/`dow` are formatted from `holiday_date` |
+| Card sub-label "Bengaluru calendar" | `holiday_calendar.name` |
+| **Team today** | `SELECT e.initials, e.full_name, d.title, l.city, <status> FROM employee_reporting_closure c JOIN employee e … WHERE c.ancestor_employee_id = :me AND c.depth = 1 AND e.employment_status IN ('ACTIVE','ON_LEAVE','NOTICE_PERIOD') ORDER BY e.full_name`. `<status>` = `EXISTS (SELECT 1 FROM leave_request_day d JOIN leave_request r ON r.id = d.leave_request_id WHERE d.employee_id = e.id AND d.leave_date = :today AND d.day_fraction > 0 AND r.status='APPROVED')` → `On leave` (amber) else `Available` (green). A `PUBLIC` holiday on the employee's calendar → `Holiday` (gray). |
+| *Empty* | No direct reports ⇒ the card is not rendered (the whole Manager column collapses) |
+| **Needs your attention** | Union of: (a) `SELECT p.name, pv.version_label, pa.due_on, p.owner_label FROM policy_assignment pa JOIN policy_version pv … WHERE pa.employee_id = :me AND pa.superseded_at IS NULL AND NOT EXISTS (acknowledgement) ORDER BY pa.due_on NULLS LAST`; (b) the pending approval-task count as one item when > 0; (c) `document_request` rows in `IN_REVIEW` awaiting employee input. `todoCount` = the union's cardinality. |
+| *Empty* | Zero items ⇒ the whole block is omitted (`hasTodos = false`), as in the prototype |
+
+### 20.3 Payslips
+
+| UI element | Source |
+|---|---|
+| Header sub-line "HDFC Bank ••4412" | `employee_bank_account` current primary: `bank_name \|\| ' ••' \|\| account_number_last4`. No primary account ⇒ the phrase is omitted. |
+| FY chip | `fiscal_year.label` where `is_current` |
+| **YTD tile 1 — Gross earned** | `payslip_fy_rollup.gross_earned_minor` for (`:me`, `:fy`) |
+| tile 1 sub | `first_period_label` + ' – ' + `last_period_label`, abbreviated to `Apr – Aug 2026` |
+| **tile 2 — Net credited** | `net_credited_minor`; sub = `payslip_count \|\| ' payslips'` |
+| **tile 3 — TDS deducted** | `tds_minor`; sub = static copy "Reflected in Form 26AS" |
+| **tile 4 — PF contributed** | `employee_pf_minor + employer_pf_minor`; sub = "Employee + employer" |
+| *Empty* | No rollup row ⇒ all four tiles `—`, sub "No published payslips in FY 2026–27 yet" |
+| **Payslip list** | `SELECT id, period_label, pay_date, net_pay_minor FROM payslip p JOIN payslip_publication pub … <visibility gate> ORDER BY p.period_end DESC` (index `ix_payslip__employee_period`) |
+| **Detail — net, month, credited, mode** | The selected row: `net_pay_minor`, `period_label`, `pay_date`, `payment_mode` |
+| **Detail — "Days paid 31 / 31"** | `payslip.payable_days \|\| ' / ' \|\| payslip.total_days` |
+| **Earnings lines** | `SELECT label_snapshot, amount_minor, narration FROM payslip_line WHERE payslip_id = :id AND kind = 'EARNING' ORDER BY display_order` |
+| **Gross earnings** | `payslip.gross_earnings_minor` (the API asserts it equals Σ of the earning lines before responding; a mismatch is a 500 and a P1 alert, never a silently-corrected number) |
+| **Deduction lines** | Same with `kind = 'DEDUCTION'` |
+| **Total deductions** | `payslip.total_deductions_minor`, asserted equal to Σ |
+| **Employer PF** | `payslip.employer_pf_minor` (NULL ⇒ the chip is omitted) |
+| **TDS this month** | `payslip.tds_minor` |
+| **Reference** | `payslip.reference_no` |
+| Download PDF | `payslip.pdf_file_object_id` → pre-signed URL; writes `audit_event(DOWNLOAD)` and increments `payslip_publication.download_count`. NULL ⇒ button disabled with "PDF is being generated". |
+| Email me | Enqueues `email_outbox` kind `PAYSLIP_COPY_REQUESTED` to `employee.work_email` |
+| *Empty* | No visible payslips ⇒ list and detail both render the empty state; the cause is read from the current `payroll_cycle.status` |
+
+### 20.4 Tax slips
+
+| UI element | Source |
+|---|---|
+| Header "PAN AXYPR••••K" | `employee_statutory_id.value_mask WHERE kind='PAN'`. Absent ⇒ "PAN not on record — add it under My profile". |
+| Regime chip | `tax_regime.name \|\| ' · ' \|\| fiscal_year.label` via `employee_tax_regime_election`; no election ⇒ the `is_default` regime, labelled "Default regime" |
+| **Projected annual tax** | `employee_tax_projection.projected_annual_tax_minor WHERE is_current` |
+| Sub-label "including 4% cess" | `'including ' \|\| (tax_regime.cess_rate * 100) \|\| '% cess'` |
+| **"Deducted Apr – Aug"** | `tds_deducted_to_date_minor`; the range from `fiscal_year.start_date` to the projection's `as_of_period_code` |
+| **Percentage** | `round(tds_deducted_to_date_minor * 100.0 / nullif(projected_annual_tax_minor, 0))` |
+| Progress bar | The same percentage |
+| **"₹1,58,090 remaining"** | `tds_remaining_minor` (generated column) |
+| **"about ₹22,584 per month over 7 months"** | `next_month_tds_estimate_minor`, `remaining_months` |
+| **Projected gross / Standard deduction / Monthly TDS** | `projected_gross_minor`, `standard_deduction_minor`, `monthly_tds_minor` |
+| *Empty* | No `is_current` projection ⇒ every figure `—`, sub "Your first payroll of FY 2026–27 has not run yet" |
+| **Declaration card status** | `employee_tax_declaration.status` → chip (`SUBMITTED`/`VERIFIED` green, `DRAFT` gray, `PROOF_PENDING` amber, `REJECTED` red) |
+| Declaration paragraph | `'Declared on ' \|\| submitted_at \|\| ' under the ' \|\| tax_regime.name`, then the window dates from `fiscal_year.proof_window_opens_on` / `…closes_on` |
+| "Update declaration" | Enabled only when `tax.declaration_window_open`; otherwise disabled with the persisted window date in the tooltip |
+| **Quarterly TDS rows** | `SELECT fq.label, tq.tds_deducted_minor, tq.status FROM tds_quarter tq JOIN fiscal_quarter fq … WHERE tq.employee_id = :me AND fq.fiscal_year_id = :fy ORDER BY fq.quarter_no` |
+| Quarter amount `—` | `tds_deducted_minor IS NULL` (an `UPCOMING` quarter) — a persisted absence, not a placeholder |
+| **Form 16 list** | `SELECT fy.label, f.issued_at, f.file_name FROM form16_document f JOIN fiscal_year fy … WHERE f.employee_id = :me AND f.status IN ('ISSUED','REVISED') ORDER BY f.issued_at DESC` |
+| Card sub "Part A and Part B · digitally signed" | Composed from `includes_part_a`, `includes_part_b`, `is_digitally_signed` |
+| *Empty* | No issued Form 16 ⇒ empty state "Form 16 for FY 2025–26 is issued by 15 June" (date from `fiscal_year`) |
+
+### 20.5 My profile
+
+| Tab | Field → source |
+|---|---|
+| Header | `employee.initials`, `full_name`, `designation.title · department.name`, chips: `employee_number`, `location.city`, `employment_type` (humanised), `'Joined ' \|\| date_of_joining` |
+| **Personal** | Full name → `employee.full_name` · Date of birth → `employee_personal_detail.date_of_birth` (decrypted; requires `profile:read_sensitive:self`, writes `READ_SENSITIVE`) · Gender, Blood group, Marital status, Nationality → `employee_personal_detail` · Personal email / Mobile / Current address / Permanent address → decrypted envelopes |
+| **Employment** | Employee ID → `employee.employee_number` · Designation → `designation.title` · Department → `department.name` · Business unit → `department.business_unit` · Reporting manager → `employee_manager` current `PRIMARY` → `employee.full_name` · HR business partner → `employee_employment.hr_business_partner_employee_id` → `full_name` · Work location → `location.city \|\| ' · ' \|\| location.site_label` · Employment type → `employment_type` · Date of joining → `employee.date_of_joining` · **Tenure** → `age(:today, date_of_joining)` formatted `4 years 2 months` (computed, never stored) · Work email → `employee.work_email` · Cost centre → `cost_centre.code \|\| ' · ' \|\| cost_centre.name` · Notice period → `notice_period_days \|\| ' days'` |
+| **Bank & statutory** | Bank → `employee_bank_account.bank_name` · Account number → `account_number_mask` · IFSC → `ifsc_code` (plaintext) · PAN / Aadhaar / UAN / PF account / ESI → `employee_statutory_id.value_mask` by `kind`; a row with `is_applicable = false` renders `Not applicable` · Tax regime → `tax_regime.name \|\| ' · ' \|\| fiscal_year.label` |
+| **Emergency contacts** | `employee_emergency_contact` ordered by `priority`; `contact_name_mask`/`phone_mask` unless the reader is the employee, their current manager, or holds `profile:read_sensitive:any` |
+| Tab notes | `ui_copy` keys `profile.tab_note.personal` / `.employment` / `.bank` / `.emergency` (§4.7), not hardcoded strings |
+| "Request a change" | Creates a `helpdesk_ticket` with `related_entity_type = 'employee'`/`'employee_bank_account'` and returns the real `ticket_no` — the toast shows the persisted number, never a guessed one |
+| *Empty* | A missing satellite row ⇒ that field is omitted from the payload and the row is not rendered; a tab with no fields renders "Nothing recorded yet — raise a ticket to add these details" |
+
+### 20.6 Policies
+
+| UI element | Source |
+|---|---|
+| **Pending count chip** | `SELECT count(*) FROM policy_assignment pa WHERE pa.employee_id = :me AND pa.superseded_at IS NULL AND NOT EXISTS (SELECT 1 FROM policy_acknowledgement a WHERE a.policy_assignment_id = pa.id)`; `0` ⇒ chip omitted |
+| **List rows** | `SELECT p.name, pv.version_label, pv.last_updated_label, <status> FROM policy_assignment pa JOIN policy_version pv ON pv.id = pa.policy_version_id JOIN policy p ON p.id = pv.policy_id WHERE pa.employee_id = :me AND pa.superseded_at IS NULL ORDER BY p.display_order, p.name` |
+| Row chip | The derived status of §15.4 |
+| **Detail eyebrow** | `policy.owner_label \|\| ' · ' \|\| pv.version_label \|\| ' · Updated ' \|\| pv.last_updated_label` |
+| Title / Summary | `policy.name`, `policy_version.summary` |
+| Applies to / Effective from / Next review / Questions | `pv.applies_to_label`, `pv.effective_from`, `pv.next_review_on`, `policy.contact_email` |
+| **"What this policy covers"** | `SELECT text FROM policy_version_point WHERE policy_version_id = :v ORDER BY point_no`; zero rows ⇒ block omitted |
+| Acknowledge button | Rendered only when a live `policy_assignment` exists with no acknowledgement; POST writes `policy_acknowledgement` with `acknowledged_at = now()`, `acknowledged_body_sha256`, IP, UA, plus an `audit_event` |
+| "Due 15 Oct 2026" | `policy_assignment.due_on`; NULL ⇒ no due text |
+| "Acknowledged on 12 Jan 2026" | `policy_acknowledgement.acknowledged_at` |
+| Download PDF | `policy_version.pdf_file_object_id`; NULL ⇒ button omitted |
+| *Empty* | No assignments ⇒ "No policies are assigned to you yet" |
+
+### 20.7 Leave
+
+| UI element | Source |
+|---|---|
+| Sub-header "Leave year Jan – Dec 2026" | `leave_period.label` where `is_current` |
+| **Balance tiles (all types)** | `SELECT lt.name, lb.available_days, lb.entitlement_days FROM leave_balance lb JOIN leave_type lt … WHERE lb.employee_id = :me AND lb.leave_period_id = :lp ORDER BY lt.display_order` |
+| Tile value `14.5 / 18 days` | `available_days` / `entitlement_days` |
+| Progress bar | `available_days / nullif(entitlement_days,0)` |
+| **Leave type dropdown** | `SELECT name FROM leave_type WHERE organization_id = :org AND is_active AND <employee is eligible via leave_entitlement_rule> ORDER BY display_order` |
+| Submit | Server recomputes `total_days` with `working_days()`; client-side count is advisory only |
+| "Weekends are not counted" | Derived from `organization.week_off_days` / `employee_employment.weekly_off_days` |
+| **My requests list** | `SELECT lt.name, r.start_date, r.end_date, r.total_days, r.reason, r.status, r.decision_note FROM leave_request r JOIN leave_type lt … WHERE r.employee_id = :me AND r.leave_period_id = :lp ORDER BY r.start_date DESC` |
+| Row range text | One date if `start_date = end_date`, else `start – end` |
+| Row sub-note | `reason`, else `'Awaiting ' \|\| approver_employee.full_name` when `PENDING_APPROVAL`, else `decision_note` |
+| Withdraw button | Shown when `status IN ('PENDING_APPROVAL','APPROVED')` and guard `leave.starts_in_future` holds |
+| **Upcoming holidays** | As §20.2 |
+| **"1 restricted holiday left"** | `leave_balance.available_days` for the `RH` leave type; no RH balance ⇒ the sub-label is omitted |
+| *Empty* | No balances ⇒ tiles empty state; no requests ⇒ "No leave requests this year" |
+
+### 20.8 Benefits
+
+| UI element | Source |
+|---|---|
+| Sub-header "Plan year Apr 2026 – Mar 2027" | `benefit_plan_year.label` of the current FY |
+| **Card eyebrow** | `benefit_plan.category` humanised |
+| **Card name** | `benefit_plan.name` |
+| **Card value** | By `benefit_plan_year.coverage_kind`: `FIXED_SUM_INSURED` → `coalesce(benefit_enrolment.sum_insured_minor, coverage_amount_minor)` formatted; `MULTIPLE_OF_CTC` → `coverage_multiple \|\| '× annual CTC'`; `MONTHLY_AMOUNT` → `coverage_amount_minor`, or, when `employer_contribution_pay_component_id` is set, **the amount of that component on the employee's latest published payslip** (`payslip_line.amount_minor`), formatted `₹8,600 / mo`; `PERCENT_OF_BASIC` → `coverage_rate * 100 \|\| '% of basic'`; `NON_MONETARY` → no value line |
+| **Card meta** | Composed from `provider_name`, `policy_reference`, and the covered dependents' names via `benefit_enrolment_dependent` → `dependent.full_name` (decrypted for the owner) |
+| Card button | `benefit_plan.primary_action_label`; `primary_action = 'NONE'` ⇒ no button. `DOWNLOAD_ECARD` with a NULL `ecard_file_object_id` ⇒ disabled with the reason from `benefit_plan_year` |
+| **Dependents list** | `SELECT initials, full_name, relationship, age_years, <cover> FROM dependent WHERE employee_id = :me AND is_active ORDER BY created_at`; `<cover>` = the plan names from `benefit_enrolment_dependent`, plus `' · Nominee'` when a `nominee` row references the dependent |
+| "Add dependent" | Enabled only inside `benefit_plan_year.enrolment_window_*`; otherwise disabled showing those persisted dates |
+| *Empty* | No `ENROLLED` enrolments ⇒ "No benefits are active for you yet"; no dependents ⇒ the dependents card shows its empty state with the enrolment-window dates |
+
+### 20.9 Expenses
+
+| UI element | Source |
+|---|---|
+| Sub-header "approved by the 25th" | `organization.expense_cutoff_day_of_month` |
+| **Tile 1 — Awaiting approval** | `expense_fy_rollup.awaiting_amount_minor`; sub = `awaiting_count \|\| ' claim(s) with ' \|\| <current primary manager full_name>` |
+| **Tile 2 — Approved · paying `<date>`** | `approved_unpaid_amount_minor`; the date is the `scheduled_pay_date` of the next `payroll_cycle` whose `status <= 'INPUTS_LOCKED'`; sub = `'With ' \|\| payroll_cycle.label \|\| ' salary'`. No such cycle ⇒ the title drops the date and the sub reads "Awaiting the next payroll cycle". |
+| **Tile 3 — Reimbursed FY** | `reimbursed_amount_minor`; sub = `reimbursed_count \|\| ' claims since ' \|\| to_char(fiscal_year.start_date,'Mon')` |
+| *Empty* | No rollup row ⇒ all three tiles `—` with "No claims in FY 2026–27" |
+| **Category dropdown** | `SELECT name FROM expense_category WHERE organization_id = :org AND is_active ORDER BY display_order` |
+| "Goes to `<manager>`, then Finance" | Current primary manager's `full_name`; the ", then Finance" clause only when `expense_category.requires_finance_approval` |
+| **Claims list** | `SELECT claim_no, title, ec.name, spend_date, total_amount_minor, status, manager_note, finance_note FROM expense_claim c JOIN expense_category ec … WHERE c.employee_id = :me AND c.fiscal_year_id = :fy ORDER BY c.spend_date DESC, c.created_at DESC` |
+| Row note suffix | `manager_note` / `finance_note` when rejected |
+| Row chip | The §13.3 status → chip mapping |
+| *Empty* | No claims ⇒ "No claims yet — submit your first one" with the New-claim button |
+
+### 20.10 Documents
+
+| UI element | Source |
+|---|---|
+| **Letter type dropdown** | `SELECT name FROM letter_template WHERE organization_id = :org AND is_active ORDER BY display_order` |
+| Form note "within 1 working day" | `letter_template.sla_working_days` of the selected template |
+| **Letter requests list** | `SELECT lt.name, dr.requested_at, dr.addressee, dr.status, dr.employee_document_id FROM document_request dr JOIN letter_template lt … WHERE dr.employee_id = :me ORDER BY dr.requested_at DESC` |
+| Row sub | `'Requested ' \|\| requested_at`, then `'Addressed to ' \|\| addressee` or `'General purpose'` |
+| Download icon | Rendered only when `employee_document_id IS NOT NULL`; resolves to a pre-signed URL and writes `audit_event(DOWNLOAD)` |
+| **My documents list** | `SELECT ed.title, dt.category_label, ed.document_date FROM employee_document ed JOIN document_type dt … WHERE ed.employee_id = :me AND ed.archived_at IS NULL ORDER BY ed.document_date DESC` |
+| *Empty* | No requests ⇒ "No letter requests yet"; no documents ⇒ "Your HR documents will appear here" |
+
+### 20.11 Directory
+
+| UI element | Source |
+|---|---|
+| **"12 people shown"** | The **actual** result count of the people query after the search filter — recomputed on every keystroke, never a constant |
+| **People list** | `SELECT e.initials, e.full_name, d.title, dep.name, l.city, dep.accent_colour_hex FROM employee e JOIN LATERAL employment_as_of(e.id, :today) ee … WHERE e.organization_id = :org AND e.is_directory_listed AND e.employment_status IN ('ACTIVE','ON_LEAVE','NOTICE_PERIOD') AND (:q = '' OR (e.full_name \|\| ' ' \|\| d.title \|\| ' ' \|\| dep.name \|\| ' ' \|\| l.city) ILIKE '%'\|\|:q\|\|'%') ORDER BY e.full_name` |
+| **Person card** | `full_name`, `designation.title · department.name · location.city`, `work_email`, `work_phone` (requires `directory:read_contact`; absent ⇒ the chip is omitted), `'Reports to ' \|\| <current primary manager full_name>` (no manager ⇒ omitted) |
+| **Reporting line strip** | `SELECT path_employee_ids FROM employee_reporting_closure WHERE descendant_employee_id = :me ORDER BY depth DESC LIMIT 1` gives the chain above; `WHERE ancestor_employee_id = :me AND depth = 1` gives the reports below. Labels: ancestors → "Your manager" / "Your manager's manager", self → "You", descendants → "Reports to you". |
+| Avatar tint | `department.accent_colour_hex`, else `#1B365D` |
+| *Empty* | Zero matches ⇒ the prototype's "No one matches …" block; no reporting relationships ⇒ the strip is omitted |
+
+### 20.12 Announcements
+
+| UI element | Source |
+|---|---|
+| **List** | The §20.2 feed query without the `LIMIT` |
+| Row meta | `Pinned` badge from `is_pinned`; `category_label · published_at` |
+| **Detail** | `title`, `body_markdown` rendered to paragraphs, `'Posted by ' \|\| author_byline` |
+| Read tracking | Opening an item upserts `announcement_read` |
+| *Empty* | No published announcements for this employee ⇒ "No announcements right now" |
+
+### 20.13 Help desk
+
+| UI element | Source |
+|---|---|
+| Sub-header "first response within 1 working day" | `min(ticket_category.first_response_sla_hours)` humanised |
+| **Category dropdown** | `SELECT name FROM ticket_category WHERE organization_id = :org AND is_active ORDER BY display_order` |
+| Submit | Inserts `helpdesk_ticket` + the `email_outbox` row to `helpdesk@widedroptech.com` (§17.4) in one transaction; the toast shows the **persisted** `ticket_no` and the SLA from `ticket_category.first_response_sla_hours` |
+| **My tickets list** | `SELECT t.ticket_no, t.subject, tc.name, t.status, t.assigned_to_user_id, t.updated_at, t.resolved_at FROM helpdesk_ticket t JOIN ticket_category tc … WHERE t.raised_by_employee_id = :me ORDER BY t.created_at DESC` |
+| Row meta | Assigned & open → `<assignee employee full_name> \|\| ' · updated ' \|\| <relative updated_at>` · Resolved → `'Resolved ' \|\| resolved_at` · Unassigned → `'Opened ' \|\| <relative created_at> \|\| ' · unassigned'` |
+| **FAQ accordion** | `SELECT question, answer_markdown FROM faq_article WHERE organization_id = :org AND is_published ORDER BY display_order` |
+| *Empty* | No tickets ⇒ "No tickets yet"; no FAQ rows ⇒ the card is not rendered |
+
+### 20.14 Approvals (Manager)
+
+| UI element | Source |
+|---|---|
+| Sub-header "· 3 reports" | `SELECT count(*) FROM employee_reporting_closure WHERE ancestor_employee_id = :me AND depth = 1` joined to active employees |
+| Tab "Pending · N" | The sidebar badge query |
+| **Pending cards** | `SELECT t.id, s.initials, s.full_name, t.kind, t.title, t.subtitle, t.requested_at, t.amount_minor FROM approval_task t JOIN employee s ON s.id = t.subject_employee_id WHERE t.assignee_employee_id = :me AND t.status = 'PENDING' ORDER BY t.priority_order, t.requested_at` |
+| Kind chip | `LEAVE_REQUEST` → `Leave` blue · `EXPENSE_CLAIM` → `Expense` amber · `ATTENDANCE_PERIOD` → `Attendance` blue |
+| Card title / subtitle | `approval_task.title` / `.subtitle`, composed at creation from persisted fields (leave type, dates, day count, reason, `balance_after_days`; or claim no, amount, category, `limit_applied_minor`, attachment count) |
+| Approve / Reject | Writes `approval_decision` + the underlying entity's transition + `audit_event`, all in one transaction. Reject requires a note (`approval.note_required`). |
+| **Empty** | `noPending` ⇒ exactly the prototype's "All caught up" block |
+| **History** | `SELECT … FROM approval_task t JOIN approval_decision d ON d.approval_task_id = t.id WHERE t.assignee_employee_id = :me AND t.status <> 'PENDING' ORDER BY t.decided_at DESC LIMIT 50` |
+| **Team today aside** | The §20.2 Team-today query; header date = `now()` in org tz |
+| Aside note | Composed from `SELECT lr.start_date, lr.end_date, e.first_name FROM leave_request lr … WHERE lr.employee_id IN (direct reports) AND lr.status IN ('PENDING_APPROVAL','APPROVED') AND lr.start_date BETWEEN :today AND :today + 30` plus the count of approved leave overlapping the next `PUBLIC` holiday. Zero rows ⇒ the note is omitted entirely. |
+
+### 20.15 HR and Accounts back-office surfaces
+
+These appear as additional sidebar groups after `Manager` (Design System §6), using the
+same visual treatment, and are server-side role-gated.
+
+| Screen | Key reads / writes |
+|---|---|
+| **Payroll cycles** (Accounts) | `SELECT period_code, label, status, scheduled_pay_date, employee_count, payslip_count FROM payroll_cycle WHERE organization_id = :org ORDER BY period_start DESC`. A step-tracker renders the seven mandated stages directly from `status`. |
+| **Payroll inputs** (Accounts) | `payroll_input_batch` list with `status`, `row_count_*`, `declared_total_minor` vs `parsed_total_minor`; `payroll_input_item` grid with `is_rejected` / `rejection_reason`. Upload writes a `file_object` (scanned before parse). |
+| **Validation results** (Accounts) | `SELECT rule_code, severity, message, employee.full_name FROM payroll_validation_result … WHERE payroll_cycle_id = :c AND validation_pass_no = <latest> ORDER BY severity DESC`. `CALCULATE` is disabled while any unresolved `ERROR` exists. |
+| **Attendance capture** (HR) | `attendance_record` grid for the period with the day-count columns; the day-identity check is validated per row before Submit is enabled. |
+| **Attendance submission** (HR) | Writes `attendance_submission` with `payload_sha256` and the control totals; transitions the period and the cycle. Blocked unless `attendance.payroll_inputs_locked` holds — the UI states the reason ("Accounts has not locked payroll inputs for August 2026 yet"). |
+| **Attendance approvals** (Manager) | `attendance_approval` slice with its records; Approve/Reject writes `approval_decision` and the record transitions. |
+| **Payslip register** (Accounts) | `SELECT employee.employee_number, employee.full_name, payable_days, gross/net (decrypted) FROM payslip WHERE payroll_cycle_id = :c ORDER BY employee_number`, with the cycle control totals shown above it. |
+| **Publication** (Accounts) | Creates one `payslip_publication` per payslip, one `notification` per employee, one `email_outbox` row per employee; sets `payroll_cycle.actual_pay_date`. Guarded by `payroll.distinct_approver`. |
+| **Policy authoring** (HR) | `policy` / `policy_version` / `policy_version_point` / `policy_applicability_rule` CRUD while `DRAFT`; Publish runs the `policy-assignment` job synchronously and reports how many employees were assigned. |
+| **Compliance report** (HR) | `SELECT pv.version_label, count(*) FILTER (WHERE ack.id IS NOT NULL) AS acknowledged, count(*) AS assigned FROM policy_assignment pa LEFT JOIN policy_acknowledgement ack … GROUP BY pv.id` |
+| **Ticket queue** (HR) | `ix_ht__queue`; assignment, internal comments, resolution. |
+| **Employee admin** (HR) | `employee` + effective-dated `employee_employment` / `employee_manager` writes; every write audited with before/after. |
+| **Audit log** (HR, Accounts) | `SELECT occurred_at, actor_email_snapshot, actor_role_persona, action, entity_type, entity_label, from_state, to_state, reason FROM audit_event WHERE organization_id = :org AND occurred_at BETWEEN … ORDER BY sequence_no DESC`, with a "chain verified through sequence N" banner from the latest `audit-chain-verify` run. Reading it writes an `audit:read` event. |
+
+---
+
+## 21. Schema-verification checklist (CI)
+
+`npm run db:verify-schema` fails the build unless all of the following hold:
+
+1. Every table named in this document exists in schema `ess` or `ess_ops`, with exactly
+   the stated columns, types, nullability and defaults.
+2. Every `CHECK`, `UNIQUE`, `EXCLUDE` and foreign key in this document is present, with
+   the stated `ON DELETE` behaviour.
+3. Every index in this document exists (name, columns, order, partial predicate).
+4. No column of type `real`, `double precision`, `float4`, `float8` or `money` exists
+   anywhere in `ess`.
+5. Every table in `ess` has `ROW LEVEL SECURITY` enabled and at least one policy.
+6. `ess_app` holds no `DELETE` grant on any table listed in §18.2, and no grant at all on
+   `audit_event` beyond `INSERT`/`SELECT`.
+7. Every enum value referenced by a `state_transition` seed row exists in its enum.
+8. Every `state_transition.required_permission_code` resolves to a `permission.code`.
+9. Every guard key referenced in `state_transition.guard_key` has an implementation
+   registered in the API's guard registry (§19.3).
+10. `npm run test:seed-purity` leaves every table in §18.2 empty.
+11. Every column with an `_ct` suffix has matching `_iv`, `_tag`, `_dek_id` columns and
+    the envelope `CHECK` constraints.
+12. `audit-chain-verify` passes over the test fixture set.
