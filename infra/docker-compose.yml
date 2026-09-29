@@ -1,0 +1,60 @@
+# Local development dependencies. Production uses managed services —
+# see docs/DEPLOYMENT.md.
+#
+#   npm run db:up                       # postgres only (all the API needs locally)
+#   docker compose --profile full up -d # + redis + mailpit
+#
+# Object storage is not run locally: the API's storage layer has a filesystem
+# driver for development and an S3-compatible driver for production, selected
+# by STORAGE_DRIVER.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: widedrop-ess-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ess
+      POSTGRES_PASSWORD: ess_local_dev_only
+      POSTGRES_DB: widedrop_ess
+      # Deterministic collation so ORDER BY matches production.
+      POSTGRES_INITDB_ARGS: '--locale=C.UTF-8 --encoding=UTF8'
+    ports:
+      - '5433:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ess -d widedrop_ess']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Rate-limit counters shared across API instances. The API falls back to an
+  # in-process store when REDIS_URL is unset, so this is optional locally.
+  redis:
+    image: redis:7-alpine
+    container_name: widedrop-ess-redis
+    profiles: ['full']
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'no', '--save', '']
+    ports:
+      - '6380:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Captures outbound mail so nothing is delivered for real in development.
+  # Web UI on http://localhost:8025. Optional: MAIL_DRIVER=file writes .eml
+  # files to apps/api/.mail instead.
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: widedrop-ess-mailpit
+    profiles: ['full']
+    restart: unless-stopped
+    ports:
+      - '1025:1025'
+      - '8025:8025'
+
+volumes:
+  pgdata:

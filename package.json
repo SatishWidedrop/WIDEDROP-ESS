@@ -1,0 +1,44 @@
+{
+  "name": "widedrop-ess",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Widedrop Technologies — Employee Self-Service portal",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=10.0.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @widedrop/shared && npm run build -w @widedrop/api && npm run build -w @widedrop/web",
+    "dev": "npm run dev -w @widedrop/api & npm run dev -w @widedrop/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "npm run test --workspaces --if-present",
+    "test:api": "npm run test -w @widedrop/api",
+    "test:web": "npm run test -w @widedrop/web",
+    "db:up": "docker compose -f infra/docker-compose.yml up -d",
+    "db:down": "docker compose -f infra/docker-compose.yml down",
+    "db:migrate": "npm run db:migrate -w @widedrop/api",
+    "db:reset": "npm run db:reset -w @widedrop/api",
+    "db:seed:reference": "npm run db:seed:reference -w @widedrop/api",
+    "audit:ci": "npm audit --audit-level=high"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.2",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.1",
+    "vitest": "^2.1.8"
+  }
+}
