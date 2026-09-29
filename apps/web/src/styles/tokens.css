@@ -1,0 +1,176 @@
+/*
+ * Design tokens — the single source of truth for the portal's visual language.
+ *
+ * Every value here was extracted from the supplied prototype and is documented
+ * in design/DESIGN-SYSTEM.md. Components reference these custom properties;
+ * no component may introduce a literal colour.
+ *
+ * The portal is dark by design, matching the prototype. `color-scheme: dark`
+ * tells the browser to render form controls, scrollbars and the caret to match.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* ── Surfaces ───────────────────────────────────────────────────── */
+  --surface-page: #070b12;
+  --surface-shell: #0f1622;
+  --surface-panel: #121b2b;
+  --surface-raised: #172236;
+  --surface-hover: #1d2a42;
+  --surface-hover-nav: #1a2538;
+  --surface-selected: #1b365d;
+  --surface-on-accent: #0b1729;
+
+  /* ── Borders ────────────────────────────────────────────────────── */
+  --border: #263247;
+  --border-subtle: #1f2a3d;
+  --border-strong: #2f3d55;
+  --border-frame: #2a3548;
+
+  /* ── Text ───────────────────────────────────────────────────────── */
+  --text: #f2f5fa;
+  --text-invert: #ffffff;
+  --text-bright: #d6deea;
+  --text-secondary: #a9b4c7;
+  --text-muted: #7c8aa3;
+  --text-dim: #5f6d86;
+
+  /* ── Accent ─────────────────────────────────────────────────────── */
+  --accent: #6ea8ff;
+  --accent-hover: #8dbbff;
+  --accent-soft: #9cc2ff;
+  --accent-pale: #cfe0ff;
+  --accent-paler: #e6eeff;
+
+  /* ── Status tones ───────────────────────────────────────────────── */
+  --tone-green-bg: #14332a;
+  --tone-green-fg: #5edba0;
+  --tone-amber-bg: #3a2d12;
+  --tone-amber-fg: #f5c46b;
+  --tone-red-bg: #3b1e1e;
+  --tone-red-fg: #f58c86;
+  --tone-blue-bg: #1b365d;
+  --tone-blue-fg: #9cc2ff;
+  --tone-gray-bg: #222d40;
+  --tone-gray-fg: #a9b4c7;
+
+  /* ── Typography ─────────────────────────────────────────────────── */
+  --font-sans: 'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --text-eyebrow: 11px;
+  --text-caption: 11.5px;
+  --text-meta: 12px;
+  --text-body-sm: 13px;
+  --text-body: 13.5px;
+  --text-title: 15px;
+  --text-heading: 17px;
+  --text-heading-lg: 20px;
+  --text-metric: 24px;
+  --text-metric-lg: 28px;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+  --tracking-eyebrow: 0.08em;
+
+  /* ── Geometry ───────────────────────────────────────────────────── */
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+  --radius-circle: 50%;
+
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 10px;
+  --space-6: 12px;
+  --space-7: 14px;
+  --space-8: 16px;
+  --space-9: 18px;
+  --space-10: 20px;
+  --space-12: 24px;
+  --space-14: 28px;
+  --space-16: 32px;
+  --space-20: 40px;
+
+  /* ── Layout ─────────────────────────────────────────────────────── */
+  --sidebar-width: 248px;
+  --sidebar-width-collapsed: 72px;
+  --header-height: 66px;
+  --tabbar-height: 62px;
+  --content-padding: var(--space-14) var(--space-16) var(--space-20);
+  --content-padding-compact: var(--space-10) var(--space-8) var(--space-16);
+  --content-max-width: 1440px;
+
+  /*
+   * Grid templates for the four split layouts. The shell rewrites the `-current`
+   * variables when its container crosses a breakpoint, so a layout responds to
+   * the space it actually has rather than to the viewport.
+   */
+  --grid-split: 340px minmax(0, 1fr);
+  --grid-form: 380px minmax(0, 1fr);
+  --grid-calendar: minmax(0, 1fr) 340px;
+  --grid-approvals: minmax(0, 1fr) 320px;
+  --grid-stacked: 1fr;
+
+  --grid-split-current: var(--grid-split);
+  --grid-form-current: var(--grid-form);
+  --grid-calendar-current: var(--grid-calendar);
+  --grid-approvals-current: var(--grid-approvals);
+
+  --toast-bottom: var(--space-14);
+
+  /* ── Elevation ──────────────────────────────────────────────────── */
+  --shadow-popover: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --shadow-sheet: 0 -8px 32px rgba(0, 0, 0, 0.5);
+
+  /* ── Motion ─────────────────────────────────────────────────────── */
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 260ms;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  /* ── Focus ──────────────────────────────────────────────────────── */
+  --focus-ring: 0 0 0 2px var(--surface-shell), 0 0 0 4px var(--accent);
+
+  --z-sticky: 10;
+  --z-tabbar: 40;
+  --z-popover: 50;
+  --z-sheet: 60;
+  --z-modal: 70;
+  --z-toast: 80;
+}
+
+/*
+ * Stacked layout. The shell sets `data-stack="true"` on the element that owns
+ * the grid variables once its container is narrower than the breakpoint, so
+ * every split layout collapses together and in one place.
+ */
+[data-stack='true'] {
+  --grid-split-current: var(--grid-stacked);
+  --grid-form-current: var(--grid-stacked);
+  --grid-calendar-current: var(--grid-stacked);
+  --grid-approvals-current: var(--grid-stacked);
+}
+
+/* Compact shell: the bottom tab bar replaces the sidebar, so the toast clears it. */
+[data-compact='true'] {
+  --toast-bottom: 86px;
+  --content-padding: var(--content-padding-compact);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 1ms;
+    --duration-base: 1ms;
+    --duration-slow: 1ms;
+  }
+}
