@@ -1,4 +1,4 @@
-import { pino, type Logger, type LoggerOptions } from 'pino';
+import { pino, stdSerializers, stdTimeFunctions, type Logger, type LoggerOptions } from 'pino';
 import type { Env } from '../config/env.js';
 
 /**
@@ -93,7 +93,7 @@ export function createLogger(env: Pick<Env, 'LOG_LEVEL' | 'NODE_ENV'>): Logger {
     level: env.LOG_LEVEL,
     redact: { paths: REDACT_PATHS, censor: REDACTED },
     base: { service: 'widedrop-ess-api', env: env.NODE_ENV },
-    timestamp: pino.stdTimeFunctions.isoTime,
+    timestamp: stdTimeFunctions.isoTime,
     formatters: {
       level: (label) => ({ level: label }),
     },
@@ -107,7 +107,7 @@ export function createLogger(env: Pick<Env, 'LOG_LEVEL' | 'NODE_ENV'>): Logger {
         ip: req.ip,
       }),
       res: (res: { statusCode?: number }) => ({ statusCode: res.statusCode }),
-      err: pino.stdSerializers.err,
+      err: stdSerializers.err,
     },
   };
 

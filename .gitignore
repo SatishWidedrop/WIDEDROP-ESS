@@ -30,3 +30,7 @@ test-results/
 
 # Local database volumes
 infra/.pgdata/
+
+# Local object storage and captured mail (development drivers)
+apps/api/.storage/
+apps/api/.mail/

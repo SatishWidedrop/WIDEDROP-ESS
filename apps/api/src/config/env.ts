@@ -60,7 +60,9 @@ const baseSchema = z.object({
   NODE_ENV: z.enum(NODE_ENVS).default('development'),
   PORT: port.default(4000),
   HOST: z.string().default('0.0.0.0'),
-  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+  LOG_LEVEL: z
+    .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
+    .default('info'),
 
   /** Public origin of the API itself, used to build absolute URLs. */
   API_PUBLIC_URL: z.string().url(),
@@ -162,6 +164,9 @@ const schema = baseSchema.superRefine((env, ctx) => {
 
   if (!env.COOKIE_SECURE) {
     fail('COOKIE_SECURE', 'must be true in production — session cookies require HTTPS');
+  }
+  if (env.LOG_LEVEL === 'silent') {
+    fail('LOG_LEVEL', 'cannot be silent in production — a security incident would leave no trace');
   }
   if (env.COOKIE_SAMESITE === 'none' && !env.COOKIE_SECURE) {
     fail('COOKIE_SAMESITE', 'SameSite=None requires Secure cookies');

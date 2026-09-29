@@ -1,4 +1,4 @@
-import { hash as argon2Hash, verify as argon2Verify, Algorithm } from '@node-rs/argon2';
+import { hash as argon2Hash, verify as argon2Verify } from '@node-rs/argon2';
 import { createHash, timingSafeEqual } from 'node:crypto';
 
 /**
@@ -17,7 +17,9 @@ import { createHash, timingSafeEqual } from 'node:crypto';
  * cost of a GPU attack substantially.
  */
 export const ARGON2_OPTIONS = {
-  algorithm: Algorithm.Argon2id,
+  // Argon2id is the library default. It is asserted by the test that checks the
+  // produced hash begins with `$argon2id$`, rather than named here, because the
+  // Algorithm enum is an ambient const enum that isolatedModules forbids.
   memoryCost: 65_536, // 64 MiB
   timeCost: 3,
   parallelism: 1,
