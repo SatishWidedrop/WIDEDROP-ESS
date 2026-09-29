@@ -94,7 +94,11 @@ function toAppError(error: unknown): AppError {
       );
     }
     if (candidate.statusCode === 429) {
-      return new AppError(429, ERROR_CODES.RATE_LIMITED, 'Too many requests. Slow down and try again.');
+      return new AppError(
+        429,
+        ERROR_CODES.RATE_LIMITED,
+        'Too many requests. Slow down and try again.',
+      );
     }
 
     // Prisma's known request errors. The client learns that something conflicts
@@ -115,9 +119,14 @@ function fromPrisma(code: string, cause: unknown): AppError {
     case 'P2002':
       return new AppError(409, ERROR_CODES.ALREADY_EXISTS, 'That already exists.', { cause });
     case 'P2003':
-      return new AppError(409, ERROR_CODES.CONFLICT, 'That refers to something which no longer exists.', {
-        cause,
-      });
+      return new AppError(
+        409,
+        ERROR_CODES.CONFLICT,
+        'That refers to something which no longer exists.',
+        {
+          cause,
+        },
+      );
     case 'P2025':
       return new AppError(404, ERROR_CODES.NOT_FOUND, 'The requested record could not be found.', {
         cause,

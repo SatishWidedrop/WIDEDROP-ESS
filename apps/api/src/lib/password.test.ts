@@ -79,7 +79,10 @@ describe('policy', () => {
 
   it('rejects keyboard walks and dictionary staples', () => {
     for (const bad of ['qwertyuiopas', 'mypassword123', 'widedrop2026!']) {
-      expect(checkPasswordPolicy(bad).map((p) => p.rule), bad).toContain('common_sequence');
+      expect(
+        checkPasswordPolicy(bad).map((p) => p.rule),
+        bad,
+      ).toContain('common_sequence');
     }
   });
 
@@ -109,14 +112,15 @@ describe('breach check', () => {
       return new Response(`${digest.slice(5)}:42\r\n`, { status: 200 });
     });
 
-    expect(await isBreachedPassword(password, { timeoutMs: 1000, fetchImpl: fetchImpl as never })).toBe(
-      true,
-    );
+    expect(
+      await isBreachedPassword(password, { timeoutMs: 1000, fetchImpl: fetchImpl as never }),
+    ).toBe(true);
     expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
   it('reports a password absent from the range as not breached', async () => {
-    const fetchImpl = async () => new Response('0000000000000000000000000000000000A:9\r\n', { status: 200 });
+    const fetchImpl = async () =>
+      new Response('0000000000000000000000000000000000A:9\r\n', { status: 200 });
     expect(
       await isBreachedPassword('a password not in the list', {
         timeoutMs: 1000,
@@ -128,24 +132,24 @@ describe('breach check', () => {
   it('ignores padding rows, which carry a count of zero', async () => {
     const digest = sha1('padded');
     const fetchImpl = async () => new Response(`${digest.slice(5)}:0\r\n`, { status: 200 });
-    expect(await isBreachedPassword('padded', { timeoutMs: 1000, fetchImpl: fetchImpl as never })).toBe(
-      false,
-    );
+    expect(
+      await isBreachedPassword('padded', { timeoutMs: 1000, fetchImpl: fetchImpl as never }),
+    ).toBe(false);
   });
 
   it('fails open when the service is unreachable, so nobody is locked out', async () => {
     const fetchImpl = async () => {
       throw new Error('network down');
     };
-    expect(await isBreachedPassword('anything', { timeoutMs: 50, fetchImpl: fetchImpl as never })).toBe(
-      false,
-    );
+    expect(
+      await isBreachedPassword('anything', { timeoutMs: 50, fetchImpl: fetchImpl as never }),
+    ).toBe(false);
   });
 
   it('fails open on a non-200 response', async () => {
     const fetchImpl = async () => new Response('rate limited', { status: 429 });
-    expect(await isBreachedPassword('anything', { timeoutMs: 50, fetchImpl: fetchImpl as never })).toBe(
-      false,
-    );
+    expect(
+      await isBreachedPassword('anything', { timeoutMs: 50, fetchImpl: fetchImpl as never }),
+    ).toBe(false);
   });
 });

@@ -36,9 +36,9 @@ describe('envelope encryption', () => {
 
   it('refuses to decrypt a ciphertext moved to another record', () => {
     const sealed = seal('50100412345678', { kek: KEK, keyVersion: 'v1', context: CONTEXT });
-    expect(() =>
-      open(sealed, { kek: KEK, context: 'employee.bank_account_number:emp_2' }),
-    ).toThrow(/authentication failed/i);
+    expect(() => open(sealed, { kek: KEK, context: 'employee.bank_account_number:emp_2' })).toThrow(
+      /authentication failed/i,
+    );
   });
 
   it('refuses to decrypt with the wrong key', () => {
@@ -51,7 +51,9 @@ describe('envelope encryption', () => {
     const sealed = seal('50100412345678', { kek: KEK, keyVersion: 'v1', context: CONTEXT });
     const bytes = Buffer.from(sealed.c, 'base64');
     bytes[0] = bytes[0]! ^ 0xff;
-    expect(() => open({ ...sealed, c: bytes.toString('base64') }, { kek: KEK, context: CONTEXT })).toThrow();
+    expect(() =>
+      open({ ...sealed, c: bytes.toString('base64') }, { kek: KEK, context: CONTEXT }),
+    ).toThrow();
   });
 
   it('survives serialisation to a text column', () => {
@@ -61,7 +63,9 @@ describe('envelope encryption', () => {
   });
 
   it('rejects a KEK that is not 32 bytes', () => {
-    expect(() => seal('x', { kek: 'c2hvcnQ=', keyVersion: 'v1', context: CONTEXT })).toThrow(/32 bytes/);
+    expect(() => seal('x', { kek: 'c2hvcnQ=', keyVersion: 'v1', context: CONTEXT })).toThrow(
+      /32 bytes/,
+    );
   });
 });
 
@@ -105,7 +109,9 @@ describe('tokens', () => {
 
 describe('canonical JSON', () => {
   it('is independent of key order', () => {
-    expect(canonicalJson({ b: 1, a: { d: 2, c: 3 } })).toBe(canonicalJson({ a: { c: 3, d: 2 }, b: 1 }));
+    expect(canonicalJson({ b: 1, a: { d: 2, c: 3 } })).toBe(
+      canonicalJson({ a: { c: 3, d: 2 }, b: 1 }),
+    );
   });
 
   it('preserves array order', () => {

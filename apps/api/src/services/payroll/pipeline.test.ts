@@ -228,10 +228,25 @@ beforeEach(async () => {
 
   await db.salaryStructureComponent.createMany({
     data: [
-      { organizationId, salaryStructureId: structure.id, payComponentId: componentIds.BASIC!, monthlyAmountMinor: rupees(86_000) },
+      {
+        organizationId,
+        salaryStructureId: structure.id,
+        payComponentId: componentIds.BASIC!,
+        monthlyAmountMinor: rupees(86_000),
+      },
       { organizationId, salaryStructureId: structure.id, payComponentId: componentIds.HRA! },
-      { organizationId, salaryStructureId: structure.id, payComponentId: componentIds.SPECIAL!, monthlyAmountMinor: rupees(45_400) },
-      { organizationId, salaryStructureId: structure.id, payComponentId: componentIds.CONVEYANCE!, monthlyAmountMinor: rupees(1_600) },
+      {
+        organizationId,
+        salaryStructureId: structure.id,
+        payComponentId: componentIds.SPECIAL!,
+        monthlyAmountMinor: rupees(45_400),
+      },
+      {
+        organizationId,
+        salaryStructureId: structure.id,
+        payComponentId: componentIds.CONVEYANCE!,
+        monthlyAmountMinor: rupees(1_600),
+      },
     ],
   });
 
@@ -278,7 +293,9 @@ beforeEach(async () => {
 const withContext = <T>(fn: () => Promise<T>) =>
   runWithContext({ requestId: 'req_pipeline', personas: [] }, fn);
 
-async function uploadInputs(items: { employeeId: string; kind: string; amountMinor?: bigint }[] = []) {
+async function uploadInputs(
+  items: { employeeId: string; kind: string; amountMinor?: bigint }[] = [],
+) {
   const batch = await db.payrollInputBatch.create({
     data: {
       organizationId,
@@ -380,7 +397,10 @@ async function validate() {
     transitionCycle(
       db,
       accounts,
-      { cycleId, event: summary.employeesPassing > 0 ? 'VALIDATION_PASSED' : 'VALIDATION_REJECTED' },
+      {
+        cycleId,
+        event: summary.employeesPassing > 0 ? 'VALIDATION_PASSED' : 'VALIDATION_REJECTED',
+      },
       HMAC,
       { systemRaised: true, data: summary.employeesPassing > 0 ? { validatedAt: new Date() } : {} },
     ),
@@ -615,9 +635,7 @@ describe('no payslip exists before the workflow completes', () => {
 
 describe('the whole pipeline, end to end', () => {
   it('produces a payslip the employee can see, and only then', async () => {
-    await uploadInputs([
-      { employeeId: priyaId, kind: 'INCENTIVE', amountMinor: rupees(6_420) },
-    ]);
+    await uploadInputs([{ employeeId: priyaId, kind: 'INCENTIVE', amountMinor: rupees(6_420) }]);
     await lockInputs();
     await enterAttendance();
     await submitAttendance();
@@ -654,9 +672,7 @@ describe('the whole pipeline, end to end', () => {
   });
 
   it('computes the payslip from the structure, attendance and uploaded inputs', async () => {
-    await uploadInputs([
-      { employeeId: priyaId, kind: 'INCENTIVE', amountMinor: rupees(6_420) },
-    ]);
+    await uploadInputs([{ employeeId: priyaId, kind: 'INCENTIVE', amountMinor: rupees(6_420) }]);
     await lockInputs();
     await enterAttendance();
     await submitAttendance();
@@ -671,9 +687,7 @@ describe('the whole pipeline, end to end', () => {
 
     // 86,000 basic + 43,000 HRA + 45,400 special + 1,600 conveyance + 6,420 incentive
     expect(payslip.grossEarningsMinor).toBe(rupees(182_420));
-    expect(payslip.netPayMinor).toBe(
-      payslip.grossEarningsMinor - payslip.totalDeductionsMinor,
-    );
+    expect(payslip.netPayMinor).toBe(payslip.grossEarningsMinor - payslip.totalDeductionsMinor);
 
     // Provident fund is capped at the statutory ceiling, not 12% of basic.
     expect(payslip.pfEmployeeMinor).toBe(rupees(1_800));
@@ -685,7 +699,9 @@ describe('the whole pipeline, end to end', () => {
     expect(labels).toContain('Professional tax');
 
     // Every line traces to a component or an uploaded input.
-    const incentive = payslip.lines.find((l) => l.label === 'INCENTIVE' || l.amountMinor === rupees(6_420));
+    const incentive = payslip.lines.find(
+      (l) => l.label === 'INCENTIVE' || l.amountMinor === rupees(6_420),
+    );
     expect(incentive?.payrollInputItemId).not.toBeNull();
 
     // The digest ties the payslip to the data that made it.

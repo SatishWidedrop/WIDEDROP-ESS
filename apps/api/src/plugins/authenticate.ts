@@ -146,11 +146,7 @@ async function resolvePrincipal(
  * correct response to any of them is the same: sign in again.
  */
 function sessionEnded(): AppError {
-  return new AppError(
-    401,
-    ERROR_CODES.SESSION_EXPIRED,
-    'Your session has expired. Sign in again.',
-  );
+  return new AppError(401, ERROR_CODES.SESSION_EXPIRED, 'Your session has expired. Sign in again.');
 }
 
 /** The principal, or a throw. For handlers that run behind `authenticate`. */

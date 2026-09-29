@@ -33,7 +33,7 @@ export const securityHeadersPlugin = fp(
           'frame-ancestors': ["'none'"],
           'base-uri': ["'none'"],
           'form-action': ["'none'"],
-          'sandbox': [],
+          sandbox: [],
         },
       },
       crossOriginEmbedderPolicy: false,

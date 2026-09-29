@@ -138,8 +138,7 @@ export async function generatePayroll(
         kind: line.kind,
         label: line.label,
         amountMinor: BigInt(line.amountMinor),
-        fullAmountMinor:
-          line.fullAmountMinor === undefined ? null : BigInt(line.fullAmountMinor),
+        fullAmountMinor: line.fullAmountMinor === undefined ? null : BigInt(line.fullAmountMinor),
         displayOrder: line.displayOrder,
         payrollInputItemId: line.payrollInputSourceId ?? null,
         calculationNote: line.calculationNote ?? null,

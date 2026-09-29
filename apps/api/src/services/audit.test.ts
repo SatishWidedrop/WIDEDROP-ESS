@@ -65,18 +65,27 @@ describe('recording', () => {
     await recordAudit(db, { organizationId, action: 'LOGIN', entityType: 'app_user' }, HMAC_KEY);
     const target = await recordAudit(
       db,
-      { organizationId, action: 'STATE_TRANSITION', entityType: 'payroll_cycle', toState: 'PUBLISHED' },
+      {
+        organizationId,
+        action: 'STATE_TRANSITION',
+        entityType: 'payroll_cycle',
+        toState: 'PUBLISHED',
+      },
       HMAC_KEY,
     );
 
     // The triggers block UPDATE from any ordinary connection. An attacker with
     // superuser rights could disable them, so the test simulates exactly that:
     // the chain must still betray the change.
-    await db.$executeRawUnsafe(`ALTER TABLE ess.audit_event DISABLE TRIGGER trg_audit_event_append_only`);
+    await db.$executeRawUnsafe(
+      `ALTER TABLE ess.audit_event DISABLE TRIGGER trg_audit_event_append_only`,
+    );
     await db.$executeRawUnsafe(
       `UPDATE ess.audit_event SET to_state = 'CANCELLED' WHERE id = '${target.id}'`,
     );
-    await db.$executeRawUnsafe(`ALTER TABLE ess.audit_event ENABLE TRIGGER trg_audit_event_append_only`);
+    await db.$executeRawUnsafe(
+      `ALTER TABLE ess.audit_event ENABLE TRIGGER trg_audit_event_append_only`,
+    );
 
     const result = await verifyChain(db, { organizationId }, HMAC_KEY);
     expect(result.valid).toBe(false);
@@ -87,13 +96,21 @@ describe('recording', () => {
     const rows = [];
     for (let i = 0; i < 4; i += 1) {
       rows.push(
-        await recordAudit(db, { organizationId, action: 'UPDATE', entityType: 'employee' }, HMAC_KEY),
+        await recordAudit(
+          db,
+          { organizationId, action: 'UPDATE', entityType: 'employee' },
+          HMAC_KEY,
+        ),
       );
     }
 
-    await db.$executeRawUnsafe(`ALTER TABLE ess.audit_event DISABLE TRIGGER trg_audit_event_append_only`);
+    await db.$executeRawUnsafe(
+      `ALTER TABLE ess.audit_event DISABLE TRIGGER trg_audit_event_append_only`,
+    );
     await db.$executeRawUnsafe(`DELETE FROM ess.audit_event WHERE id = '${rows[1]!.id}'`);
-    await db.$executeRawUnsafe(`ALTER TABLE ess.audit_event ENABLE TRIGGER trg_audit_event_append_only`);
+    await db.$executeRawUnsafe(
+      `ALTER TABLE ess.audit_event ENABLE TRIGGER trg_audit_event_append_only`,
+    );
 
     const result = await verifyChain(db, { organizationId }, HMAC_KEY);
     expect(result.valid).toBe(false);
@@ -155,7 +172,11 @@ describe('recording', () => {
 
     await expect(
       db.$transaction(async (tx) => {
-        await recordAudit(tx, { organizationId, action: 'UPDATE', entityType: 'employee' }, HMAC_KEY);
+        await recordAudit(
+          tx,
+          { organizationId, action: 'UPDATE', entityType: 'employee' },
+          HMAC_KEY,
+        );
         throw new Error('the surrounding work failed');
       }),
     ).rejects.toThrow('the surrounding work failed');
@@ -210,7 +231,12 @@ describe('what is recorded', () => {
     await runAsSystem({ requestId: 'job_1', job: 'leave-accrual' }, async () => {
       await recordAudit(
         db,
-        { organizationId, action: 'CREATE', entityType: 'leave_balance_ledger', actor: { kind: 'SCHEDULER' } },
+        {
+          organizationId,
+          action: 'CREATE',
+          entityType: 'leave_balance_ledger',
+          actor: { kind: 'SCHEDULER' },
+        },
         HMAC_KEY,
       );
     });
@@ -227,8 +253,16 @@ describe('what is recorded', () => {
         organizationId,
         action: 'UPDATE',
         entityType: 'employee_bank_account',
-        before: { bankName: 'HDFC Bank', accountNumberCt: Buffer.from('ciphertext'), accountNumberMasked: '•••• 4412' },
-        after: { bankName: 'ICICI Bank', accountNumberCt: Buffer.from('other'), accountNumberMasked: '•••• 9981' },
+        before: {
+          bankName: 'HDFC Bank',
+          accountNumberCt: Buffer.from('ciphertext'),
+          accountNumberMasked: '•••• 4412',
+        },
+        after: {
+          bankName: 'ICICI Bank',
+          accountNumberCt: Buffer.from('other'),
+          accountNumberMasked: '•••• 9981',
+        },
       },
       HMAC_KEY,
     );

@@ -18,9 +18,7 @@ export function isIsoDate(value: unknown): value is IsoDate {
   if (typeof value !== 'string' || !ISO_DATE.test(value)) return false;
   const [y, m, d] = value.split('-').map(Number) as [number, number, number];
   const date = new Date(Date.UTC(y, m - 1, d));
-  return (
-    date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d
-  );
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
 }
 
 export function parseIsoDate(value: IsoDate): Date {
@@ -167,8 +165,18 @@ const QUARTER_MONTHS: Record<FinancialQuarter, [number, number]> = {
 };
 
 const MONTH_SHORT = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
 ];
 
 export function financialQuarters(startYear: number): QuarterRange[] {

@@ -38,7 +38,10 @@ function standardStructure(): StructuredComponent[] {
       monthlyAmountMinor: rupees(86_000),
     },
     {
-      definition: component('HRA', 'House rent allowance', 2, { calc: 'PERCENT_OF_BASIC', rate: 0.5 }),
+      definition: component('HRA', 'House rent allowance', 2, {
+        calc: 'PERCENT_OF_BASIC',
+        rate: 0.5,
+      }),
     },
     {
       definition: component('SPECIAL', 'Special allowance', 3),
@@ -174,7 +177,9 @@ describe('loss of pay', () => {
     const result = computePayslip(
       computation({
         attendance: { totalDays: 31, payableDays: 31, lopDays: 0, employedDays: 31 },
-        inputs: [{ kind: 'LOP_OVERRIDE', days: 5, sourceId: 'input_1', note: 'Unapproved absence' }],
+        inputs: [
+          { kind: 'LOP_OVERRIDE', days: 5, sourceId: 'input_1', note: 'Unapproved absence' },
+        ],
       }),
     );
     expect(result.lopDays).toBe(5);

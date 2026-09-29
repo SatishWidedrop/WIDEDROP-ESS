@@ -67,7 +67,7 @@ export async function loadTokenKeys(input: {
   if (!privatePem.includes('PRIVATE KEY') || !publicPem.includes('PUBLIC KEY')) {
     throw new Error(
       'JWT keys must be base64-encoded PEM. Generate a pair with:\n' +
-        "  openssl genpkey -algorithm ed25519 -out private.pem\n" +
+        '  openssl genpkey -algorithm ed25519 -out private.pem\n' +
         '  openssl pkey -in private.pem -pubout -out public.pem',
     );
   }
@@ -80,7 +80,10 @@ export async function loadTokenKeys(input: {
 }
 
 /** Generate a development key pair. Never used in production, where keys are supplied. */
-export function generateDevelopmentKeyPair(): { privateKeyBase64: string; publicKeyBase64: string } {
+export function generateDevelopmentKeyPair(): {
+  privateKeyBase64: string;
+  publicKeyBase64: string;
+} {
   const { privateKey, publicKey } = generateKeyPairSync('ed25519');
   return {
     privateKeyBase64: Buffer.from(
@@ -98,24 +101,26 @@ export async function signAccessToken(
   ttlSeconds: number,
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
-  return new SignJWT({
-    org: claims.org,
-    ...(claims.emp ? { emp: claims.emp } : {}),
-    roles: claims.roles,
-    sid: claims.sid,
-    epc: claims.epc,
-    mfa: claims.mfa,
-  })
-    .setProtectedHeader({ alg: ALGORITHM, kid: keys.keyId, typ: 'JWT' })
-    .setSubject(claims.sub)
-    .setIssuer(TOKEN_ISSUER)
-    .setAudience(TOKEN_AUDIENCE)
-    .setIssuedAt(now)
-    .setNotBefore(now)
-    .setExpirationTime(now + ttlSeconds)
-    // A unique id per token, so a replay can be recognised if one is ever seen twice.
-    .setJti(crypto.randomUUID())
-    .sign(keys.privateKey);
+  return (
+    new SignJWT({
+      org: claims.org,
+      ...(claims.emp ? { emp: claims.emp } : {}),
+      roles: claims.roles,
+      sid: claims.sid,
+      epc: claims.epc,
+      mfa: claims.mfa,
+    })
+      .setProtectedHeader({ alg: ALGORITHM, kid: keys.keyId, typ: 'JWT' })
+      .setSubject(claims.sub)
+      .setIssuer(TOKEN_ISSUER)
+      .setAudience(TOKEN_AUDIENCE)
+      .setIssuedAt(now)
+      .setNotBefore(now)
+      .setExpirationTime(now + ttlSeconds)
+      // A unique id per token, so a replay can be recognised if one is ever seen twice.
+      .setJti(crypto.randomUUID())
+      .sign(keys.privateKey)
+  );
 }
 
 /**
@@ -138,19 +143,28 @@ export async function verifyAccessToken(
       requiredClaims: ['sub', 'org', 'sid', 'epc'],
     }));
   } catch {
-    throw new AppError(401, ERROR_CODES.SESSION_EXPIRED, 'Your session has expired. Sign in again.');
+    throw new AppError(
+      401,
+      ERROR_CODES.SESSION_EXPIRED,
+      'Your session has expired. Sign in again.',
+    );
   }
 
   const claims = parseClaims(payload);
   if (!claims) {
-    throw new AppError(401, ERROR_CODES.SESSION_EXPIRED, 'Your session has expired. Sign in again.');
+    throw new AppError(
+      401,
+      ERROR_CODES.SESSION_EXPIRED,
+      'Your session has expired. Sign in again.',
+    );
   }
   return claims;
 }
 
 function parseClaims(payload: JWTPayload): AccessTokenClaims | undefined {
   const { sub, org, emp, roles, sid, epc, mfa } = payload as Record<string, unknown>;
-  if (typeof sub !== 'string' || typeof org !== 'string' || typeof sid !== 'string') return undefined;
+  if (typeof sub !== 'string' || typeof org !== 'string' || typeof sid !== 'string')
+    return undefined;
   if (typeof epc !== 'number' || !Number.isInteger(epc)) return undefined;
   if (!Array.isArray(roles) || roles.some((r) => typeof r !== 'string')) return undefined;
 

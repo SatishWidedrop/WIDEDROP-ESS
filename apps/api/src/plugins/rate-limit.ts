@@ -45,7 +45,7 @@ export const RATE_LIMITS = {
   'ticket:create': { max: 20, windowMs: 60 * 60_000 },
   'email:send': { max: 20, windowMs: 60 * 60_000 },
   'file:upload': { max: 60, windowMs: 60 * 60_000 },
-  'export': { max: 10, windowMs: 60 * 60_000 },
+  export: { max: 10, windowMs: 60 * 60_000 },
 
   // Payroll generation is expensive and rarely legitimate more than once.
   'payroll:mutate': { max: 30, windowMs: 60 * 60_000 },
@@ -71,6 +71,13 @@ export const rateLimitPlugin = fp(
   async (app: FastifyInstance, options: { redisUrl?: string | undefined }) => {
     await app.register(rateLimit, {
       global: true,
+      // Run after the body is parsed.
+      //
+      // The default is `onRequest`, where `request.body` does not exist yet —
+      // which silently defeated per-email keying and made every employee behind
+      // one office NAT share a single login budget. Moving to `preHandler`
+      // costs only the body parse, which is already bounded to 1 MB.
+      hook: 'preHandler',
       max: (request) => limitFor(request).max,
       timeWindow: (request) => limitFor(request).windowMs,
       keyGenerator: (request) => rateLimitKey(request),
@@ -81,14 +88,28 @@ export const rateLimitPlugin = fp(
       ...(options.redisUrl ? { redis: options.redisUrl as never } : {}),
       errorResponseBuilder: (request, context) => {
         const retryAfter = Math.ceil(context.ttl / 1000);
-        throw new AppError(429, ERROR_CODES.RATE_LIMITED, 'Too many requests. Slow down and try again.', {
-          retryAfterSeconds: retryAfter,
-          meta: { key: context.max, route: request.routeOptions?.url },
-        });
+        throw new AppError(
+          429,
+          ERROR_CODES.RATE_LIMITED,
+          'Too many requests. Slow down and try again.',
+          {
+            retryAfterSeconds: retryAfter,
+            meta: { key: context.max, route: request.routeOptions?.url },
+          },
+        );
       },
       // Tell a legitimate client how much room it has left.
-      addHeadersOnExceeding: { 'x-ratelimit-limit': true, 'x-ratelimit-remaining': true, 'x-ratelimit-reset': true },
-      addHeaders: { 'x-ratelimit-limit': true, 'x-ratelimit-remaining': true, 'x-ratelimit-reset': true, 'retry-after': true },
+      addHeadersOnExceeding: {
+        'x-ratelimit-limit': true,
+        'x-ratelimit-remaining': true,
+        'x-ratelimit-reset': true,
+      },
+      addHeaders: {
+        'x-ratelimit-limit': true,
+        'x-ratelimit-remaining': true,
+        'x-ratelimit-reset': true,
+        'retry-after': true,
+      },
     });
 
     if (!options.redisUrl) {
@@ -113,7 +134,8 @@ function limitFor(request: FastifyRequest): RouteLimit {
  * one (the email on a login attempt).
  */
 function rateLimitKey(request: FastifyRequest): string {
-  const route = request.routeOptions?.config?.rateLimitName ?? request.routeOptions?.url ?? 'unknown';
+  const route =
+    request.routeOptions?.config?.rateLimitName ?? request.routeOptions?.url ?? 'unknown';
   const userId = request.context?.userId;
   if (userId) return `u:${userId}:${route}`;
 

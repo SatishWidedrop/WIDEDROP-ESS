@@ -1,8 +1,4 @@
-import {
-  BLOCKING_CHECKS,
-  checkDefinition,
-  type PayrollValidationCheck,
-} from '@widedrop/shared';
+import { BLOCKING_CHECKS, checkDefinition, type PayrollValidationCheck } from '@widedrop/shared';
 import type { Tx } from '../../lib/prisma.js';
 
 /**
@@ -86,14 +82,10 @@ export async function runValidation(
   }
 
   const blockedEmployees = new Set(
-    results
-      .filter((r) => !r.passed && BLOCKING_CHECKS.includes(r.check))
-      .map((r) => r.employeeId),
+    results.filter((r) => !r.passed && BLOCKING_CHECKS.includes(r.check)).map((r) => r.employeeId),
   );
 
-  const eligibleEmployeeIds = employees
-    .map((e) => e.id)
-    .filter((id) => !blockedEmployees.has(id));
+  const eligibleEmployeeIds = employees.map((e) => e.id).filter((id) => !blockedEmployees.has(id));
 
   return {
     attempt,

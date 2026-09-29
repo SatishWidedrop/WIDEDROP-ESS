@@ -30,15 +30,13 @@ const secret = (name: string) =>
 
 /** A 32-byte key, base64-encoded (44 characters with padding). */
 const base64Key32 = (name: string) =>
-  z
-    .string()
-    .refine((v) => {
-      try {
-        return Buffer.from(v, 'base64').length === 32;
-      } catch {
-        return false;
-      }
-    }, `${name} must be 32 bytes base64-encoded — generate it with \`openssl rand -base64 32\``);
+  z.string().refine((v) => {
+    try {
+      return Buffer.from(v, 'base64').length === 32;
+    } catch {
+      return false;
+    }
+  }, `${name} must be 32 bytes base64-encoded — generate it with \`openssl rand -base64 32\``);
 
 const csv = z
   .string()
@@ -50,9 +48,7 @@ const csv = z
   )
   .pipe(z.array(z.string().min(1)));
 
-const boolish = z
-  .enum(['true', 'false', '1', '0'])
-  .transform((v) => v === 'true' || v === '1');
+const boolish = z.enum(['true', 'false', '1', '0']).transform((v) => v === 'true' || v === '1');
 
 const port = z.coerce.number().int().min(1).max(65_535);
 
@@ -60,9 +56,7 @@ const baseSchema = z.object({
   NODE_ENV: z.enum(NODE_ENVS).default('development'),
   PORT: port.default(4000),
   HOST: z.string().default('0.0.0.0'),
-  LOG_LEVEL: z
-    .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
-    .default('info'),
+  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 
   /** Public origin of the API itself, used to build absolute URLs. */
   API_PUBLIC_URL: z.string().url(),
@@ -71,9 +65,12 @@ const baseSchema = z.object({
   /** Exact browser origins allowed to call the API with credentials. */
   CORS_ORIGINS: csv,
 
-  DATABASE_URL: z.string().url().refine((v) => v.startsWith('postgres'), {
-    message: 'DATABASE_URL must be a PostgreSQL connection string',
-  }),
+  DATABASE_URL: z
+    .string()
+    .url()
+    .refine((v) => v.startsWith('postgres'), {
+      message: 'DATABASE_URL must be a PostgreSQL connection string',
+    }),
 
   /* ---------------- Authentication & sessions ---------------- */
 
@@ -181,7 +178,12 @@ const schema = baseSchema.superRefine((env, ctx) => {
     fail('STORAGE_DRIVER', 'must be "s3" in production — container filesystems are ephemeral');
   }
   if (env.STORAGE_DRIVER === 's3') {
-    for (const key of ['S3_REGION', 'S3_BUCKET', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY'] as const) {
+    for (const key of [
+      'S3_REGION',
+      'S3_BUCKET',
+      'S3_ACCESS_KEY_ID',
+      'S3_SECRET_ACCESS_KEY',
+    ] as const) {
       if (!env[key]) fail(key, 'is required when STORAGE_DRIVER is "s3"');
     }
   }
@@ -194,7 +196,10 @@ const schema = baseSchema.superRefine((env, ctx) => {
     }
   }
   if (env.CORS_ORIGINS.some((o) => o === '*' || o.startsWith('http://'))) {
-    fail('CORS_ORIGINS', 'must list explicit https:// origins in production — no wildcard, no http');
+    fail(
+      'CORS_ORIGINS',
+      'must list explicit https:// origins in production — no wildcard, no http',
+    );
   }
   if (!env.API_PUBLIC_URL.startsWith('https://') || !env.WEB_PUBLIC_URL.startsWith('https://')) {
     fail('API_PUBLIC_URL', 'public URLs must use https in production');
@@ -215,7 +220,9 @@ let cached: Env | undefined;
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   const parsed = schema.safeParse(source);
   if (!parsed.success) {
-    const lines = parsed.error.issues.map((i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`);
+    const lines = parsed.error.issues.map(
+      (i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`,
+    );
     throw new Error(
       `Invalid environment configuration; refusing to start.\n${lines.join('\n')}\n\n` +
         'See .env.example and docs/DEPLOYMENT.md for the full variable reference.',

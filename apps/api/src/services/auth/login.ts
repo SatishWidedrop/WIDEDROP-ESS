@@ -1,4 +1,9 @@
-import { normalizeRoles, requiresMfa, STATES_ALLOWING_SIGN_IN, type Persona } from '@widedrop/shared';
+import {
+  normalizeRoles,
+  requiresMfa,
+  STATES_ALLOWING_SIGN_IN,
+  type Persona,
+} from '@widedrop/shared';
 import type { LoginOutcome } from '../../generated/prisma/index.js';
 import { hashToken } from '../../lib/crypto.js';
 import { AppError, ERROR_CODES } from '../../lib/errors.js';
@@ -127,9 +132,7 @@ export async function attemptLogin(
         failedLoginCount,
         ...(shouldLock
           ? {
-              lockedUntil: new Date(
-                Date.now() + lockoutDurationSeconds(failedLoginCount) * 1000,
-              ),
+              lockedUntil: new Date(Date.now() + lockoutDurationSeconds(failedLoginCount) * 1000),
             }
           : {}),
       },

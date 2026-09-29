@@ -104,6 +104,7 @@ export async function buildApp({ env, db, logger }: AppDependencies) {
     sameSite: env.COOKIE_SAMESITE,
     domain: env.COOKIE_DOMAIN,
     allowedOrigins: env.CORS_ORIGINS,
+    maxAgeSeconds: env.REFRESH_TOKEN_TTL_SECONDS,
   });
 
   await app.register(multipart, {

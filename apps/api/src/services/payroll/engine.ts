@@ -214,11 +214,11 @@ export function computePayslip(input: PayrollComputation): ComputedPayslip {
     (a, b) => a.definition.displayOrder - b.definition.displayOrder,
   );
 
+  // Percentage components are computed from the FULL basic and then prorated
+  // themselves, rather than from an already-prorated basic. Prorating twice
+  // would understate house rent allowance on any month with loss of pay.
   const basicComponent = ordered.find((c) => c.definition.code === 'BASIC');
   const fullBasic = basicComponent?.monthlyAmountMinor ?? 0;
-  const proratedBasic = basicComponent?.definition.isProrated
-    ? prorate(fullBasic, payableDays, attendance.totalDays)
-    : fullBasic;
 
   /* ---- 2. Earnings from the salary structure ---------------------- */
 
@@ -244,9 +244,7 @@ export function computePayslip(input: PayrollComputation): ComputedPayslip {
         full = component.monthlyAmountMinor ?? 0;
     }
 
-    const amount = definition.isProrated
-      ? prorate(full, payableDays, attendance.totalDays)
-      : full;
+    const amount = definition.isProrated ? prorate(full, payableDays, attendance.totalDays) : full;
 
     if (amount === 0 && full === 0) continue;
 
@@ -339,7 +337,11 @@ export function computePayslip(input: PayrollComputation): ComputedPayslip {
 
   let esiEmployee = 0;
   let esiEmployer = 0;
-  if (statutory.esiApplicable && grossEarnings > 0 && grossEarnings <= statutory.esiThresholdMinor) {
+  if (
+    statutory.esiApplicable &&
+    grossEarnings > 0 &&
+    grossEarnings <= statutory.esiThresholdMinor
+  ) {
     esiEmployee = percent(grossEarnings, statutory.esiEmployeeRate);
     esiEmployer = percent(grossEarnings, statutory.esiEmployerRate);
 

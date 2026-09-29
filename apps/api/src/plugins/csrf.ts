@@ -23,9 +23,24 @@ export const CSRF_HEADER = 'x-csrf-token';
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
-/** Routes that run before a session exists and therefore have no token yet. */
+/**
+ * Routes exempt from the double-submit token.
+ *
+ * They still go through the Origin and Sec-Fetch-Site checks — the exemption is
+ * from the token only, because these run before a session exists and so before
+ * a token could have been issued.
+ *
+ * `/auth/refresh` is here for a different reason worth stating. It reads a
+ * cookie and issues a session, so it looks like exactly what a double-submit
+ * token is for. But the SPA calls it on a cold start, when it may hold no token
+ * at all, and refusing would sign the user out for no security gain: the
+ * refresh cookie is SameSite=Lax, which a browser does not send on a
+ * cross-site POST, and the Sec-Fetch-Site check rejects one that somehow
+ * arrives. The token would add nothing and cost a spurious sign-out.
+ */
 const EXEMPT_PATHS = new Set([
   '/api/v1/auth/login',
+  '/api/v1/auth/refresh',
   '/api/v1/auth/mfa/verify',
   '/api/v1/auth/password/reset/request',
   '/api/v1/auth/password/reset/confirm',
@@ -45,7 +60,10 @@ export function issueCsrfToken(reply: FastifyReply, options: CsrfOptions): strin
     sameSite: options.sameSite,
     path: '/',
     ...(options.domain ? { domain: options.domain } : {}),
-    maxAge: 60 * 60 * 12,
+    // Matched to the refresh token's lifetime. A shorter one would expire
+    // mid-session and refuse writes from a browser whose session is still
+    // perfectly valid.
+    maxAge: options.maxAgeSeconds,
   });
   return token;
 }
@@ -62,6 +80,8 @@ export interface CsrfOptions {
   sameSite: 'lax' | 'strict' | 'none';
   domain?: string | undefined;
   allowedOrigins: string[];
+  /** Matched to the refresh token's lifetime; see `issueCsrfToken`. */
+  maxAgeSeconds: number;
 }
 
 export const csrfPlugin = fp(
@@ -92,7 +112,12 @@ export const csrfPlugin = fp(
           403,
           ERROR_CODES.CSRF_CHECK_FAILED,
           'This request could not be verified. Reload the page and try again.',
-          { meta: { hasCookie: typeof cookieToken === 'string', hasHeader: typeof headerToken === 'string' } },
+          {
+            meta: {
+              hasCookie: typeof cookieToken === 'string',
+              hasHeader: typeof headerToken === 'string',
+            },
+          },
         );
       }
     });

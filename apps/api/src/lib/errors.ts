@@ -123,8 +123,11 @@ export class AppError extends Error {
 /* Constructors                                                        */
 /* ------------------------------------------------------------------ */
 
-export const badRequest = (message: string, details?: ErrorDetail[], meta?: Record<string, unknown>) =>
-  new AppError(400, ERROR_CODES.VALIDATION_FAILED, message, { details, meta });
+export const badRequest = (
+  message: string,
+  details?: ErrorDetail[],
+  meta?: Record<string, unknown>,
+) => new AppError(400, ERROR_CODES.VALIDATION_FAILED, message, { details, meta });
 
 export const validationFailed = (details: ErrorDetail[]) =>
   new AppError(400, ERROR_CODES.VALIDATION_FAILED, 'The request could not be validated.', {
@@ -155,8 +158,10 @@ export const mfaRequired = (challengeId: string) =>
  * resource cannot tell whether it exists. Use `notFound` instead when the
  * caller may know of the resource's existence.
  */
-export const forbidden = (message = 'You do not have access to this.', meta?: Record<string, unknown>) =>
-  new AppError(403, ERROR_CODES.FORBIDDEN, message, { meta });
+export const forbidden = (
+  message = 'You do not have access to this.',
+  meta?: Record<string, unknown>,
+) => new AppError(403, ERROR_CODES.FORBIDDEN, message, { meta });
 
 export const outOfScope = (meta?: Record<string, unknown>) =>
   new AppError(403, ERROR_CODES.OUT_OF_SCOPE, 'This record is outside the people you manage.', {
@@ -174,8 +179,11 @@ export const accountLocked = (retryAfterSeconds: number) =>
 export const notFound = (what = 'The requested record', meta?: Record<string, unknown>) =>
   new AppError(404, ERROR_CODES.NOT_FOUND, `${what} could not be found.`, { meta });
 
-export const conflict = (message: string, code: ErrorCode = ERROR_CODES.CONFLICT, meta?: Record<string, unknown>) =>
-  new AppError(409, code, message, { meta });
+export const conflict = (
+  message: string,
+  code: ErrorCode = ERROR_CODES.CONFLICT,
+  meta?: Record<string, unknown>,
+) => new AppError(409, code, message, { meta });
 
 export const invalidTransition = (from: string, to: string, meta?: Record<string, unknown>) =>
   new AppError(
@@ -212,12 +220,17 @@ export const internal = (cause?: unknown, meta?: Record<string, unknown>) =>
   });
 
 export const dependencyFailure = (dependency: string, cause?: unknown) =>
-  new AppError(503, ERROR_CODES.DEPENDENCY_FAILURE, 'A required service is unavailable. Try again shortly.', {
-    cause,
-    meta: { dependency },
-    retryAfterSeconds: 30,
-    expected: false,
-  });
+  new AppError(
+    503,
+    ERROR_CODES.DEPENDENCY_FAILURE,
+    'A required service is unavailable. Try again shortly.',
+    {
+      cause,
+      meta: { dependency },
+      retryAfterSeconds: 30,
+      expected: false,
+    },
+  );
 
 export function isAppError(error: unknown): error is AppError {
   return error instanceof AppError;

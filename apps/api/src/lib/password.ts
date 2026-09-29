@@ -111,8 +111,18 @@ export interface PasswordProblem {
 
 /** Sequences that appear in every cracking dictionary. */
 const SEQUENCES = [
-  'qwerty', 'asdfgh', 'zxcvbn', '123456', '098765', 'abcdef', 'password',
-  'letmein', 'welcome', 'admin', 'widedrop', 'payroll',
+  'qwerty',
+  'asdfgh',
+  'zxcvbn',
+  '123456',
+  '098765',
+  'abcdef',
+  'password',
+  'letmein',
+  'welcome',
+  'admin',
+  'widedrop',
+  'payroll',
 ];
 
 /**

@@ -320,10 +320,8 @@ export function availableEvents(
   state: PayrollCycleState,
   personas: readonly Persona[],
 ): PayrollCycleEvent[] {
-  return payrollCycleMachine
-    .eventsFrom(state)
-    .filter((event) => {
-      const required = PAYROLL_EVENT_ACTOR[event];
-      return required !== null && personas.includes(required);
-    });
+  return payrollCycleMachine.eventsFrom(state).filter((event) => {
+    const required = PAYROLL_EVENT_ACTOR[event];
+    return required !== null && personas.includes(required);
+  });
 }

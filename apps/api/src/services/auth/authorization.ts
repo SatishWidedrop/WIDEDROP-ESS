@@ -46,7 +46,11 @@ export function assertPermission(
   return granted;
 }
 
-export function can(principal: Principal, permission: Permission, required: Scope = 'SELF'): boolean {
+export function can(
+  principal: Principal,
+  permission: Permission,
+  required: Scope = 'SELF',
+): boolean {
   return hasPermissionAtScope(principal.personas, permission, required);
 }
 
@@ -81,7 +85,12 @@ export async function employeeScopeFor(
 
     case 'DIRECT_REPORTS':
       return principal.employeeId
-        ? { kind: 'chain', ancestorEmployeeId: principal.employeeId, includeSelf: false, maxDepth: 1 }
+        ? {
+            kind: 'chain',
+            ancestorEmployeeId: principal.employeeId,
+            includeSelf: false,
+            maxDepth: 1,
+          }
         : { kind: 'none' };
 
     case 'REPORTING_CHAIN':
@@ -113,10 +122,10 @@ export async function employeeScopeFor(
  * decide for a skip-level report because the upper bound was overwritten by the
  * lower one.
  */
-function depthBounds(filter: {
-  includeSelf: boolean;
-  maxDepth?: number | undefined;
-}): { gte: number; lte?: number } {
+function depthBounds(filter: { includeSelf: boolean; maxDepth?: number | undefined }): {
+  gte: number;
+  lte?: number;
+} {
   const bounds: { gte: number; lte?: number } = { gte: filter.includeSelf ? 0 : 1 };
   if (filter.maxDepth !== undefined) bounds.lte = filter.maxDepth;
   return bounds;

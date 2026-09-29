@@ -4,8 +4,8 @@
 **Audience:** the implementer and whoever is on call afterwards.
 **Companions:** `docs/SECURITY.md` (controls), `docs/DATA-MODEL.md` (schema),
 `docs/API.md` (wire contract), `docs/WORKFLOWS.md` (state machines).
-This document is the authority for *where things run, how they are configured, how they
-ship and how they are recovered*. Where it repeats a control from `SECURITY.md` it does so
+This document is the authority for _where things run, how they are configured, how they
+ship and how they are recovered_. Where it repeats a control from `SECURITY.md` it does so
 only to state the deployment-time obligation; the security rationale lives there.
 
 ---
@@ -14,17 +14,17 @@ only to state the deployment-time obligation; the security rationale lives there
 
 ### 0.1 Naming conventions
 
-| Thing | Value |
-|---|---|
-| SPA host (production) | `ess.widedrop.com` |
-| API host (production) | `api-ess.widedrop.com` |
-| SPA host (staging) | `ess-staging.widedrop.com` |
-| API host (staging) | `api-ess-staging.widedrop.com` |
-| API base path | `/api/v1` |
-| Mail sending domain | `widedroptech.com` |
-| Existing marketing site | `widedrop.com` + `www.widedrop.com` — **untouched** |
-| Container image | `ghcr.io/widedrop/ess-api:<git-sha>` (immutable; `:latest` is never deployed) |
-| Primary region | `singapore` (Render) for API + Postgres; `apac` hint for R2; `ap-south-1` (Mumbai) for SES |
+| Thing                   | Value                                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------ |
+| SPA host (production)   | `ess.widedrop.com`                                                                         |
+| API host (production)   | `api-ess.widedrop.com`                                                                     |
+| SPA host (staging)      | `ess-staging.widedrop.com`                                                                 |
+| API host (staging)      | `api-ess-staging.widedrop.com`                                                             |
+| API base path           | `/api/v1`                                                                                  |
+| Mail sending domain     | `widedroptech.com`                                                                         |
+| Existing marketing site | `widedrop.com` + `www.widedrop.com` — **untouched**                                        |
+| Container image         | `ghcr.io/widedrop/ess-api:<git-sha>` (immutable; `:latest` is never deployed)              |
+| Primary region          | `singapore` (Render) for API + Postgres; `apac` hint for R2; `ap-south-1` (Mumbai) for SES |
 
 ### 0.2 Reconciliation R-1 — the API hostname is flat, not nested
 
@@ -34,7 +34,7 @@ baked into the CSP `connect-src`, the CORS allowlist, the JWT issuer/audience an
 section. This document adopts **`api-ess.widedrop.com`** so the four documents agree.
 
 The choice is security-neutral: both names sit under the registrable domain `widedrop.com`,
-so both are *same-site* with `ess.widedrop.com` (§1.4), and both are host-locked identically
+so both are _same-site_ with `ess.widedrop.com` (§1.4), and both are host-locked identically
 because the refresh cookie uses the `__Host-` prefix and therefore carries no `Domain`
 attribute at all. The flat form additionally avoids a third DNS label, which keeps the
 certificate a plain single-name Let's Encrypt cert rather than needing a wildcard at the
@@ -58,18 +58,18 @@ The scaffold in `apps/api/src/config/env.ts` predates `SECURITY.md` §10.2 and u
 single-version key names that the rotation procedures in §7.3 and §3.2 of that document
 cannot express. §7 of this document is the canonical table. Required edits:
 
-| In the scaffold today | Canonical name | Why |
-|---|---|---|
-| `CORS_ORIGINS` | `ALLOWED_ORIGINS` | matches `SECURITY.md` §6.5 |
-| `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY` / `JWT_KEY_ID` | `JWT_SIGNING_KEY_<kid>` / `JWT_PUBLIC_KEY_<kid>` / `JWT_ACTIVE_KID` | overlapping-key rotation (`SECURITY.md` §3.2) needs N keys resident at once |
-| `PASSWORD_PEPPER` | `PASSWORD_PEPPER_V1` (+ `_V2`…) | lazy re-hash rotation |
-| `ENCRYPTION_KEK` / `ENCRYPTION_KEY_VERSION` | `MASTER_KEK_V1` (+ …) / `MASTER_KEK_ACTIVE_VERSION` | KEK re-wrap keeps the old KEK for 30 days |
-| `AUDIT_HMAC_KEY` | `AUDIT_CHAIN_KEY_V1` | chain history is never re-keyed |
-| `REDIS_URL` **required** in production | `RATE_LIMIT_STORE=postgres\|redis`, `REDIS_URL` optional | `SECURITY.md` §9.3 makes Postgres the primary limiter store; Redis is the >200 rps upgrade |
-| `S3_*` | `STORAGE_*` | matches `SECURITY.md` §10.2 |
-| `SMTP_*` | `MAIL_*` (HTTPS provider API) | `WORKFLOWS.md` §6.3 forbids raw SMTP string concatenation |
-| — (absent) | `DIRECT_DATABASE_URL` | session-scoped advisory locks and migrations must bypass the transaction pooler (§4.3) |
-| — (absent) | `SERVICE_ROLE`, `TRUSTED_PROXY_CIDRS`, `BLIND_INDEX_KEY_V1`, `CSRF_KEY`, `LOG_HASH_KEY`, `RECOVERY_CODE_KEY`, `CURSOR_HMAC_KEY`, `CLAMAV_*`, `OUTBOUND_ALLOWLIST` | required by `SECURITY.md` §5.3, §5.5, §7.2, §7.4, §9.2 |
+| In the scaffold today                               | Canonical name                                                                                                                                                    | Why                                                                                        |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `CORS_ORIGINS`                                      | `ALLOWED_ORIGINS`                                                                                                                                                 | matches `SECURITY.md` §6.5                                                                 |
+| `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY` / `JWT_KEY_ID` | `JWT_SIGNING_KEY_<kid>` / `JWT_PUBLIC_KEY_<kid>` / `JWT_ACTIVE_KID`                                                                                               | overlapping-key rotation (`SECURITY.md` §3.2) needs N keys resident at once                |
+| `PASSWORD_PEPPER`                                   | `PASSWORD_PEPPER_V1` (+ `_V2`…)                                                                                                                                   | lazy re-hash rotation                                                                      |
+| `ENCRYPTION_KEK` / `ENCRYPTION_KEY_VERSION`         | `MASTER_KEK_V1` (+ …) / `MASTER_KEK_ACTIVE_VERSION`                                                                                                               | KEK re-wrap keeps the old KEK for 30 days                                                  |
+| `AUDIT_HMAC_KEY`                                    | `AUDIT_CHAIN_KEY_V1`                                                                                                                                              | chain history is never re-keyed                                                            |
+| `REDIS_URL` **required** in production              | `RATE_LIMIT_STORE=postgres\|redis`, `REDIS_URL` optional                                                                                                          | `SECURITY.md` §9.3 makes Postgres the primary limiter store; Redis is the >200 rps upgrade |
+| `S3_*`                                              | `STORAGE_*`                                                                                                                                                       | matches `SECURITY.md` §10.2                                                                |
+| `SMTP_*`                                            | `MAIL_*` (HTTPS provider API)                                                                                                                                     | `WORKFLOWS.md` §6.3 forbids raw SMTP string concatenation                                  |
+| — (absent)                                          | `DIRECT_DATABASE_URL`                                                                                                                                             | session-scoped advisory locks and migrations must bypass the transaction pooler (§4.3)     |
+| — (absent)                                          | `SERVICE_ROLE`, `TRUSTED_PROXY_CIDRS`, `BLIND_INDEX_KEY_V1`, `CSRF_KEY`, `LOG_HASH_KEY`, `RECOVERY_CODE_KEY`, `CURSOR_HMAC_KEY`, `CLAMAV_*`, `OUTBOUND_ALLOWLIST` | required by `SECURITY.md` §5.3, §5.5, §7.2, §7.4, §9.2                                     |
 
 ---
 
@@ -131,21 +131,21 @@ cannot express. §7 of this document is the canonical table. Required edits:
 
 ### 1.2 Component table
 
-| # | Component | Product / plan | Purpose | Holds persistent data? | Reachable from the internet? |
-|---|---|---|---|---|---|
-| 1 | Marketing site | Netlify, existing free team | `widedrop.com` | no | yes (unchanged) |
-| 2 | ESS SPA | Netlify, **new dedicated site on a new team** | static React build at `ess.widedrop.com` | no | yes |
-| 3 | ESS API | Render Web Service (Docker), `singapore`, 2 instances | Fastify, all authorization, all business logic | no (stateless) | yes, `api-ess.widedrop.com` only |
-| 4 | ESS worker | Render Background Worker (same image, `SERVICE_ROLE=worker`), 1 instance | `email-dispatch` + the 21 named jobs in `DATA-MODEL.md` §17.5 | no (state is in Postgres) | **no** |
-| 5 | Connection pooler | Render Private Service, PgBouncer, transaction mode | multiplexes API connections onto Postgres | no | **no** |
-| 6 | Malware scanner | Render Private Service, `clamav/clamav:stable`, 2 GB | `clamd` INSTREAM scan of every upload (`SECURITY.md` §5.3.10) | signature DB only | **no** |
-| 7 | Database | Render Managed PostgreSQL 16, `singapore` | **the system of record** | **yes** | **no** — private network + IP allowlist |
-| 8 | Object storage | Cloudflare R2, `apac` location hint | payslip PDFs, expense bills, policy PDFs, letters, payroll input files | **yes** | no public access; 120 s signed GET only |
-| 9 | Email | Amazon SES, `ap-south-1` | help-desk dispatch, invites, resets, notifications | no | outbound; inbound SNS webhook only |
-| 10 | CI/CD | GitHub Actions + GHCR | build, test, scan, migrate, deploy | build artifacts | n/a |
-| 11 | Logs | Better Stack (or Grafana Cloud Loki) | structured JSON log sink, 30 d hot / 180 d cold | logs (PII-redacted) | no |
-| 12 | Errors | Sentry, PII scrubbing on | exception tracking | scrubbed events | no |
-| 13 | Uptime | Better Stack Uptime (or Healthchecks.io) | external probe of `/api/v1/healthz` and the SPA | no | n/a |
+| #   | Component         | Product / plan                                                           | Purpose                                                                | Holds persistent data?    | Reachable from the internet?            |
+| --- | ----------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------- | ------------------------- | --------------------------------------- |
+| 1   | Marketing site    | Netlify, existing free team                                              | `widedrop.com`                                                         | no                        | yes (unchanged)                         |
+| 2   | ESS SPA           | Netlify, **new dedicated site on a new team**                            | static React build at `ess.widedrop.com`                               | no                        | yes                                     |
+| 3   | ESS API           | Render Web Service (Docker), `singapore`, 2 instances                    | Fastify, all authorization, all business logic                         | no (stateless)            | yes, `api-ess.widedrop.com` only        |
+| 4   | ESS worker        | Render Background Worker (same image, `SERVICE_ROLE=worker`), 1 instance | `email-dispatch` + the 21 named jobs in `DATA-MODEL.md` §17.5          | no (state is in Postgres) | **no**                                  |
+| 5   | Connection pooler | Render Private Service, PgBouncer, transaction mode                      | multiplexes API connections onto Postgres                              | no                        | **no**                                  |
+| 6   | Malware scanner   | Render Private Service, `clamav/clamav:stable`, 2 GB                     | `clamd` INSTREAM scan of every upload (`SECURITY.md` §5.3.10)          | signature DB only         | **no**                                  |
+| 7   | Database          | Render Managed PostgreSQL 16, `singapore`                                | **the system of record**                                               | **yes**                   | **no** — private network + IP allowlist |
+| 8   | Object storage    | Cloudflare R2, `apac` location hint                                      | payslip PDFs, expense bills, policy PDFs, letters, payroll input files | **yes**                   | no public access; 120 s signed GET only |
+| 9   | Email             | Amazon SES, `ap-south-1`                                                 | help-desk dispatch, invites, resets, notifications                     | no                        | outbound; inbound SNS webhook only      |
+| 10  | CI/CD             | GitHub Actions + GHCR                                                    | build, test, scan, migrate, deploy                                     | build artifacts           | n/a                                     |
+| 11  | Logs              | Better Stack (or Grafana Cloud Loki)                                     | structured JSON log sink, 30 d hot / 180 d cold                        | logs (PII-redacted)       | no                                      |
+| 12  | Errors            | Sentry, PII scrubbing on                                                 | exception tracking                                                     | scrubbed events           | no                                      |
+| 13  | Uptime            | Better Stack Uptime (or Healthchecks.io)                                 | external probe of `/api/v1/healthz` and the SPA                        | no                        | n/a                                     |
 
 **What deliberately does not exist:** no Netlify Functions, no Netlify Edge Functions, no
 serverless function as a system of record, no CDN in front of the API, no public database
@@ -153,13 +153,13 @@ endpoint, no browser-to-bucket write path, no SSR, no cookie shared with `widedr
 
 ### 1.3 Why a second Netlify site, on a second Netlify team
 
-| Option | Verdict |
-|---|---|
+| Option                                                       | Verdict                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Path on the existing site (`widedrop.com/ess`) via a rewrite | **Rejected.** One deploy pipeline for two products; a marketing deploy can break the portal; the CSP and HSTS the portal needs would be forced onto the marketing site; `Path=/` cookies would be shared with marketing pages; and there is no way to give HR/engineering access to one without the other. |
-| Second site, same Netlify team | Workable but rejected as default. Free-tier **build minutes (300/mo) and bandwidth (100 GB/mo) are account-wide**, so ESS traffic would silently consume the marketing site's allowance, and one leaked Netlify token would reach both sites. |
-| **Second site, separate Netlify team** (chosen) | Independent quota, independent access control, independent deploy token, independent rollback. Free tier is sufficient for a static SPA. The marketing site's team is never given an ESS credential and never sees an ESS deploy. |
+| Second site, same Netlify team                               | Workable but rejected as default. Free-tier **build minutes (300/mo) and bandwidth (100 GB/mo) are account-wide**, so ESS traffic would silently consume the marketing site's allowance, and one leaked Netlify token would reach both sites.                                                              |
+| **Second site, separate Netlify team** (chosen)              | Independent quota, independent access control, independent deploy token, independent rollback. Free tier is sufficient for a static SPA. The marketing site's team is never given an ESS credential and never sees an ESS deploy.                                                                          |
 
-**Build minutes are additionally reduced to zero** on *both* teams: the SPA is built inside
+**Build minutes are additionally reduced to zero** on _both_ teams: the SPA is built inside
 GitHub Actions and uploaded with `netlify deploy --prod --dir=apps/web/dist --no-build`.
 Netlify only serves the artifact. This means the ESS can ship any number of times a day
 without ever touching a free-tier build-minute budget, on either team (§2.5).
@@ -168,18 +168,18 @@ without ever touching a free-tier build-minute budget, on either team (§2.5).
 
 The refresh session lives in `__Host-wd_rt`, an `HttpOnly` cookie set by the API
 (`SECURITY.md` §3.4). Whether the browser attaches it to the SPA's XHR is decided by the
-**site** comparison, which uses the registrable domain (eTLD+1), *not* the full host.
+**site** comparison, which uses the registrable domain (eTLD+1), _not_ the full host.
 
-| Layout | SPA origin | API origin | eTLD+1 | Browser verdict | Cookie behaviour |
-|---|---|---|---|---|---|
-| **Chosen** | `https://ess.widedrop.com` | `https://api-ess.widedrop.com` | both `widedrop.com` | **same-site**, cross-origin | `SameSite=Strict` attaches on the SPA's own `fetch`. `SameSite=Lax` would also work; `Strict` is chosen because nothing in the flow depends on a cross-site top-level navigation carrying the cookie, and `Strict` additionally blocks a phishing page navigating the victim to `/auth/refresh`. |
-| Nested alternative | `https://ess.widedrop.com` | `https://api.ess.widedrop.com` | both `widedrop.com` | identical | identical — the extra label changes nothing for `SameSite`. |
-| **Cross-site alternative** (rejected) | `https://ess.widedrop.com` | `https://widedrop-ess-api.onrender.com` or `api.widedrop-ess.com` | `widedrop.com` vs `onrender.com` | **cross-site** | Requires `SameSite=None; Secure` on the refresh cookie. That is strictly worse: the cookie is then attached to *every* cross-site request the browser can be tricked into making, so CSRF defence rests entirely on the server-side token; Safari ITP and Firefox TCP treat it as third-party storage and may **partition or evict it**, silently logging users out; and `__Host-` plus `SameSite=None` is a combination several corporate proxies and webviews mishandle. |
+| Layout                                | SPA origin                 | API origin                                                        | eTLD+1                           | Browser verdict             | Cookie behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------------- | -------------------------- | ----------------------------------------------------------------- | -------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Chosen**                            | `https://ess.widedrop.com` | `https://api-ess.widedrop.com`                                    | both `widedrop.com`              | **same-site**, cross-origin | `SameSite=Strict` attaches on the SPA's own `fetch`. `SameSite=Lax` would also work; `Strict` is chosen because nothing in the flow depends on a cross-site top-level navigation carrying the cookie, and `Strict` additionally blocks a phishing page navigating the victim to `/auth/refresh`.                                                                                                                                                                           |
+| Nested alternative                    | `https://ess.widedrop.com` | `https://api.ess.widedrop.com`                                    | both `widedrop.com`              | identical                   | identical — the extra label changes nothing for `SameSite`.                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **Cross-site alternative** (rejected) | `https://ess.widedrop.com` | `https://widedrop-ess-api.onrender.com` or `api.widedrop-ess.com` | `widedrop.com` vs `onrender.com` | **cross-site**              | Requires `SameSite=None; Secure` on the refresh cookie. That is strictly worse: the cookie is then attached to _every_ cross-site request the browser can be tricked into making, so CSRF defence rests entirely on the server-side token; Safari ITP and Firefox TCP treat it as third-party storage and may **partition or evict it**, silently logging users out; and `__Host-` plus `SameSite=None` is a combination several corporate proxies and webviews mishandle. |
 
 Three consequences the implementer must honour:
 
 1. **`credentials: 'include'` is still required** on the SPA's `fetch` to the API, because
-   same-site is not same-*origin*. CORS is therefore still in play, with an exact-string
+   same-site is not same-_origin_. CORS is therefore still in play, with an exact-string
    origin allowlist and `credentials: true` (`SECURITY.md` §6.5). No wildcard, and
    specifically never `endsWith('.widedrop.com')`.
 2. **Same-site is not a security boundary.** Every `*.widedrop.com` host — including the
@@ -199,26 +199,26 @@ Three consequences the implementer must honour:
 
 ### 2.1 Site settings (create once, in the new team)
 
-| Setting | Value |
-|---|---|
-| Site name | `widedrop-ess` (serves `widedrop-ess.netlify.app`) |
-| Repository | connected **read-only for previews only**; production deploys arrive from CI (§2.5) |
-| Base directory | `apps/web` |
-| Build command | `npm run build` (only used by deploy previews; production builds happen in CI) |
-| Publish directory | `apps/web/dist` |
-| Functions directory | **unset** — the ESS site runs no functions |
-| Node version | `22` (from `.nvmrc`, and pinned again in `netlify.toml`) |
-| Custom domain | `ess.widedrop.com` (primary). No apex, no `www`. |
-| HTTPS | Let's Encrypt, auto-renew; "Force HTTPS" **on** |
-| Asset optimisation / post-processing | **off** — it rewrites markup and would break SRI and the no-inline-style guarantee (`SECURITY.md` §6.3) |
-| Branch deploys | `staging` only |
-| Deploy previews | on, for PRs; they point at the **staging** API (§2.4) |
-| Environment variables | `VITE_API_BASE_URL`, `VITE_APP_ENV`, `VITE_BUILD_SHA`, `VITE_SENTRY_DSN` — all public build-time config, **never a secret** |
+| Setting                              | Value                                                                                                                       |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| Site name                            | `widedrop-ess` (serves `widedrop-ess.netlify.app`)                                                                          |
+| Repository                           | connected **read-only for previews only**; production deploys arrive from CI (§2.5)                                         |
+| Base directory                       | `apps/web`                                                                                                                  |
+| Build command                        | `npm run build` (only used by deploy previews; production builds happen in CI)                                              |
+| Publish directory                    | `apps/web/dist`                                                                                                             |
+| Functions directory                  | **unset** — the ESS site runs no functions                                                                                  |
+| Node version                         | `22` (from `.nvmrc`, and pinned again in `netlify.toml`)                                                                    |
+| Custom domain                        | `ess.widedrop.com` (primary). No apex, no `www`.                                                                            |
+| HTTPS                                | Let's Encrypt, auto-renew; "Force HTTPS" **on**                                                                             |
+| Asset optimisation / post-processing | **off** — it rewrites markup and would break SRI and the no-inline-style guarantee (`SECURITY.md` §6.3)                     |
+| Branch deploys                       | `staging` only                                                                                                              |
+| Deploy previews                      | on, for PRs; they point at the **staging** API (§2.4)                                                                       |
+| Environment variables                | `VITE_API_BASE_URL`, `VITE_APP_ENV`, `VITE_BUILD_SHA`, `VITE_SENTRY_DSN` — all public build-time config, **never a secret** |
 
 ### 2.2 `infra/netlify/netlify.toml` — committed, canonical
 
 This file is the single source of truth for build config, the SPA fallback and every
-**context-invariant** header. The `Content-Security-Policy` is *not* here: its `connect-src`
+**context-invariant** header. The `Content-Security-Policy` is _not_ here: its `connect-src`
 must equal the API origin for the deploy context, so it is generated at build time into
 `dist/_headers` (§2.3). No header name appears in both files — that rule is what prevents
 Netlify's merge semantics from emitting two conflicting `Content-Security-Policy` headers.
@@ -342,8 +342,8 @@ Build-time assertions in the same script, each failing the build:
 4. `grep -c 'style="' dist/**/*.html` is `0`, and no emitted JS contains `.setAttribute('style'` —
    the no-inline-style guarantee that lets `style-src 'self'` stand (`SECURITY.md` §6.3).
 5. `apps/web/public/_headers` and `apps/web/public/_redirects` **do not exist** (they would be
-   copied into `dist` and merged with the generated file). *Amend `SECURITY.md` §6.4, which
-   mentions `apps/web/public/_headers`: that file is not used.*
+   copied into `dist` and merged with the generated file). _Amend `SECURITY.md` §6.4, which
+   mentions `apps/web/public/_headers`: that file is not used._
 
 ### 2.4 Deploy previews
 
@@ -377,15 +377,15 @@ what makes the one-click rollback in §8.6 instant.
 
 ### 2.6 What is NOT changed on `widedrop.com`
 
-| Item | Change |
-|---|---|
-| The `widedrop.com` Netlify site, its build settings, its `netlify.toml`, its env vars | **none** |
-| The apex `A` / `ALIAS` / `ANAME` record and the `www` `CNAME` | **none** |
-| `MX`, existing `SPF`, existing `DKIM`, existing `DMARC` on `widedrop.com` | **none** (all ESS mail DNS is in `widedroptech.com` — see R-2) |
-| `NS` and `SOA` of `widedrop.com` | **none** |
-| The marketing team's Netlify members, tokens, or build-minute budget | **none**; ESS lives in a different team and builds in CI |
-| Marketing site TLS certificate | **none**; `ess` gets its own certificate on its own site |
-| Marketing site headers/CSP | **none**; Netlify headers are per-site, never inherited across sites |
+| Item                                                                                  | Change                                                               |
+| ------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| The `widedrop.com` Netlify site, its build settings, its `netlify.toml`, its env vars | **none**                                                             |
+| The apex `A` / `ALIAS` / `ANAME` record and the `www` `CNAME`                         | **none**                                                             |
+| `MX`, existing `SPF`, existing `DKIM`, existing `DMARC` on `widedrop.com`             | **none** (all ESS mail DNS is in `widedroptech.com` — see R-2)       |
+| `NS` and `SOA` of `widedrop.com`                                                      | **none**                                                             |
+| The marketing team's Netlify members, tokens, or build-minute budget                  | **none**; ESS lives in a different team and builds in CI             |
+| Marketing site TLS certificate                                                        | **none**; `ess` gets its own certificate on its own site             |
+| Marketing site headers/CSP                                                            | **none**; Netlify headers are per-site, never inherited across sites |
 
 **The one shared resource is the DNS zone.** Two records are added to it, both leaf `CNAME`s
 on previously unused labels. Adding a subdomain record cannot affect apex resolution.
@@ -394,20 +394,20 @@ on previously unused labels. Adding a subdomain record cannot affect apex resolu
 
 **Case A — `widedrop.com` DNS is at a registrar or Cloudflare (external DNS).**
 
-| Name | Type | Value | TTL | Note |
-|---|---|---|---|---|
-| `ess` | `CNAME` | `widedrop-ess.netlify.app.` | 300 | Netlify then issues the cert automatically |
-| `api-ess` | `CNAME` | `ess-api.onrender.com.` | 300 | Render's generated hostname for the service |
-| `_acme-challenge.api-ess` | — | — | — | not needed; Render uses HTTP-01 |
-| `ess-staging` | `CNAME` | `widedrop-ess-staging.netlify.app.` | 300 | staging only |
-| `api-ess-staging` | `CNAME` | `ess-api-staging.onrender.com.` | 300 | staging only |
+| Name                      | Type    | Value                               | TTL | Note                                        |
+| ------------------------- | ------- | ----------------------------------- | --- | ------------------------------------------- |
+| `ess`                     | `CNAME` | `widedrop-ess.netlify.app.`         | 300 | Netlify then issues the cert automatically  |
+| `api-ess`                 | `CNAME` | `ess-api.onrender.com.`             | 300 | Render's generated hostname for the service |
+| `_acme-challenge.api-ess` | —       | —                                   | —   | not needed; Render uses HTTP-01             |
+| `ess-staging`             | `CNAME` | `widedrop-ess-staging.netlify.app.` | 300 | staging only                                |
+| `api-ess-staging`         | `CNAME` | `ess-api-staging.onrender.com.`     | 300 | staging only                                |
 
 If the provider is Cloudflare, these records must be **DNS-only (grey cloud)**. Proxying
 `api-ess` through Cloudflare would put a CDN in front of authenticated responses, which
 `SECURITY.md` §6.6 forbids, and would replace the client IP that the rate limiter keys on.
 
 **Case B — `widedrop.com` is delegated to Netlify DNS on the marketing team.**
-The zone is edited in the marketing team's DNS panel, but *only by adding records*:
+The zone is edited in the marketing team's DNS panel, but _only by adding records_:
 
 1. In the ESS team, add the custom domain `ess.widedrop.com` to the ESS site. Netlify will
    report that the domain's zone belongs to another team and offer a **TXT verification**.
@@ -462,16 +462,16 @@ alternative if a customer contract later demands in-country storage.
 # Secrets are NEVER in this file: every `sync: false` value is typed into the
 # Render dashboard or the environment group once, and never read back by CI.
 
-previewsEnabled: false          # no Render preview environments; staging is explicit
+previewsEnabled: false # no Render preview environments; staging is explicit
 
 databases:
   - name: ess-postgres
     databaseName: widedrop_ess
-    user: ess_owner             # the OWNER role; the app never uses it (§4.4)
-    plan: standard              # 4 GB RAM / 4 vCPU / 100 GB SSD, daily backup + PITR
+    user: ess_owner # the OWNER role; the app never uses it (§4.4)
+    plan: standard # 4 GB RAM / 4 vCPU / 100 GB SSD, daily backup + PITR
     region: singapore
-    postgresMajorVersion: "16"
-    ipAllowList: []             # [] == private network only, NO public endpoint
+    postgresMajorVersion: '16'
+    ipAllowList: [] # [] == private network only, NO public endpoint
 
 envVarGroups:
   - name: ess-shared
@@ -491,11 +491,11 @@ envVarGroups:
       - key: JWT_AUDIENCE
         value: https://ess.widedrop.com
       - key: COOKIE_DOMAIN
-        value: ""                       # MUST stay empty — __Host- forbids Domain (§1.4)
+        value: '' # MUST stay empty — __Host- forbids Domain (§1.4)
       - key: COOKIE_SAMESITE
         value: strict
       - key: COOKIE_SECURE
-        value: "true"
+        value: 'true'
       - key: RATE_LIMIT_STORE
         value: postgres
       - key: STORAGE_DRIVER
@@ -507,9 +507,9 @@ envVarGroups:
       - key: STORAGE_BUCKET
         value: widedrop-ess-prod
       - key: STORAGE_FORCE_PATH_STYLE
-        value: "true"
+        value: 'true'
       - key: SIGNED_URL_TTL_SECONDS
-        value: "120"
+        value: '120'
       - key: MAIL_PROVIDER
         value: ses
       - key: MAIL_REGION
@@ -523,19 +523,19 @@ envVarGroups:
       - key: OUTBOUND_ALLOWLIST
         value: api.pwnedpasswords.com,email.ap-south-1.amazonaws.com,<r2-account-id>.r2.cloudflarestorage.com
       - key: HIBP_ENABLED
-        value: "true"
+        value: 'true'
       - key: CLAMAV_HOST
-        value: ess-clamav                      # Render private-service DNS name
+        value: ess-clamav # Render private-service DNS name
       - key: CLAMAV_PORT
-        value: "3310"
+        value: '3310'
       - key: TRUSTED_PROXY_CIDRS
-        value: 10.0.0.0/8                      # Render's edge; confirm in the dashboard
+        value: 10.0.0.0/8 # Render's edge; confirm in the dashboard
       - key: ACCESS_TOKEN_TTL_SECONDS
-        value: "600"
+        value: '600'
       - key: REFRESH_TOKEN_TTL_DAYS
-        value: "7"
+        value: '7'
       - key: REFRESH_FAMILY_MAX_DAYS
-        value: "30"
+        value: '30'
       - key: JWT_ACTIVE_KID
         sync: false
       - key: JWT_SIGNING_KEY_wd-ess-202609-a1b2
@@ -579,17 +579,17 @@ services:
   # ---------------------------------------------------------------- API ----
   - type: web
     name: ess-api
-    runtime: image                  # deploy an immutable digest built in CI
+    runtime: image # deploy an immutable digest built in CI
     image:
       url: ghcr.io/widedrop/ess-api:REPLACED_BY_CI
       creds:
         fromRegistryCreds:
           name: ghcr-widedrop
-    plan: standard                  # 1 vCPU / 2 GB
+    plan: standard # 1 vCPU / 2 GB
     region: singapore
-    numInstances: 2                 # two, so a rolling deploy is genuinely zero-downtime
+    numInstances: 2 # two, so a rolling deploy is genuinely zero-downtime
     healthCheckPath: /api/v1/healthz
-    autoDeploy: false               # CI deploys explicitly; no deploy-on-push
+    autoDeploy: false # CI deploys explicitly; no deploy-on-push
     domains:
       - api-ess.widedrop.com
     envVars:
@@ -597,10 +597,10 @@ services:
       - key: SERVICE_ROLE
         value: api
       - key: PORT
-        value: "4000"
-      - key: DATABASE_URL           # through PgBouncer, transaction pooling
+        value: '4000'
+      - key: DATABASE_URL # through PgBouncer, transaction pooling
         value: postgresql://ess_app:__FROM_SECRET__@ess-pgbouncer:6432/widedrop_ess?pgbouncer=true&connection_limit=8&sslmode=disable&application_name=ess-api
-      - key: DIRECT_DATABASE_URL    # straight to Postgres, session scope
+      - key: DIRECT_DATABASE_URL # straight to Postgres, session scope
         fromDatabase:
           name: ess-postgres
           property: connectionString
@@ -615,22 +615,22 @@ services:
     name: ess-worker
     runtime: image
     image:
-      url: ghcr.io/widedrop/ess-api:REPLACED_BY_CI   # THE SAME image as the API
+      url: ghcr.io/widedrop/ess-api:REPLACED_BY_CI # THE SAME image as the API
       creds:
         fromRegistryCreds:
           name: ghcr-widedrop
-    plan: starter                   # 0.5 vCPU / 512 MB
+    plan: starter # 0.5 vCPU / 512 MB
     region: singapore
-    numInstances: 1                 # exactly one; leases make >1 safe but it is not needed
+    numInstances: 1 # exactly one; leases make >1 safe but it is not needed
     autoDeploy: false
     envVars:
       - fromGroup: ess-shared
       - key: SERVICE_ROLE
         value: worker
       - key: WORKER_POLL_INTERVAL_MS
-        value: "15000"
+        value: '15000'
       - key: WORKER_CONCURRENCY
-        value: "4"
+        value: '4'
       # The worker bypasses PgBouncer: pg_advisory_lock() is SESSION-scoped and
       # does not survive transaction pooling (§4.3).
       - key: DATABASE_URL
@@ -643,7 +643,7 @@ services:
           property: connectionString
 
   # ------------------------------------------------------------ PGBOUNCER ---
-  - type: pserv                     # private service: no public URL, ever
+  - type: pserv # private service: no public URL, ever
     name: ess-pgbouncer
     runtime: image
     image:
@@ -661,11 +661,11 @@ services:
       - key: POOL_MODE
         value: transaction
       - key: MAX_CLIENT_CONN
-        value: "400"
+        value: '400'
       - key: DEFAULT_POOL_SIZE
-        value: "25"
+        value: '25'
       - key: RESERVE_POOL_SIZE
-        value: "5"
+        value: '5'
       - key: SERVER_TLS_SSLMODE
         value: verify-full
       - key: SERVER_TLS_CA_FILE
@@ -681,14 +681,14 @@ services:
     runtime: image
     image:
       url: docker.io/clamav/clamav:stable
-    plan: standard                  # 2 GB — the signature database needs it
+    plan: standard # 2 GB — the signature database needs it
     region: singapore
     numInstances: 1
     envVars:
       - key: CLAMAV_NO_MILTERD
-        value: "true"
+        value: 'true'
       - key: FRESHCLAM_CHECKS
-        value: "4"
+        value: '4'
 ```
 
 ### 3.3 `apps/api/Dockerfile` — production
@@ -789,26 +789,26 @@ anything else        → log the offending value, exit 1
 
 **Signal handling contract** (implement in both `server.ts` and `worker.ts`):
 
-| Step | API | Worker |
-|---|---|---|
-| 1. `SIGTERM` received | set `readyz` to `503` immediately, so the platform drains it from the load balancer | stop claiming new jobs and new outbox rows |
-| 2. drain | stop accepting new connections; let in-flight requests finish, **cap 25 s** | finish the in-flight job/batch, **cap 25 s**; a job that will not finish releases its lease so another worker reclaims it |
-| 3. close | `await prisma.$disconnect()`, flush pino, flush Sentry (2 s), close the storage client | same |
-| 4. exit | `process.exit(0)` | `process.exit(0)` |
-| Hard stop | a 30 s watchdog calls `process.exit(1)` so a stuck handle cannot block the deploy | same |
-| Never | no `process.on('uncaughtException')` that swallows and continues — log, flush, exit non-zero | same |
+| Step                  | API                                                                                          | Worker                                                                                                                    |
+| --------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| 1. `SIGTERM` received | set `readyz` to `503` immediately, so the platform drains it from the load balancer          | stop claiming new jobs and new outbox rows                                                                                |
+| 2. drain              | stop accepting new connections; let in-flight requests finish, **cap 25 s**                  | finish the in-flight job/batch, **cap 25 s**; a job that will not finish releases its lease so another worker reclaims it |
+| 3. close              | `await prisma.$disconnect()`, flush pino, flush Sentry (2 s), close the storage client       | same                                                                                                                      |
+| 4. exit               | `process.exit(0)`                                                                            | `process.exit(0)`                                                                                                         |
+| Hard stop             | a 30 s watchdog calls `process.exit(1)` so a stuck handle cannot block the deploy            | same                                                                                                                      |
+| Never                 | no `process.on('uncaughtException')` that swallows and continues — log, flush, exit non-zero | same                                                                                                                      |
 
 Render sends `SIGTERM` then `SIGKILL` after 30 s; the caps above sit inside that window.
 
 ### 3.4 Resource sizing and concurrency
 
-| Service | Plan | Why that size | Scale trigger |
-|---|---|---|---|
-| `ess-api` | 2 × Standard (1 vCPU, 2 GB) | Node is single-threaded per instance; Argon2id at m=64 MiB, t=3 costs ~90 ms and ~64 MB *per concurrent login*, which is the real memory driver. 2 GB leaves headroom for 8 concurrent hashes plus the Prisma client. Two instances make rolling deploys zero-downtime and survive one instance dying. | p95 latency > 800 ms for 10 min, or CPU > 70 % for 15 min → 3 instances |
-| `ess-worker` | 1 × Starter (0.5 vCPU, 512 MB) | The workload is IO-bound (outbox sends, SQL scans). The one CPU-heavy job, payroll calculation, is bounded by `WORKER_CONCURRENCY=4` and runs monthly. | `outbox_pending` > 50 for 15 min, or a payroll run exceeding 10 min → Standard for the payroll window |
-| `ess-pgbouncer` | 1 × Starter | pgbouncer is a single-process event loop; 400 client connections fit comfortably in 512 MB | client-connection saturation |
-| `ess-clamav` | 1 × Standard (2 GB) | `clamd` memory-maps the full signature database (~1.3 GB resident after `freshclam`). Starter would OOM. | never; uploads are rare |
-| `ess-postgres` | Standard (4 GB, 100 GB) | ~120 employees × 8 years of payslips, audit chain and attendance is well under 20 GB; the plan is chosen for the **PITR window and backup retention**, not for size | disk > 70 % or cache-hit ratio < 0.98 |
+| Service         | Plan                           | Why that size                                                                                                                                                                                                                                                                                          | Scale trigger                                                                                         |
+| --------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `ess-api`       | 2 × Standard (1 vCPU, 2 GB)    | Node is single-threaded per instance; Argon2id at m=64 MiB, t=3 costs ~90 ms and ~64 MB _per concurrent login_, which is the real memory driver. 2 GB leaves headroom for 8 concurrent hashes plus the Prisma client. Two instances make rolling deploys zero-downtime and survive one instance dying. | p95 latency > 800 ms for 10 min, or CPU > 70 % for 15 min → 3 instances                               |
+| `ess-worker`    | 1 × Starter (0.5 vCPU, 512 MB) | The workload is IO-bound (outbox sends, SQL scans). The one CPU-heavy job, payroll calculation, is bounded by `WORKER_CONCURRENCY=4` and runs monthly.                                                                                                                                                 | `outbox_pending` > 50 for 15 min, or a payroll run exceeding 10 min → Standard for the payroll window |
+| `ess-pgbouncer` | 1 × Starter                    | pgbouncer is a single-process event loop; 400 client connections fit comfortably in 512 MB                                                                                                                                                                                                             | client-connection saturation                                                                          |
+| `ess-clamav`    | 1 × Standard (2 GB)            | `clamd` memory-maps the full signature database (~1.3 GB resident after `freshclam`). Starter would OOM.                                                                                                                                                                                               | never; uploads are rare                                                                               |
+| `ess-postgres`  | Standard (4 GB, 100 GB)        | ~120 employees × 8 years of payslips, audit chain and attendance is well under 20 GB; the plan is chosen for the **PITR window and backup retention**, not for size                                                                                                                                    | disk > 70 % or cache-hit ratio < 0.98                                                                 |
 
 **Concurrency knobs (all explicit, none defaulted):** Fastify `bodyLimit: 1 MiB` (multipart
 routes are excepted and capped per `SECURITY.md` §5.3); `server.keepAliveTimeout = 65_000`
@@ -831,14 +831,14 @@ been load-tested with concurrent claimants.
 
 ### 3.5 Scheduling lives in the worker, not in the platform
 
-All 21 named jobs (`DATA-MODEL.md` §17.5) plus `email-dispatch` are scheduled *inside* the
+All 21 named jobs (`DATA-MODEL.md` §17.5) plus `email-dispatch` are scheduled _inside_ the
 worker process from a single table-driven timer, each claiming an `ess_ops.background_job`
 row by lease (`lease_owner`, `lease_expires_at`). Rationale: it is host-portable (moving to
 Fly.io changes nothing), it is testable in CI with no platform involved, a missed tick is
 visible as a `PENDING` row rather than vanishing, and the lease makes a duplicate run
 impossible even if a second worker is accidentally started. Platform cron (`type: cron` on
 Render) is used for exactly one thing — the quarterly restore drill in §11.5 — because that
-one must run *outside* the application.
+one must run _outside_ the application.
 
 ### 3.6 Deploy mechanics on Render
 
@@ -921,13 +921,13 @@ endpoint); private services become Fly apps with `flycast` internal addresses; s
 
 **Render Managed PostgreSQL 16, plan `standard`, region `singapore`, `ipAllowList: []`.**
 
-| Requirement | How this satisfies it |
-|---|---|
-| System of record for persistent business data | Managed Postgres with WAL archiving, not an ephemeral or serverless store |
-| Version | Postgres **16** — `DATA-MODEL.md` depends on generated columns, `btree_gist` exclusion constraints (`ex_leave_request__no_self_overlap`), `FOR UPDATE SKIP LOCKED`, advisory locks and `pgcrypto` |
-| Not internet-reachable | `ipAllowList: []` removes the public endpoint entirely; only services in the same Render project resolve `ess-postgres` |
-| Encrypted at rest | provider-managed AES-256 volume + encrypted backups (`SECURITY.md` §7.1 layer 1) |
-| Same region as the API | sub-millisecond private-network RTT; no cross-region egress |
+| Requirement                                   | How this satisfies it                                                                                                                                                                             |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| System of record for persistent business data | Managed Postgres with WAL archiving, not an ephemeral or serverless store                                                                                                                         |
+| Version                                       | Postgres **16** — `DATA-MODEL.md` depends on generated columns, `btree_gist` exclusion constraints (`ex_leave_request__no_self_overlap`), `FOR UPDATE SKIP LOCKED`, advisory locks and `pgcrypto` |
+| Not internet-reachable                        | `ipAllowList: []` removes the public endpoint entirely; only services in the same Render project resolve `ess-postgres`                                                                           |
+| Encrypted at rest                             | provider-managed AES-256 volume + encrypted backups (`SECURITY.md` §7.1 layer 1)                                                                                                                  |
+| Same region as the API                        | sub-millisecond private-network RTT; no cross-region egress                                                                                                                                       |
 
 Extensions to enable in the first migration: `pgcrypto` (CSPRNG, digest), `btree_gist`
 (the leave-overlap exclusion constraint), `pg_stat_statements` (query-level observability).
@@ -936,10 +936,10 @@ part of the encryption AAD (`SECURITY.md` §7.2).
 
 ### 4.2 Connection URLs — there are two, and the distinction is load-bearing
 
-| Variable | Points at | Used by | Pool mode |
-|---|---|---|---|
-| `DATABASE_URL` | `ess-pgbouncer:6432` | the **API** | transaction |
-| `DIRECT_DATABASE_URL` | `ess-postgres:5432` | the **worker**, `prisma migrate`, `prisma db execute`, the reference seeder, the bootstrap script, psql in a runbook | session |
+| Variable              | Points at            | Used by                                                                                                              | Pool mode   |
+| --------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------- |
+| `DATABASE_URL`        | `ess-pgbouncer:6432` | the **API**                                                                                                          | transaction |
+| `DIRECT_DATABASE_URL` | `ess-postgres:5432`  | the **worker**, `prisma migrate`, `prisma db execute`, the reference seeder, the bootstrap script, psql in a runbook | session     |
 
 ```
 DATABASE_URL=postgresql://ess_app:<pw>@ess-pgbouncer:6432/widedrop_ess
@@ -990,7 +990,7 @@ server connections, and a deploy overlap costs nothing. Consequences that must b
    fails on `$executeRaw` containing `SET ` not preceded by `LOCAL`.
 3. **Session-scoped advisory locks do not survive transaction pooling.** `WORKFLOWS.md` §1.7
    has the payroll calculation worker hold `pg_advisory_lock(hashtext('payroll:'||cycle_id))`
-   for the whole run — a *session* lock. Through a transaction pooler the lock would be taken
+   for the whole run — a _session_ lock. Through a transaction pooler the lock would be taken
    on an arbitrary server connection and released to another client mid-run. **Therefore the
    worker connects on `DIRECT_DATABASE_URL`.** The transaction-scoped
    `pg_advisory_xact_lock` used by the audit-chain trigger is fine either way.
@@ -1017,12 +1017,12 @@ ALTER ROLE ess_migrator SET lock_timeout = '10s';       -- fail fast rather than
 Four roles, created by the first migration and never merged. **The application never connects
 as the owner.**
 
-| Role | `LOGIN` | Owns objects | Privileges | Used by |
-|---|---|---|---|---|
-| `ess_owner` | yes (break-glass only) | **yes** — all schemas, tables, types | full | nobody at runtime; credentials sealed offline (§11.6) |
-| `ess_migrator` | yes | no | `CREATE` on `ess`, `ess_ops`; `ALTER`/`DROP` via ownership delegation; `BYPASSRLS` | the CI migration job **only** |
-| `ess_app` | yes | no | `SELECT, INSERT, UPDATE, DELETE` on `ess.*` and `ess_ops.*` **minus** the exclusions below; `USAGE` on schemas and sequences; **no** `BYPASSRLS`, **no** `CREATE`, **no** `TRUNCATE`, **no** superuser | the API |
-| `ess_job` | yes | no | as `ess_app`, plus `BYPASSRLS` (jobs act system-wide across tenants and have no actor context) | the worker |
+| Role           | `LOGIN`                | Owns objects                         | Privileges                                                                                                                                                                                             | Used by                                               |
+| -------------- | ---------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
+| `ess_owner`    | yes (break-glass only) | **yes** — all schemas, tables, types | full                                                                                                                                                                                                   | nobody at runtime; credentials sealed offline (§11.6) |
+| `ess_migrator` | yes                    | no                                   | `CREATE` on `ess`, `ess_ops`; `ALTER`/`DROP` via ownership delegation; `BYPASSRLS`                                                                                                                     | the CI migration job **only**                         |
+| `ess_app`      | yes                    | no                                   | `SELECT, INSERT, UPDATE, DELETE` on `ess.*` and `ess_ops.*` **minus** the exclusions below; `USAGE` on schemas and sequences; **no** `BYPASSRLS`, **no** `CREATE`, **no** `TRUNCATE`, **no** superuser | the API                                               |
+| `ess_job`      | yes                    | no                                   | as `ess_app`, plus `BYPASSRLS` (jobs act system-wide across tenants and have no actor context)                                                                                                         | the worker                                            |
 
 ```sql
 -- Identity
@@ -1066,16 +1066,16 @@ guarantee. It is also asserted in the CI integration suite.
 
 ### 4.5 Backups, PITR and the restore drill
 
-| Control | Value |
-|---|---|
-| Automated full backup | daily, provider-managed, encrypted, 07 days retained on `standard` (extend to 30 on the next plan up if policy demands) |
-| PITR | continuous WAL archiving, any second within the retention window |
-| **RPO** | **≤ 5 minutes** (WAL shipping interval); ≤ 24 h in the catastrophic case where WAL is lost and only the daily full survives |
-| **RTO** | **≤ 2 hours** to a verified, serving system |
-| Weekly off-provider copy | `pg_dump -Fc` run by a Render **cron job** in the same private network, encrypted with `age` to an offline public key, written to an R2 bucket in a **different cloud account** with object-lock/immutability for 35 days. This is the control that survives "the Render account is compromised or closed" — a provider-internal backup does not. |
-| Backup integrity | the weekly copy is restored into a throwaway database by the same cron job, `pg_restore --list` is diffed against the expected table set, `SELECT count(*)` is compared against the source for six anchor tables, and the result is appended to `docs/runbooks/dr-drill-log.md`. A failure pages. |
-| Encryption of the dump | `pg_dump -Fc | age -r <recipient> > ess-<date>.dump.age`; the age identity is in the sealed offline escrow with the KEK (§11.6). **The dump contains ciphertext columns, not plaintext PII** — the envelope encryption means a stolen dump without the KEK yields no PAN, Aadhaar, bank account or address. |
-| What a backup does **not** contain | object storage. R2 has its own versioning + lifecycle (§5). A restore is therefore a *pair* of restores, and the drill covers both. |
+| Control                            | Value                                                                                                                                                                                                                                                                                                                                             |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Automated full backup              | daily, provider-managed, encrypted, 07 days retained on `standard` (extend to 30 on the next plan up if policy demands)                                                                                                                                                                                                                           |
+| PITR                               | continuous WAL archiving, any second within the retention window                                                                                                                                                                                                                                                                                  |
+| **RPO**                            | **≤ 5 minutes** (WAL shipping interval); ≤ 24 h in the catastrophic case where WAL is lost and only the daily full survives                                                                                                                                                                                                                       |
+| **RTO**                            | **≤ 2 hours** to a verified, serving system                                                                                                                                                                                                                                                                                                       |
+| Weekly off-provider copy           | `pg_dump -Fc` run by a Render **cron job** in the same private network, encrypted with `age` to an offline public key, written to an R2 bucket in a **different cloud account** with object-lock/immutability for 35 days. This is the control that survives "the Render account is compromised or closed" — a provider-internal backup does not. |
+| Backup integrity                   | the weekly copy is restored into a throwaway database by the same cron job, `pg_restore --list` is diffed against the expected table set, `SELECT count(*)` is compared against the source for six anchor tables, and the result is appended to `docs/runbooks/dr-drill-log.md`. A failure pages.                                                 |
+| Encryption of the dump             | `pg_dump -Fc                                                                                                                                                                                                                                                                                                                                      | age -r <recipient> > ess-<date>.dump.age`; the age identity is in the sealed offline escrow with the KEK (§11.6). **The dump contains ciphertext columns, not plaintext PII** — the envelope encryption means a stolen dump without the KEK yields no PAN, Aadhaar, bank account or address. |
+| What a backup does **not** contain | object storage. R2 has its own versioning + lifecycle (§5). A restore is therefore a _pair_ of restores, and the drill covers both.                                                                                                                                                                                                               |
 
 **Quarterly restore drill — the written procedure.** Owner: the on-call engineer. Target:
 complete in under the 2 h RTO. Recorded in `docs/runbooks/dr-drill-log.md` with the real
@@ -1110,10 +1110,10 @@ D10. Destroy the drill instance, the scratch API and the copied bucket. Rotate t
 ```
 
 **A real restore** follows the same steps with three changes: D3 restores into a new
-instance *and* the deploy is frozen (`environment: production` protection is set to
+instance _and_ the deploy is frozen (`environment: production` protection is set to
 "no deployments"); after D6 passes, the API's `DIRECT_DATABASE_URL`/`DATABASE_URL` are
 repointed at the restored instance and both services are redeployed; and step D10 is
-replaced by retaining the *old* instance untouched for 14 days as forensic evidence.
+replaced by retaining the _old_ instance untouched for 14 days as forensic evidence.
 Any restore that rewinds past a published payroll run additionally requires the §11.2
 reconciliation: re-verify every `payslip.input_digest` and notify Accounts, because a
 rewind can un-publish a payslip an employee has already seen.
@@ -1121,18 +1121,18 @@ rewind can un-publish a payslip an employee has already seen.
 ### 4.6 Migration strategy
 
 **Prisma Migrate, forward-only.** There are no `down` migrations, and none may be written.
-A rollback is a *new* migration that moves forward to the previous shape. Reason: a `down`
+A rollback is a _new_ migration that moves forward to the previous shape. Reason: a `down`
 migration is untested by construction, and in this system it would be run exactly once, under
 pressure, against real payroll data.
 
 **Expand / contract, in three deploys.** Because two application versions run concurrently
-during every rolling deploy, *every* migration must leave the previous API version working.
+during every rolling deploy, _every_ migration must leave the previous API version working.
 
-| Phase | Deploy | Migration | API |
-|---|---|---|---|
-| **Expand** | N | additive only: add nullable column / new table / new index `CONCURRENTLY` / new enum value / backfill trigger | version N writes both old and new, reads old |
-| **Migrate** | N+1 | backfill in batches via a worker job, never in the migration transaction | version N+1 reads new, still writes both |
-| **Contract** | N+2 | drop the old column / constraint / enum value, after confirming zero readers | version N+2 uses new only |
+| Phase        | Deploy | Migration                                                                                                     | API                                          |
+| ------------ | ------ | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| **Expand**   | N      | additive only: add nullable column / new table / new index `CONCURRENTLY` / new enum value / backfill trigger | version N writes both old and new, reads old |
+| **Migrate**  | N+1    | backfill in batches via a worker job, never in the migration transaction                                      | version N+1 reads new, still writes both     |
+| **Contract** | N+2    | drop the old column / constraint / enum value, after confirming zero readers                                  | version N+2 uses new only                    |
 
 Rules the CI migration linter (`scripts/lint-migration.mjs`) enforces by failing the job:
 
@@ -1148,14 +1148,14 @@ Rules the CI migration linter (`scripts/lint-migration.mjs`) enforces by failing
 5. `ALTER TYPE … ADD VALUE` is alone in its file and never in the same transaction as a use.
 6. No `GRANT` to `ess_app` that the §4.4 revoke list forbids.
 7. Migration SQL contains no literal credential, no `COPY … FROM PROGRAM`, no `CREATE
-   EXTENSION` outside the allowlist.
+EXTENSION` outside the allowlist.
 
 **How migrations run in the pipeline** (the job between "image pushed" and "API deployed"):
 
 ```yaml
 - name: Apply migrations
   env:
-    DATABASE_URL:        ${{ secrets.MIGRATE_DATABASE_URL }}   # ess_migrator
+    DATABASE_URL: ${{ secrets.MIGRATE_DATABASE_URL }} # ess_migrator
     DIRECT_DATABASE_URL: ${{ secrets.MIGRATE_DATABASE_URL }}
   run: |
     set -euo pipefail
@@ -1180,12 +1180,12 @@ Rules the CI migration linter (`scripts/lint-migration.mjs`) enforces by failing
 
 **What happens when a migration fails.**
 
-| Situation | Behaviour | Action |
-|---|---|---|
-| Migration job fails before applying anything | deploy pipeline stops; **the running API is untouched** and keeps serving | fix forward, re-run |
+| Situation                                                                                                                                              | Behaviour                                                                                                           | Action                                                                                                                                                                                                                                       |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Migration job fails before applying anything                                                                                                           | deploy pipeline stops; **the running API is untouched** and keeps serving                                           | fix forward, re-run                                                                                                                                                                                                                          |
 | Migration partially applied (Postgres DDL is transactional, so this only happens for a multi-statement file with `CONCURRENTLY` or a mid-file failure) | Prisma records the migration as `failed` in `_prisma_migrations`; all later `migrate deploy` runs refuse to proceed | a human inspects, repairs by hand on `DIRECT_DATABASE_URL`, then runs `prisma migrate resolve --applied <name>` (repair completed) or `--rolled-back <name>` (repair reverted); the incident is written up before the next deploy is allowed |
-| Migration applied but the new API fails its health check | Render leaves the previous instances serving and marks the deploy failed | roll the API image back (§8.6). **This is safe precisely because of expand/contract**: the expand-phase schema is always compatible with the previous image. |
-| Migration applied, API healthy, data corruption discovered | out of scope for a deploy rollback: PITR restore (§4.5) to the recorded pre-migration LSN, then forward-fix | incident |
+| Migration applied but the new API fails its health check                                                                                               | Render leaves the previous instances serving and marks the deploy failed                                            | roll the API image back (§8.6). **This is safe precisely because of expand/contract**: the expand-phase schema is always compatible with the previous image.                                                                                 |
+| Migration applied, API healthy, data corruption discovered                                                                                             | out of scope for a deploy rollback: PITR restore (§4.5) to the recorded pre-migration LSN, then forward-fix         | incident                                                                                                                                                                                                                                     |
 
 Because expand/contract guarantees schema(N+1) works with app(N), **the API image can always
 be rolled back one version without touching the database.** That is the entire point of the
@@ -1203,11 +1203,11 @@ bill download is egress. It speaks the S3 API, so `@aws-sdk/client-s3` +
 `@aws-sdk/s3-request-presigner` work unchanged and the alternative (AWS S3 in `ap-south-1`)
 is a two-line configuration change.
 
-| Bucket | Contents | Versioning | Lifecycle |
-|---|---|---|---|
-| `widedrop-ess-prod` | all production artefacts | on | §5.4 |
-| `widedrop-ess-staging` | staging artefacts, synthetic only | off | delete after 30 days |
-| `widedrop-ess-backup` | the weekly encrypted `pg_dump` (§4.5), **separate cloud account** | on + object lock | retain 35 days, immutable |
+| Bucket                 | Contents                                                          | Versioning       | Lifecycle                 |
+| ---------------------- | ----------------------------------------------------------------- | ---------------- | ------------------------- |
+| `widedrop-ess-prod`    | all production artefacts                                          | on               | §5.4                      |
+| `widedrop-ess-staging` | staging artefacts, synthetic only                                 | off              | delete after 30 days      |
+| `widedrop-ess-backup`  | the weekly encrypted `pg_dump` (§4.5), **separate cloud account** | on + object lock | retain 35 days, immutable |
 
 Key layout is exactly `SECURITY.md` §5.3.11 — server-generated, no user input, no guessable
 component:
@@ -1225,17 +1225,17 @@ Nothing in the UI ever renders a storage key.
 
 ### 5.2 Access model — private, always, with no exceptions
 
-| Control | Setting |
-|---|---|
-| Public access | **disabled**. No `r2.dev` public development URL, no custom public domain, no public bucket policy. A bucket that is public cannot be made safe by obscure keys. |
-| Credentials | one R2 API token per environment, scoped to **one bucket**, with `Object Read & Write` only — never `Admin`, never account-wide. Production and staging tokens are different and neither can see the other's bucket. |
-| Who holds credentials | the API and the worker only. **Not CI, not the SPA, not a browser.** |
-| Browser → bucket writes | **do not exist.** Every upload is `multipart/form-data` to the API, which authorizes, validates the magic bytes, re-encodes images, strips EXIF, scans with ClamAV and only then `PutObject`s (`SECURITY.md` §5.3). There is no presigned-PUT path to leave unguarded. |
-| Browser → bucket reads | **only** a presigned `GET`, minted by the API after the entity-level authorization check in `API.md` §11.1, **120 seconds**, single object, `GET` only, no wildcard, with `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox` and `Cache-Control: private, no-store` baked into the signature |
-| Pre-signing preconditions | the API mints a URL only when `file_object.scan_status = 'CLEAN'`, `deleted_at IS NULL`, and the re-read `sha256` matches the persisted one; the `audit_event` is written **before** the URL is returned |
-| Encryption at rest | R2 encrypts every object server-side with AES-256 by default (SSE-managed). On AWS S3 the equivalent is `SSE-KMS` with a customer-managed key and `"s3:x-amz-server-side-encryption": "aws:kms"` enforced by bucket policy. `file_object.is_encrypted_at_rest` records this. |
-| Encryption in transit | HTTPS only; the endpoint is in `OUTBOUND_ALLOWLIST` (`SECURITY.md` §5.5) |
-| Second layer | payslip PDFs and bank proofs are additionally **application-encrypted before upload** with the `BANK`/`STATUTORY` DEK, so a storage compromise alone yields ciphertext. The 120-second signed URL therefore serves a decrypt-on-read stream from the API for those two contexts rather than a direct redirect — the implementer must keep `API.md` §11.2's `?mode=json` shape identical either way. |
+| Control                   | Setting                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Public access             | **disabled**. No `r2.dev` public development URL, no custom public domain, no public bucket policy. A bucket that is public cannot be made safe by obscure keys.                                                                                                                                                                                                                                    |
+| Credentials               | one R2 API token per environment, scoped to **one bucket**, with `Object Read & Write` only — never `Admin`, never account-wide. Production and staging tokens are different and neither can see the other's bucket.                                                                                                                                                                                |
+| Who holds credentials     | the API and the worker only. **Not CI, not the SPA, not a browser.**                                                                                                                                                                                                                                                                                                                                |
+| Browser → bucket writes   | **do not exist.** Every upload is `multipart/form-data` to the API, which authorizes, validates the magic bytes, re-encodes images, strips EXIF, scans with ClamAV and only then `PutObject`s (`SECURITY.md` §5.3). There is no presigned-PUT path to leave unguarded.                                                                                                                              |
+| Browser → bucket reads    | **only** a presigned `GET`, minted by the API after the entity-level authorization check in `API.md` §11.1, **120 seconds**, single object, `GET` only, no wildcard, with `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox` and `Cache-Control: private, no-store` baked into the signature                              |
+| Pre-signing preconditions | the API mints a URL only when `file_object.scan_status = 'CLEAN'`, `deleted_at IS NULL`, and the re-read `sha256` matches the persisted one; the `audit_event` is written **before** the URL is returned                                                                                                                                                                                            |
+| Encryption at rest        | R2 encrypts every object server-side with AES-256 by default (SSE-managed). On AWS S3 the equivalent is `SSE-KMS` with a customer-managed key and `"s3:x-amz-server-side-encryption": "aws:kms"` enforced by bucket policy. `file_object.is_encrypted_at_rest` records this.                                                                                                                        |
+| Encryption in transit     | HTTPS only; the endpoint is in `OUTBOUND_ALLOWLIST` (`SECURITY.md` §5.5)                                                                                                                                                                                                                                                                                                                            |
+| Second layer              | payslip PDFs and bank proofs are additionally **application-encrypted before upload** with the `BANK`/`STATUTORY` DEK, so a storage compromise alone yields ciphertext. The 120-second signed URL therefore serves a decrypt-on-read stream from the API for those two contexts rather than a direct redirect — the implementer must keep `API.md` §11.2's `?mode=json` shape identical either way. |
 
 ### 5.3 CORS
 
@@ -1269,13 +1269,13 @@ worker job deletes the object, sets `file_object.deleted_at` and writes an audit
 the fact of deletion is itself auditable. Bucket lifecycle rules exist only as a safety net
 for things the application is not the owner of:
 
-| Rule | Prefix | Action |
-|---|---|---|
-| Abandoned multipart uploads | `*` | abort after 1 day |
-| Quarantined files never promoted | `ess/prod/*/quarantine/` | delete after 30 days |
-| Non-current object versions | `*` | expire 90 days after becoming non-current (a window to undo an accidental overwrite, bounded so it is not an indefinite shadow copy of deleted PII) |
-| Staging bucket | `*` | delete after 30 days |
-| Backup bucket | `*` | object-lock retain 35 days, then delete |
+| Rule                             | Prefix                   | Action                                                                                                                                              |
+| -------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Abandoned multipart uploads      | `*`                      | abort after 1 day                                                                                                                                   |
+| Quarantined files never promoted | `ess/prod/*/quarantine/` | delete after 30 days                                                                                                                                |
+| Non-current object versions      | `*`                      | expire 90 days after becoming non-current (a window to undo an accidental overwrite, bounded so it is not an indefinite shadow copy of deleted PII) |
+| Staging bucket                   | `*`                      | delete after 30 days                                                                                                                                |
+| Backup bucket                    | `*`                      | object-lock retain 35 days, then delete                                                                                                             |
 
 There is **no** blanket "delete objects older than N years" rule: an 8-year statutory
 retention must not be defeated by a bucket policy, and an early deletion must not be
@@ -1296,7 +1296,7 @@ bounce/complaint/delivery, DKIM key management, and a cost of ~$0.10 per 1 000 m
 which at this volume is rounding error.
 
 **Idempotency.** SES has no `Idempotency-Key` header. The outbox therefore guarantees
-delivery-once at the *record* level and once-at-recipient in practice:
+delivery-once at the _record_ level and once-at-recipient in practice:
 `ux_email_outbox__org_idempotency` makes the enqueue idempotent; the `QUEUED → SENDING` claim
 plus the 10-minute sweep bounds duplicates to a crash window; and the worker sets the RFC 5322
 `Message-ID` header to `<{email_outbox.id}@widedroptech.com>`, so a duplicate send of the same
@@ -1315,15 +1315,15 @@ test mailbox so a staging bug cannot email real employees. The boot check refuse
 
 All of these are in the **`widedroptech.com`** zone. **Nothing here touches `widedrop.com`.**
 
-| Name | Type | Value | Purpose |
-|---|---|---|---|
-| `widedroptech.com` | `TXT` | `v=spf1 include:amazonses.com -all` | SPF. `-all` (hard fail), not `~all`. If other senders exist (Google Workspace, a CRM) they must be merged into this **single** record — two SPF TXT records is a permanent SPF failure. |
-| `<token1>._domainkey` … `<token3>._domainkey` | `CNAME` | `<token>.dkim.amazonses.com` | Easy DKIM, 2048-bit, three rotating selectors managed by SES |
-| `_dmarc` | `TXT` | `v=DMARC1; p=none; rua=mailto:dmarc@widedroptech.com; ruf=mailto:dmarc@widedroptech.com; fo=1; adkim=s; aspf=s; pct=100` | **Week 0–2**: monitor only, collect aggregate reports |
-| `_dmarc` | `TXT` | `v=DMARC1; p=quarantine; pct=25; rua=…; adkim=s; aspf=s` | **Week 2–4**, once reports show 100 % alignment |
-| `_dmarc` | `TXT` | `v=DMARC1; p=reject; rua=…; adkim=s; aspf=s` | **Week 4+**, the target state |
-| `mail` (MAIL FROM) | `MX` + `TXT` | `10 feedback-smtp.ap-south-1.amazonses.com` / `v=spf1 include:amazonses.com -all` | Custom MAIL FROM domain, so SPF aligns for DMARC rather than relying on DKIM alone |
-| `_bimi` | — | — | not configured; noted as optional once `p=reject` has held for 30 days |
+| Name                                          | Type         | Value                                                                                                                    | Purpose                                                                                                                                                                                 |
+| --------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `widedroptech.com`                            | `TXT`        | `v=spf1 include:amazonses.com -all`                                                                                      | SPF. `-all` (hard fail), not `~all`. If other senders exist (Google Workspace, a CRM) they must be merged into this **single** record — two SPF TXT records is a permanent SPF failure. |
+| `<token1>._domainkey` … `<token3>._domainkey` | `CNAME`      | `<token>.dkim.amazonses.com`                                                                                             | Easy DKIM, 2048-bit, three rotating selectors managed by SES                                                                                                                            |
+| `_dmarc`                                      | `TXT`        | `v=DMARC1; p=none; rua=mailto:dmarc@widedroptech.com; ruf=mailto:dmarc@widedroptech.com; fo=1; adkim=s; aspf=s; pct=100` | **Week 0–2**: monitor only, collect aggregate reports                                                                                                                                   |
+| `_dmarc`                                      | `TXT`        | `v=DMARC1; p=quarantine; pct=25; rua=…; adkim=s; aspf=s`                                                                 | **Week 2–4**, once reports show 100 % alignment                                                                                                                                         |
+| `_dmarc`                                      | `TXT`        | `v=DMARC1; p=reject; rua=…; adkim=s; aspf=s`                                                                             | **Week 4+**, the target state                                                                                                                                                           |
+| `mail` (MAIL FROM)                            | `MX` + `TXT` | `10 feedback-smtp.ap-south-1.amazonses.com` / `v=spf1 include:amazonses.com -all`                                        | Custom MAIL FROM domain, so SPF aligns for DMARC rather than relying on DKIM alone                                                                                                      |
+| `_bimi`                                       | —            | —                                                                                                                        | not configured; noted as optional once `p=reject` has held for 30 days                                                                                                                  |
 
 **Escalate `p=none → quarantine → reject` on the schedule above, not immediately** — going
 straight to `reject` before the aggregate reports confirm alignment is how a real
@@ -1406,13 +1406,13 @@ Its guard block, in order, before any body is trusted:
 6. The body is Zod-validated; the referenced `email_outbox` row is found by
    `provider_message_id` or by the `Message-ID` header.
 
-| Event | Effect |
-|---|---|
-| `Delivery` | `email_outbox.delivered_at = now()`; the Help-desk screen's "Help desk notified · <time>" is rendered from this, not from `sent_at`, when present |
-| `Bounce` (permanent) | `status='FAILED'`, `last_error='bounce:<subtype>'`; the address is added to `ess.email_suppression` with the reason and timestamp; the dead-letter effects in §6.3 fire; if the address is an employee's `work_email`, an HR notification asks them to correct it |
-| `Bounce` (transient) | back to `QUEUED` with the backoff ladder, capped at the same 5 attempts |
-| `Complaint` | `status='FAILED'`; address suppressed permanently; **P2 alert** — a spam complaint against a payroll notification is an incident, not noise |
-| `Reject` / `DeliveryDelay` | logged and metered; `DeliveryDelay` does not change state (SES retries internally) |
+| Event                      | Effect                                                                                                                                                                                                                                                            |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Delivery`                 | `email_outbox.delivered_at = now()`; the Help-desk screen's "Help desk notified · <time>" is rendered from this, not from `sent_at`, when present                                                                                                                 |
+| `Bounce` (permanent)       | `status='FAILED'`, `last_error='bounce:<subtype>'`; the address is added to `ess.email_suppression` with the reason and timestamp; the dead-letter effects in §6.3 fire; if the address is an employee's `work_email`, an HR notification asks them to correct it |
+| `Bounce` (transient)       | back to `QUEUED` with the backoff ladder, capped at the same 5 attempts                                                                                                                                                                                           |
+| `Complaint`                | `status='FAILED'`; address suppressed permanently; **P2 alert** — a spam complaint against a payroll notification is an incident, not noise                                                                                                                       |
+| `Reject` / `DeliveryDelay` | logged and metered; `DeliveryDelay` does not change state (SES retries internally)                                                                                                                                                                                |
 
 The suppression list is consulted **before** every send. A suppressed address short-circuits
 to `status='SUPPRESSED'`, which the UI renders as "Email notification disabled" — never as
@@ -1449,21 +1449,21 @@ Enforced structurally, not by convention:
 
 ### 7.1 The three environments
 
-| | **development** | **staging** | **production** |
-|---|---|---|---|
-| Runs where | developer laptop | Render, `singapore`, separate project | Render, `singapore` |
-| SPA | `http://localhost:5173` (Vite proxies `/api` so cookies behave same-origin) | `ess-staging.widedrop.com` + deploy previews | `ess.widedrop.com` |
-| API | `http://localhost:4000` | `api-ess-staging.widedrop.com` | `api-ess.widedrop.com` |
-| Database | `infra/docker-compose.yml`, port 5433 | own Render Postgres, `starter` plan | own Render Postgres, `standard` |
-| Data | `db:seed:reference` + `db:seed:demo` (synthetic) | reference + synthetic only — **never a production copy, never a production restore** | real |
-| Storage | filesystem driver (`STORAGE_DRIVER=filesystem`) | `widedrop-ess-staging` bucket | `widedrop-ess-prod` bucket |
-| Mail | Mailpit on `localhost:1025`, or the `file` driver writing `.eml` | SES with `MAIL_TO_OVERRIDE` to one test mailbox | SES, real recipients |
-| ClamAV | optional; unavailable ⇒ uploads land `QUARANTINED`, which is the documented behaviour | required | required |
-| MFA | required for privileged roles, TOTP against a local authenticator | same as production | same |
-| Cookies | `SameSite=Lax`, `Secure=false` (localhost is a secure context exception) | `SameSite=None; Secure` (deploy previews are cross-site) | `SameSite=Strict; Secure`, `__Host-` prefix |
-| `LOG_LEVEL` | `debug` | `info` | `info` — `debug` is **refused** at boot |
-| Deploys | n/a | auto on merge to `main`, no approval | manual approval in the `production` GitHub environment |
-| Who can reach the DB | the developer | two engineers | nobody interactively; break-glass only (§11.6) |
+|                      | **development**                                                                       | **staging**                                                                          | **production**                                         |
+| -------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------ |
+| Runs where           | developer laptop                                                                      | Render, `singapore`, separate project                                                | Render, `singapore`                                    |
+| SPA                  | `http://localhost:5173` (Vite proxies `/api` so cookies behave same-origin)           | `ess-staging.widedrop.com` + deploy previews                                         | `ess.widedrop.com`                                     |
+| API                  | `http://localhost:4000`                                                               | `api-ess-staging.widedrop.com`                                                       | `api-ess.widedrop.com`                                 |
+| Database             | `infra/docker-compose.yml`, port 5433                                                 | own Render Postgres, `starter` plan                                                  | own Render Postgres, `standard`                        |
+| Data                 | `db:seed:reference` + `db:seed:demo` (synthetic)                                      | reference + synthetic only — **never a production copy, never a production restore** | real                                                   |
+| Storage              | filesystem driver (`STORAGE_DRIVER=filesystem`)                                       | `widedrop-ess-staging` bucket                                                        | `widedrop-ess-prod` bucket                             |
+| Mail                 | Mailpit on `localhost:1025`, or the `file` driver writing `.eml`                      | SES with `MAIL_TO_OVERRIDE` to one test mailbox                                      | SES, real recipients                                   |
+| ClamAV               | optional; unavailable ⇒ uploads land `QUARANTINED`, which is the documented behaviour | required                                                                             | required                                               |
+| MFA                  | required for privileged roles, TOTP against a local authenticator                     | same as production                                                                   | same                                                   |
+| Cookies              | `SameSite=Lax`, `Secure=false` (localhost is a secure context exception)              | `SameSite=None; Secure` (deploy previews are cross-site)                             | `SameSite=Strict; Secure`, `__Host-` prefix            |
+| `LOG_LEVEL`          | `debug`                                                                               | `info`                                                                               | `info` — `debug` is **refused** at boot                |
+| Deploys              | n/a                                                                                   | auto on merge to `main`, no approval                                                 | manual approval in the `production` GitHub environment |
+| Who can reach the DB | the developer                                                                         | two engineers                                                                        | nobody interactively; break-glass only (§11.6)         |
 
 **Staging never holds production data.** Not a masked copy, not a subset. A restore drill
 (§4.5) uses a throwaway instance that is destroyed, never staging. This is what keeps the
@@ -1476,137 +1476,137 @@ Legend — **S** = secret (never logged, never in git, never in a `VITE_` name);
 
 #### Core runtime
 
-| Variable | Purpose | Example / placeholder | dev | stg | prod | S |
-|---|---|---|---|---|---|---|
-| `NODE_ENV` | mode switch; gates every production-only check | `production` | R | R | R | |
-| `SERVICE_ROLE` | `api` \| `worker`; selects the entrypoint branch | `api` | R | R | R | |
-| `PORT` | HTTP listen port | `4000` | R | R | R | |
-| `HOST` | bind address | `0.0.0.0` | R | R | R | |
-| `LOG_LEVEL` | pino level; `debug`/`trace` refused when `NODE_ENV=production` | `info` | R | R | R | |
-| `APP_VERSION` | git SHA, surfaced by `GET /version` and on every log line | `a1b2c3d` | | R | R | |
-| `BUILT_AT` | image build timestamp, surfaced by `GET /version` | `2026-09-29T10:00:00Z` | | R | R | |
-| `API_PUBLIC_URL` | absolute origin of the API; builds absolute links | `https://api-ess.widedrop.com` | R | R | R | |
-| `WEB_PUBLIC_URL` | absolute origin of the SPA; deep links in outbound mail | `https://ess.widedrop.com` | R | R | R | |
-| `ALLOWED_ORIGINS` | exact CORS allowlist, comma-separated; rejects `*` | `https://ess.widedrop.com` | R | R | R | |
-| `TRUSTED_PROXY_CIDRS` | exact proxy CIDRs for Fastify `trustProxy`; **never `true`** | `10.0.0.0/8` | | R | R | |
+| Variable              | Purpose                                                        | Example / placeholder          | dev | stg | prod | S   |
+| --------------------- | -------------------------------------------------------------- | ------------------------------ | --- | --- | ---- | --- |
+| `NODE_ENV`            | mode switch; gates every production-only check                 | `production`                   | R   | R   | R    |     |
+| `SERVICE_ROLE`        | `api` \| `worker`; selects the entrypoint branch               | `api`                          | R   | R   | R    |     |
+| `PORT`                | HTTP listen port                                               | `4000`                         | R   | R   | R    |     |
+| `HOST`                | bind address                                                   | `0.0.0.0`                      | R   | R   | R    |     |
+| `LOG_LEVEL`           | pino level; `debug`/`trace` refused when `NODE_ENV=production` | `info`                         | R   | R   | R    |     |
+| `APP_VERSION`         | git SHA, surfaced by `GET /version` and on every log line      | `a1b2c3d`                      |     | R   | R    |     |
+| `BUILT_AT`            | image build timestamp, surfaced by `GET /version`              | `2026-09-29T10:00:00Z`         |     | R   | R    |     |
+| `API_PUBLIC_URL`      | absolute origin of the API; builds absolute links              | `https://api-ess.widedrop.com` | R   | R   | R    |     |
+| `WEB_PUBLIC_URL`      | absolute origin of the SPA; deep links in outbound mail        | `https://ess.widedrop.com`     | R   | R   | R    |     |
+| `ALLOWED_ORIGINS`     | exact CORS allowlist, comma-separated; rejects `*`             | `https://ess.widedrop.com`     | R   | R   | R    |     |
+| `TRUSTED_PROXY_CIDRS` | exact proxy CIDRs for Fastify `trustProxy`; **never `true`**   | `10.0.0.0/8`                   |     | R   | R    |     |
 
 #### Database
 
-| Variable | Purpose | Example / placeholder | dev | stg | prod | S |
-|---|---|---|---|---|---|---|
-| `DATABASE_URL` | API → PgBouncer (transaction pooling); worker → direct | `postgresql://ess_app:…@ess-pgbouncer:6432/widedrop_ess?pgbouncer=true&connection_limit=8` | R | R | R | **S** |
-| `DIRECT_DATABASE_URL` | session-scoped connection: worker advisory locks, migrations, tools | `postgresql://ess_app:…@host:5432/widedrop_ess?sslmode=verify-full` | R | R | R | **S** |
-| `MIGRATE_DATABASE_URL` | `ess_migrator` credentials; exists **only** in the CI migration job | `postgresql://ess_migrator:…@host:5432/…` | — | R | R | **S** |
-| `DB_POOL_MAX` | Prisma `connection_limit` override if not in the URL | `8` | | | | |
-| `DB_STATEMENT_TIMEOUT_MS` | client-side guard mirroring the server-side `statement_timeout` | `15000` | | R | R | |
+| Variable                  | Purpose                                                             | Example / placeholder                                                                      | dev | stg | prod | S     |
+| ------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | --- | --- | ---- | ----- |
+| `DATABASE_URL`            | API → PgBouncer (transaction pooling); worker → direct              | `postgresql://ess_app:…@ess-pgbouncer:6432/widedrop_ess?pgbouncer=true&connection_limit=8` | R   | R   | R    | **S** |
+| `DIRECT_DATABASE_URL`     | session-scoped connection: worker advisory locks, migrations, tools | `postgresql://ess_app:…@host:5432/widedrop_ess?sslmode=verify-full`                        | R   | R   | R    | **S** |
+| `MIGRATE_DATABASE_URL`    | `ess_migrator` credentials; exists **only** in the CI migration job | `postgresql://ess_migrator:…@host:5432/…`                                                  | —   | R   | R    | **S** |
+| `DB_POOL_MAX`             | Prisma `connection_limit` override if not in the URL                | `8`                                                                                        |     |     |      |       |
+| `DB_STATEMENT_TIMEOUT_MS` | client-side guard mirroring the server-side `statement_timeout`     | `15000`                                                                                    |     | R   | R    |       |
 
 #### Authentication and sessions
 
-| Variable | Purpose | Example / placeholder | dev | stg | prod | S |
-|---|---|---|---|---|---|---|
-| `JWT_ISSUER` | `iss` claim; must be the API origin | `https://api-ess.widedrop.com` | R | R | R | |
-| `JWT_AUDIENCE` | `aud` claim; must be the SPA origin | `https://ess.widedrop.com` | R | R | R | |
-| `JWT_ACTIVE_KID` | which key signs **new** tokens; `^wd-ess-\d{6}-[0-9a-f]{4}$` | `wd-ess-202609-a1b2` | R | R | R | |
-| `JWT_SIGNING_KEY_<kid>` | Ed25519 private key, PKCS#8 PEM, base64; **one per live kid** | `REPLACE_ME__openssl genpkey -algorithm ed25519` | R | R | R | **S** |
-| `JWT_PUBLIC_KEY_<kid>` | matching SPKI PEM; published at the JWKS endpoint | `REPLACE_ME` | R | R | R | |
-| `ACCESS_TOKEN_TTL_SECONDS` | 60–900 | `600` | R | R | R | |
-| `REFRESH_TOKEN_TTL_DAYS` | idle TTL of a refresh token, 1–30 | `7` | R | R | R | |
-| `REFRESH_FAMILY_MAX_DAYS` | absolute lifetime of a refresh family, 1–60 | `30` | R | R | R | |
-| `PASSWORD_PEPPER_V1` | HMAC-SHA512 pepper pre-hashed into Argon2id; base64 ≥ 32 B | `REPLACE_ME__openssl rand -base64 48` | R | R | R | **S** |
-| `PASSWORD_PEPPER_ACTIVE_VERSION` | which pepper new hashes use during rotation | `1` | R | R | R | |
-| `COOKIE_SAMESITE` | `strict` prod, `none` staging, `lax` dev | `strict` | R | R | R | |
-| `COOKIE_SECURE` | must be `true` outside dev | `true` | R | R | R | |
-| `COOKIE_DOMAIN` | **must be empty everywhere**; `__Host-` forbids `Domain` (§1.4) | *(empty)* | | | | |
-| `MFA_ISSUER_LABEL` | the label shown in the authenticator app | `Widedrop ESS` | R | R | R | |
-| `HIBP_ENABLED` | breach-check new passwords via k-anonymity | `true` | R | R | R | |
-| `HIBP_TIMEOUT_MS` | fail-open budget; degradation is metered and alerted | `2000` | | R | R | |
+| Variable                         | Purpose                                                         | Example / placeholder                            | dev | stg | prod | S     |
+| -------------------------------- | --------------------------------------------------------------- | ------------------------------------------------ | --- | --- | ---- | ----- |
+| `JWT_ISSUER`                     | `iss` claim; must be the API origin                             | `https://api-ess.widedrop.com`                   | R   | R   | R    |       |
+| `JWT_AUDIENCE`                   | `aud` claim; must be the SPA origin                             | `https://ess.widedrop.com`                       | R   | R   | R    |       |
+| `JWT_ACTIVE_KID`                 | which key signs **new** tokens; `^wd-ess-\d{6}-[0-9a-f]{4}$`    | `wd-ess-202609-a1b2`                             | R   | R   | R    |       |
+| `JWT_SIGNING_KEY_<kid>`          | Ed25519 private key, PKCS#8 PEM, base64; **one per live kid**   | `REPLACE_ME__openssl genpkey -algorithm ed25519` | R   | R   | R    | **S** |
+| `JWT_PUBLIC_KEY_<kid>`           | matching SPKI PEM; published at the JWKS endpoint               | `REPLACE_ME`                                     | R   | R   | R    |       |
+| `ACCESS_TOKEN_TTL_SECONDS`       | 60–900                                                          | `600`                                            | R   | R   | R    |       |
+| `REFRESH_TOKEN_TTL_DAYS`         | idle TTL of a refresh token, 1–30                               | `7`                                              | R   | R   | R    |       |
+| `REFRESH_FAMILY_MAX_DAYS`        | absolute lifetime of a refresh family, 1–60                     | `30`                                             | R   | R   | R    |       |
+| `PASSWORD_PEPPER_V1`             | HMAC-SHA512 pepper pre-hashed into Argon2id; base64 ≥ 32 B      | `REPLACE_ME__openssl rand -base64 48`            | R   | R   | R    | **S** |
+| `PASSWORD_PEPPER_ACTIVE_VERSION` | which pepper new hashes use during rotation                     | `1`                                              | R   | R   | R    |       |
+| `COOKIE_SAMESITE`                | `strict` prod, `none` staging, `lax` dev                        | `strict`                                         | R   | R   | R    |       |
+| `COOKIE_SECURE`                  | must be `true` outside dev                                      | `true`                                           | R   | R   | R    |       |
+| `COOKIE_DOMAIN`                  | **must be empty everywhere**; `__Host-` forbids `Domain` (§1.4) | _(empty)_                                        |     |     |      |       |
+| `MFA_ISSUER_LABEL`               | the label shown in the authenticator app                        | `Widedrop ESS`                                   | R   | R   | R    |       |
+| `HIBP_ENABLED`                   | breach-check new passwords via k-anonymity                      | `true`                                           | R   | R   | R    |       |
+| `HIBP_TIMEOUT_MS`                | fail-open budget; degradation is metered and alerted            | `2000`                                           |     | R   | R    |       |
 
 #### Encryption and integrity keys
 
-| Variable | Purpose | Example / placeholder | dev | stg | prod | S |
-|---|---|---|---|---|---|---|
-| `MASTER_KEK_V1` (+ `_V2`…) | wraps every DEK; base64, **exactly 32 bytes** | `REPLACE_ME__openssl rand -base64 32` | R | R | R | **S** |
-| `MASTER_KEK_ACTIVE_VERSION` | which KEK wraps new DEKs; both stay resident during rotation | `1` | R | R | R | |
-| `BLIND_INDEX_KEY_V1` | HMAC key for `*_bidx` exact-match lookup; base64 ≥ 32 B | `REPLACE_ME__openssl rand -base64 48` | R | R | R | **S** |
-| `AUDIT_CHAIN_KEY_V1` | HMAC key sealing the audit hash chain; base64 ≥ 32 B | `REPLACE_ME` | R | R | R | **S** |
-| `AUDIT_CHAIN_ACTIVE_VERSION` | new rows only; history is never re-keyed | `1` | R | R | R | |
-| `CSRF_KEY` | HMAC binding the double-submit token to the session | `REPLACE_ME` | R | R | R | **S** |
-| `LOG_HASH_KEY` | HMAC for `ip_hash` / `user_agent_hash` / rate-limit bucket keys | `REPLACE_ME` | R | R | R | **S** |
-| `RECOVERY_CODE_KEY` | HMAC over MFA recovery codes | `REPLACE_ME` | R | R | R | **S** |
-| `CURSOR_HMAC_KEY` | signs pagination cursors, bound to `sub` | `REPLACE_ME` | R | R | R | **S** |
+| Variable                     | Purpose                                                         | Example / placeholder                 | dev | stg | prod | S     |
+| ---------------------------- | --------------------------------------------------------------- | ------------------------------------- | --- | --- | ---- | ----- |
+| `MASTER_KEK_V1` (+ `_V2`…)   | wraps every DEK; base64, **exactly 32 bytes**                   | `REPLACE_ME__openssl rand -base64 32` | R   | R   | R    | **S** |
+| `MASTER_KEK_ACTIVE_VERSION`  | which KEK wraps new DEKs; both stay resident during rotation    | `1`                                   | R   | R   | R    |       |
+| `BLIND_INDEX_KEY_V1`         | HMAC key for `*_bidx` exact-match lookup; base64 ≥ 32 B         | `REPLACE_ME__openssl rand -base64 48` | R   | R   | R    | **S** |
+| `AUDIT_CHAIN_KEY_V1`         | HMAC key sealing the audit hash chain; base64 ≥ 32 B            | `REPLACE_ME`                          | R   | R   | R    | **S** |
+| `AUDIT_CHAIN_ACTIVE_VERSION` | new rows only; history is never re-keyed                        | `1`                                   | R   | R   | R    |       |
+| `CSRF_KEY`                   | HMAC binding the double-submit token to the session             | `REPLACE_ME`                          | R   | R   | R    | **S** |
+| `LOG_HASH_KEY`               | HMAC for `ip_hash` / `user_agent_hash` / rate-limit bucket keys | `REPLACE_ME`                          | R   | R   | R    | **S** |
+| `RECOVERY_CODE_KEY`          | HMAC over MFA recovery codes                                    | `REPLACE_ME`                          | R   | R   | R    | **S** |
+| `CURSOR_HMAC_KEY`            | signs pagination cursors, bound to `sub`                        | `REPLACE_ME`                          | R   | R   | R    | **S** |
 
 #### Object storage
 
-| Variable | Purpose | Example / placeholder | dev | stg | prod | S |
-|---|---|---|---|---|---|---|
-| `STORAGE_DRIVER` | `filesystem` \| `s3`; `filesystem` **refused** in production | `s3` | R | R | R | |
-| `STORAGE_ENDPOINT` | S3-compatible endpoint; must be `https://` | `https://<acct>.r2.cloudflarestorage.com` | — | R | R | |
-| `STORAGE_REGION` | `auto` for R2, `ap-south-1` for S3 | `auto` | — | R | R | |
-| `STORAGE_BUCKET` | one bucket per environment | `widedrop-ess-prod` | — | R | R | |
-| `STORAGE_ACCESS_KEY_ID` | bucket-scoped token id | `REPLACE_ME` | — | R | R | **S** |
-| `STORAGE_SECRET_ACCESS_KEY` | bucket-scoped token secret | `REPLACE_ME` | — | R | R | **S** |
-| `STORAGE_FORCE_PATH_STYLE` | `true` for R2 | `true` | — | R | R | |
-| `STORAGE_LOCAL_PATH` | dev only, filesystem driver root | `./.storage` | R | — | — | |
-| `SIGNED_URL_TTL_SECONDS` | 30–3600; **120** per `API.md` §11.2 | `120` | R | R | R | |
+| Variable                    | Purpose                                                      | Example / placeholder                     | dev | stg | prod | S     |
+| --------------------------- | ------------------------------------------------------------ | ----------------------------------------- | --- | --- | ---- | ----- |
+| `STORAGE_DRIVER`            | `filesystem` \| `s3`; `filesystem` **refused** in production | `s3`                                      | R   | R   | R    |       |
+| `STORAGE_ENDPOINT`          | S3-compatible endpoint; must be `https://`                   | `https://<acct>.r2.cloudflarestorage.com` | —   | R   | R    |       |
+| `STORAGE_REGION`            | `auto` for R2, `ap-south-1` for S3                           | `auto`                                    | —   | R   | R    |       |
+| `STORAGE_BUCKET`            | one bucket per environment                                   | `widedrop-ess-prod`                       | —   | R   | R    |       |
+| `STORAGE_ACCESS_KEY_ID`     | bucket-scoped token id                                       | `REPLACE_ME`                              | —   | R   | R    | **S** |
+| `STORAGE_SECRET_ACCESS_KEY` | bucket-scoped token secret                                   | `REPLACE_ME`                              | —   | R   | R    | **S** |
+| `STORAGE_FORCE_PATH_STYLE`  | `true` for R2                                                | `true`                                    | —   | R   | R    |       |
+| `STORAGE_LOCAL_PATH`        | dev only, filesystem driver root                             | `./.storage`                              | R   | —   | —    |       |
+| `SIGNED_URL_TTL_SECONDS`    | 30–3600; **120** per `API.md` §11.2                          | `120`                                     | R   | R   | R    |       |
 
 #### Email
 
-| Variable | Purpose | Example / placeholder | dev | stg | prod | S |
-|---|---|---|---|---|---|---|
-| `MAIL_PROVIDER` | `ses` \| `resend` \| `postmark` \| `smtp` \| `file` \| `noop`; only the first three allowed in production | `ses` | R | R | R | |
-| `MAIL_REGION` | provider region | `ap-south-1` | — | R | R | |
-| `MAIL_ACCESS_KEY_ID` | SES IAM key id, `ses:SendEmail` only | `REPLACE_ME` | — | R | R | **S** |
-| `MAIL_SECRET_ACCESS_KEY` | SES IAM secret | `REPLACE_ME` | — | R | R | **S** |
-| `MAIL_FROM` | envelope + header sender; must end `@widedroptech.com` (R-2) | `no-reply@widedroptech.com` | R | R | R | |
-| `MAIL_CONFIGURATION_SET` | SES configuration set carrying the SNS event destination | `ess-prod` | — | R | R | |
-| `SES_SNS_TOPIC_ARN` | the only ARN the webhook accepts | `arn:aws:sns:ap-south-1:…:ess-prod-events` | — | R | R | |
-| `HELPDESK_EMAIL_FALLBACK` | used only if `organization.helpdesk_email` is unset | `helpdesk@widedroptech.com` | R | R | R | |
-| `MAIL_TO_OVERRIDE` | staging-only recipient clamp; **refused in production** | `ess-staging@widedroptech.com` | — | R | — | |
-| `MAIL_FILE_PATH` | dev `.eml` output directory | `./.mail` | R | — | — | |
-| `SMTP_HOST` / `SMTP_PORT` | dev Mailpit only | `localhost` / `1025` | | — | — | |
+| Variable                  | Purpose                                                                                                   | Example / placeholder                      | dev | stg | prod | S     |
+| ------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------ | --- | --- | ---- | ----- |
+| `MAIL_PROVIDER`           | `ses` \| `resend` \| `postmark` \| `smtp` \| `file` \| `noop`; only the first three allowed in production | `ses`                                      | R   | R   | R    |       |
+| `MAIL_REGION`             | provider region                                                                                           | `ap-south-1`                               | —   | R   | R    |       |
+| `MAIL_ACCESS_KEY_ID`      | SES IAM key id, `ses:SendEmail` only                                                                      | `REPLACE_ME`                               | —   | R   | R    | **S** |
+| `MAIL_SECRET_ACCESS_KEY`  | SES IAM secret                                                                                            | `REPLACE_ME`                               | —   | R   | R    | **S** |
+| `MAIL_FROM`               | envelope + header sender; must end `@widedroptech.com` (R-2)                                              | `no-reply@widedroptech.com`                | R   | R   | R    |       |
+| `MAIL_CONFIGURATION_SET`  | SES configuration set carrying the SNS event destination                                                  | `ess-prod`                                 | —   | R   | R    |       |
+| `SES_SNS_TOPIC_ARN`       | the only ARN the webhook accepts                                                                          | `arn:aws:sns:ap-south-1:…:ess-prod-events` | —   | R   | R    |       |
+| `HELPDESK_EMAIL_FALLBACK` | used only if `organization.helpdesk_email` is unset                                                       | `helpdesk@widedroptech.com`                | R   | R   | R    |       |
+| `MAIL_TO_OVERRIDE`        | staging-only recipient clamp; **refused in production**                                                   | `ess-staging@widedroptech.com`             | —   | R   | —    |       |
+| `MAIL_FILE_PATH`          | dev `.eml` output directory                                                                               | `./.mail`                                  | R   | —   | —    |       |
+| `SMTP_HOST` / `SMTP_PORT` | dev Mailpit only                                                                                          | `localhost` / `1025`                       |     | —   | —    |       |
 
 #### Workers, limits, scanning, outbound
 
-| Variable | Purpose | Example / placeholder | dev | stg | prod | S |
-|---|---|---|---|---|---|---|
-| `WORKER_POLL_INTERVAL_MS` | job loop tick, 1 000–300 000 | `15000` | R | R | R | |
-| `WORKER_CONCURRENCY` | parallel jobs per worker instance | `4` | R | R | R | |
-| `RATE_LIMIT_STORE` | `postgres` (default, per `SECURITY.md` §9.3) \| `redis` | `postgres` | R | R | R | |
-| `REDIS_URL` | only when `RATE_LIMIT_STORE=redis`; TLS required in production | `rediss://…` | | | | **S** |
-| `CLAMAV_HOST` / `CLAMAV_PORT` | `clamd` INSTREAM target; required in staging and production | `ess-clamav` / `3310` | | R | R | |
-| `OUTBOUND_ALLOWLIST` | the only hostnames the process may egress to (`SECURITY.md` §5.5) | `api.pwnedpasswords.com,email.ap-south-1.amazonaws.com,<acct>.r2.cloudflarestorage.com,sns.ap-south-1.amazonaws.com` | R | R | R | |
+| Variable                      | Purpose                                                           | Example / placeholder                                                                                                | dev | stg | prod | S     |
+| ----------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | --- | --- | ---- | ----- |
+| `WORKER_POLL_INTERVAL_MS`     | job loop tick, 1 000–300 000                                      | `15000`                                                                                                              | R   | R   | R    |       |
+| `WORKER_CONCURRENCY`          | parallel jobs per worker instance                                 | `4`                                                                                                                  | R   | R   | R    |       |
+| `RATE_LIMIT_STORE`            | `postgres` (default, per `SECURITY.md` §9.3) \| `redis`           | `postgres`                                                                                                           | R   | R   | R    |       |
+| `REDIS_URL`                   | only when `RATE_LIMIT_STORE=redis`; TLS required in production    | `rediss://…`                                                                                                         |     |     |      | **S** |
+| `CLAMAV_HOST` / `CLAMAV_PORT` | `clamd` INSTREAM target; required in staging and production       | `ess-clamav` / `3310`                                                                                                |     | R   | R    |       |
+| `OUTBOUND_ALLOWLIST`          | the only hostnames the process may egress to (`SECURITY.md` §5.5) | `api.pwnedpasswords.com,email.ap-south-1.amazonaws.com,<acct>.r2.cloudflarestorage.com,sns.ap-south-1.amazonaws.com` | R   | R   | R    |       |
 
 #### Observability
 
-| Variable | Purpose | Example / placeholder | dev | stg | prod | S |
-|---|---|---|---|---|---|---|
-| `SENTRY_DSN` | error tracking; omit to disable | `https://…@…ingest.sentry.io/…` | — | R | R | **S** |
-| `SENTRY_TRACES_SAMPLE_RATE` | `0.0`–`1.0` | `0.05` | — | R | R | |
-| `METRICS_ENABLED` | expose `/metrics` | `true` | | R | R | |
-| `METRICS_BEARER_TOKEN` | bearer required by `/metrics`; the route is also bound to the private interface | `REPLACE_ME` | — | R | R | **S** |
-| `LOG_SINK_TOKEN` | token for the log shipper, when the platform does not forward stdout | `REPLACE_ME` | — | R | R | **S** |
+| Variable                    | Purpose                                                                         | Example / placeholder           | dev | stg | prod | S     |
+| --------------------------- | ------------------------------------------------------------------------------- | ------------------------------- | --- | --- | ---- | ----- |
+| `SENTRY_DSN`                | error tracking; omit to disable                                                 | `https://…@…ingest.sentry.io/…` | —   | R   | R    | **S** |
+| `SENTRY_TRACES_SAMPLE_RATE` | `0.0`–`1.0`                                                                     | `0.05`                          | —   | R   | R    |       |
+| `METRICS_ENABLED`           | expose `/metrics`                                                               | `true`                          |     | R   | R    |       |
+| `METRICS_BEARER_TOKEN`      | bearer required by `/metrics`; the route is also bound to the private interface | `REPLACE_ME`                    | —   | R   | R    | **S** |
+| `LOG_SINK_TOKEN`            | token for the log shipper, when the platform does not forward stdout            | `REPLACE_ME`                    | —   | R   | R    | **S** |
 
 #### Web build-time (all public, all non-secret, all baked into the bundle)
 
-| Variable | Purpose | Example |
-|---|---|---|
-| `VITE_API_BASE_URL` | the API origin; also the CSP `connect-src` value (§2.3) | `https://api-ess.widedrop.com` |
-| `VITE_APP_ENV` | `production` \| `staging` \| `preview` \| `development` | `production` |
-| `VITE_BUILD_SHA` | shown in the About panel; correlates a client report to a build | `a1b2c3d` |
-| `VITE_SENTRY_DSN` | browser DSN — a public value by design, and rate-limited at Sentry | `https://…` |
+| Variable            | Purpose                                                            | Example                        |
+| ------------------- | ------------------------------------------------------------------ | ------------------------------ |
+| `VITE_API_BASE_URL` | the API origin; also the CSP `connect-src` value (§2.3)            | `https://api-ess.widedrop.com` |
+| `VITE_APP_ENV`      | `production` \| `staging` \| `preview` \| `development`            | `production`                   |
+| `VITE_BUILD_SHA`    | shown in the About panel; correlates a client report to a build    | `a1b2c3d`                      |
+| `VITE_SENTRY_DSN`   | browser DSN — a public value by design, and rate-limited at Sentry | `https://…`                    |
 
 A CI check fails the build if any `VITE_*` name matches `/KEY|SECRET|TOKEN|PASSWORD|PEPPER/i`.
 A bundled secret is a published secret.
 
 ### 7.3 Where secrets live, per environment
 
-| Environment | Store | Injection | Who can read |
-|---|---|---|---|
-| development | `apps/api/.env`, git-ignored, generated by `npm run secrets:dev` (random values, never shared) | dotenv at boot | the developer |
-| staging | Render environment group `ess-staging` | platform → process env | 2 engineers |
-| production | Render environment group `ess-shared` (values typed once, `sync: false` in the blueprint so they are **never** in git) | platform → process env | 2 named owners, MFA-enforced, access logged |
-| GitHub Actions | repository/environment secrets for `NETLIFY_AUTH_TOKEN`, `NETLIFY_SITE_ID`, `RENDER_API_KEY`, `RENDER_*_SERVICE_ID`; **OIDC** for GHCR and (where supported) the container host | per-job, masked | workflow only |
-| Break-glass copies | `MASTER_KEK_V*`, the `age` backup identity and the `ess_owner` password are **additionally** held offline under split knowledge by two officers (`SECURITY.md` §7.3, break-glass) | sealed envelope / hardware token | two officers, both required |
+| Environment        | Store                                                                                                                                                                             | Injection                        | Who can read                                |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ------------------------------------------- |
+| development        | `apps/api/.env`, git-ignored, generated by `npm run secrets:dev` (random values, never shared)                                                                                    | dotenv at boot                   | the developer                               |
+| staging            | Render environment group `ess-staging`                                                                                                                                            | platform → process env           | 2 engineers                                 |
+| production         | Render environment group `ess-shared` (values typed once, `sync: false` in the blueprint so they are **never** in git)                                                            | platform → process env           | 2 named owners, MFA-enforced, access logged |
+| GitHub Actions     | repository/environment secrets for `NETLIFY_AUTH_TOKEN`, `NETLIFY_SITE_ID`, `RENDER_API_KEY`, `RENDER_*_SERVICE_ID`; **OIDC** for GHCR and (where supported) the container host   | per-job, masked                  | workflow only                               |
+| Break-glass copies | `MASTER_KEK_V*`, the `age` backup identity and the `ess_owner` password are **additionally** held offline under split knowledge by two officers (`SECURITY.md` §7.3, break-glass) | sealed envelope / hardware token | two officers, both required                 |
 
 Inventory metadata — owner, purpose, last rotated, next due, **never a value** — lives in
 `docs/secret-inventory.md` and is reviewed quarterly.
@@ -1619,25 +1619,25 @@ failure prints the offending **variable names and the rule** — never a value �
 In addition to the per-variable types in §7.2, these cross-cutting refusals apply when
 `NODE_ENV=production`:
 
-| # | Refusal |
-|---|---|
-| 1 | Any secret shorter than its minimum decoded length, or a KEK that is not exactly 32 bytes |
-| 2 | Any secret whose value appears in the committed `.env.example` |
-| 3 | Any secret matching a known placeholder (`changeme`, `dev-secret`, `REPLACE_ME`, all-zero, 32 identical bytes) |
-| 4 | Any secret with Shannon entropy below 3.5 bits/byte over its decoded form |
-| 5 | **The same value reused across two different variables** |
-| 6 | `DATABASE_URL`/`DIRECT_DATABASE_URL` without `sslmode=verify-full` (the private PgBouncer hop is the single documented exception, recognised by the `ess-pgbouncer` host) |
-| 7 | `ALLOWED_ORIGINS` containing `*`, `http://`, or an entry that is not an exact absolute origin |
-| 8 | `COOKIE_SECURE=false`, `COOKIE_SAMESITE=none`, or `COOKIE_DOMAIN` set to anything non-empty |
-| 9 | `LOG_LEVEL` of `debug` or `trace` |
-| 10 | `STORAGE_DRIVER=filesystem` (a container filesystem is ephemeral — payslips would vanish on redeploy) |
-| 11 | `MAIL_PROVIDER` of `file`/`noop`/`smtp`, or `MAIL_TO_OVERRIDE` set |
-| 12 | `MAIL_FROM` not ending `@widedroptech.com` |
-| 13 | `CLAMAV_HOST` unset |
-| 14 | `TRUSTED_PROXY_CIDRS` unset, or set to `true`/`0.0.0.0/0` |
-| 15 | `JWT_ACTIVE_KID` with no matching `JWT_SIGNING_KEY_<kid>`, or a key that fails to parse as Ed25519 PKCS#8 |
-| 16 | `MASTER_KEK_ACTIVE_VERSION` with no matching `MASTER_KEK_V<n>` |
-| 17 | A `SERVICE_ROLE` other than `api` or `worker` |
+| #   | Refusal                                                                                                                                                                   |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Any secret shorter than its minimum decoded length, or a KEK that is not exactly 32 bytes                                                                                 |
+| 2   | Any secret whose value appears in the committed `.env.example`                                                                                                            |
+| 3   | Any secret matching a known placeholder (`changeme`, `dev-secret`, `REPLACE_ME`, all-zero, 32 identical bytes)                                                            |
+| 4   | Any secret with Shannon entropy below 3.5 bits/byte over its decoded form                                                                                                 |
+| 5   | **The same value reused across two different variables**                                                                                                                  |
+| 6   | `DATABASE_URL`/`DIRECT_DATABASE_URL` without `sslmode=verify-full` (the private PgBouncer hop is the single documented exception, recognised by the `ess-pgbouncer` host) |
+| 7   | `ALLOWED_ORIGINS` containing `*`, `http://`, or an entry that is not an exact absolute origin                                                                             |
+| 8   | `COOKIE_SECURE=false`, `COOKIE_SAMESITE=none`, or `COOKIE_DOMAIN` set to anything non-empty                                                                               |
+| 9   | `LOG_LEVEL` of `debug` or `trace`                                                                                                                                         |
+| 10  | `STORAGE_DRIVER=filesystem` (a container filesystem is ephemeral — payslips would vanish on redeploy)                                                                     |
+| 11  | `MAIL_PROVIDER` of `file`/`noop`/`smtp`, or `MAIL_TO_OVERRIDE` set                                                                                                        |
+| 12  | `MAIL_FROM` not ending `@widedroptech.com`                                                                                                                                |
+| 13  | `CLAMAV_HOST` unset                                                                                                                                                       |
+| 14  | `TRUSTED_PROXY_CIDRS` unset, or set to `true`/`0.0.0.0/0`                                                                                                                 |
+| 15  | `JWT_ACTIVE_KID` with no matching `JWT_SIGNING_KEY_<kid>`, or a key that fails to parse as Ed25519 PKCS#8                                                                 |
+| 16  | `MASTER_KEK_ACTIVE_VERSION` with no matching `MASTER_KEK_V<n>`                                                                                                            |
+| 17  | A `SERVICE_ROLE` other than `api` or `worker`                                                                                                                             |
 
 Two further assertions run after the database connection opens, and also exit non-zero:
 the **privilege assertion** of §4.4, and the **schema-guard check** — `ess_ops.schema_guard`'s
@@ -1700,7 +1700,7 @@ env:
   NODE_VERSION: '22'
 
 jobs:
-  quality:                        # typecheck · lint · format · env-parity · migration lint
+  quality: # typecheck · lint · format · env-parity · migration lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@<sha>
@@ -1713,11 +1713,11 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run format:check
-      - run: node scripts/check-env-parity.mjs      # env.ts ⇄ .env.example (§7.5)
-      - run: node scripts/lint-migration.mjs        # expand/contract rules (§4.6)
-      - run: node scripts/check-vite-env-names.mjs  # no secret-shaped VITE_* (§7.2)
+      - run: node scripts/check-env-parity.mjs # env.ts ⇄ .env.example (§7.5)
+      - run: node scripts/lint-migration.mjs # expand/contract rules (§4.6)
+      - run: node scripts/check-vite-env-names.mjs # no secret-shaped VITE_* (§7.2)
 
-  test:                           # unit + integration against a real Postgres 16
+  test: # unit + integration against a real Postgres 16
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -1732,7 +1732,7 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 20
     env:
       NODE_ENV: test
-      DATABASE_URL:        postgresql://ess:ess_ci@127.0.0.1:5432/widedrop_ess_test?schema=public
+      DATABASE_URL: postgresql://ess:ess_ci@127.0.0.1:5432/widedrop_ess_test?schema=public
       DIRECT_DATABASE_URL: postgresql://ess:ess_ci@127.0.0.1:5432/widedrop_ess_test?schema=public
     steps:
       - uses: actions/checkout@<sha>
@@ -1742,10 +1742,10 @@ jobs:
       - run: npm rebuild @node-rs/argon2 sharp
       - run: npm run build -w @widedrop/shared
       - run: npm run db:generate -w @widedrop/api
-      - run: npm run db:migrate -w @widedrop/api       # prisma migrate deploy
+      - run: npm run db:migrate -w @widedrop/api # prisma migrate deploy
       - run: npm run db:seed:reference -w @widedrop/api
-      - run: npm test                                   # vitest: api (Fastify inject) + web
-      - run: npm run build                              # api tsc + web vite build
+      - run: npm test # vitest: api (Fastify inject) + web
+      - run: npm run build # api tsc + web vite build
       - run: node apps/web/scripts/assert-no-inline-styles.mjs
       - uses: actions/upload-artifact@<sha>
         with: { name: web-dist, path: apps/web/dist, retention-days: 7 }
@@ -1759,10 +1759,10 @@ jobs:
       - uses: actions/setup-node@<sha>
         with: { node-version: '22', cache: npm }
       - run: npm ci --ignore-scripts
-      - run: npm audit --audit-level=high                         # dependency audit
-      - uses: gitleaks/gitleaks-action@<sha>                      # secret scan, full history
+      - run: npm audit --audit-level=high # dependency audit
+      - uses: gitleaks/gitleaks-action@<sha> # secret scan, full history
         env: { GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }
-      - uses: semgrep/semgrep-action@<sha>                        # SAST
+      - uses: semgrep/semgrep-action@<sha> # SAST
         with:
           config: >-
             p/typescript
@@ -1773,10 +1773,10 @@ jobs:
                                           # no template literal in a log message,
                                           # no route without a permission declaration
       - run: docker build -f apps/api/Dockerfile -t ess-api:scan .
-      - uses: aquasecurity/trivy-action@<sha>                     # image CVE scan
+      - uses: aquasecurity/trivy-action@<sha> # image CVE scan
         with: { image-ref: 'ess-api:scan', severity: 'HIGH,CRITICAL', exit-code: '1' }
 
-  codeql:                         # existing .github/workflows/codeql.yml
+  codeql: # existing .github/workflows/codeql.yml
     uses: ./.github/workflows/codeql.yml
 ```
 
@@ -1798,11 +1798,11 @@ on:
 
 permissions:
   contents: read
-  packages: write        # GHCR push
-  id-token: write        # OIDC
+  packages: write # GHCR push
+  id-token: write # OIDC
 
 concurrency:
-  group: deploy-production      # one deploy at a time, never cancelled mid-flight
+  group: deploy-production # one deploy at a time, never cancelled mid-flight
   cancel-in-progress: false
 
 jobs:
@@ -1825,19 +1825,19 @@ jobs:
           context: .
           file: apps/api/Dockerfile
           push: true
-          provenance: true          # SLSA attestation
-          sbom: true                # SBOM attached to the image
+          provenance: true # SLSA attestation
+          sbom: true # SBOM attached to the image
           build-args: |
             GIT_SHA=${{ github.sha }}
             BUILT_AT=${{ github.event.head_commit.timestamp }}
           tags: ghcr.io/widedrop/ess-api:${{ github.sha }}
           cache-from: type=gha
-          cache-to:   type=gha,mode=max
+          cache-to: type=gha,mode=max
 
   # ---------------------------------------------------------------- 2 ----
   deploy-staging:
     needs: build-image
-    environment: staging          # no approval required
+    environment: staging # no approval required
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@<sha>
@@ -1853,7 +1853,7 @@ jobs:
   # ---------------------------------------------------------------- 3 ----
   migrate-production:
     needs: [build-image, deploy-staging]
-    environment: production       # ⛔ REQUIRED REVIEWER — the pipeline pauses here
+    environment: production # ⛔ REQUIRED REVIEWER — the pipeline pauses here
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@<sha>
@@ -1890,7 +1890,7 @@ jobs:
 
   # ---------------------------------------------------------------- 5 ----
   deploy-web:
-    needs: deploy-api             # SPA last: it may call endpoints the new API adds
+    needs: deploy-api # SPA last: it may call endpoints the new API adds
     environment: production
     runs-on: ubuntu-latest
     steps:
@@ -1902,10 +1902,10 @@ jobs:
       - run: npm run build -w @widedrop/web
         env:
           VITE_API_BASE_URL: https://api-ess.widedrop.com
-          VITE_APP_ENV:      production
-          VITE_BUILD_SHA:    ${{ github.sha }}
-          VITE_SENTRY_DSN:   ${{ vars.VITE_SENTRY_DSN }}
-      - run: node apps/web/scripts/gen-csp-headers.mjs        # writes dist/_headers (§2.3)
+          VITE_APP_ENV: production
+          VITE_BUILD_SHA: ${{ github.sha }}
+          VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
+      - run: node apps/web/scripts/gen-csp-headers.mjs # writes dist/_headers (§2.3)
       - run: node apps/web/scripts/assert-no-inline-styles.mjs
       - name: Deploy to Netlify (no Netlify build minutes consumed)
         run: |
@@ -1914,7 +1914,7 @@ jobs:
             --message="ess-web ${GITHUB_SHA::7}" --json > deploy.json
           node scripts/record-netlify-deploy.mjs deploy.json >> "$GITHUB_STEP_SUMMARY"
         env:
-          NETLIFY_SITE_ID:    ${{ secrets.NETLIFY_SITE_ID }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
       - name: Verify headers reached the edge
         run: node scripts/assert-headers.mjs https://ess.widedrop.com
@@ -1927,15 +1927,15 @@ not exist.
 
 ### 8.3 Environment protection and required checks
 
-| Control | Setting |
-|---|---|
-| Branch protection on `main` | linear history; no force-push; no deletion; **required reviewers 1** (2 for anything under `apps/api/src/auth/**`, `apps/api/src/crypto/**`, `prisma/migrations/**`, `infra/**`, `.github/workflows/**` via `CODEOWNERS`) |
-| Required status checks | `quality`, `test`, `security`, `codeql`, `payroll-visibility`, `outbox` — all must pass, and the branch must be up to date |
-| GitHub environment `staging` | no reviewer; secrets scoped to staging |
-| GitHub environment `production` | **required reviewer** (a named ops owner, who may not be the PR author), a 10-minute wait timer, deployment branch restricted to `main` only, secrets scoped to production |
-| Secrets in CI | no long-lived cloud credentials: OIDC to GHCR; `RENDER_API_KEY` scoped to deploy-only; Netlify token scoped to the ESS site. CI never receives a database URL, a KEK, a JWT key or a mail credential. |
-| Actions hygiene | all actions pinned to a full SHA; `permissions:` least-privilege per job; `npm ci --ignore-scripts`; Dependabot on `npm`, `docker` and `github-actions` |
-| Audit | every production deploy writes an `audit_event` of kind `ADMIN.DEPLOYED` (actor = the approving GitHub user, from the workflow's OIDC claims) via the post-deploy step, so a deploy is in the same trail as a payroll publication |
+| Control                         | Setting                                                                                                                                                                                                                           |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Branch protection on `main`     | linear history; no force-push; no deletion; **required reviewers 1** (2 for anything under `apps/api/src/auth/**`, `apps/api/src/crypto/**`, `prisma/migrations/**`, `infra/**`, `.github/workflows/**` via `CODEOWNERS`)         |
+| Required status checks          | `quality`, `test`, `security`, `codeql`, `payroll-visibility`, `outbox` — all must pass, and the branch must be up to date                                                                                                        |
+| GitHub environment `staging`    | no reviewer; secrets scoped to staging                                                                                                                                                                                            |
+| GitHub environment `production` | **required reviewer** (a named ops owner, who may not be the PR author), a 10-minute wait timer, deployment branch restricted to `main` only, secrets scoped to production                                                        |
+| Secrets in CI                   | no long-lived cloud credentials: OIDC to GHCR; `RENDER_API_KEY` scoped to deploy-only; Netlify token scoped to the ESS site. CI never receives a database URL, a KEK, a JWT key or a mail credential.                             |
+| Actions hygiene                 | all actions pinned to a full SHA; `permissions:` least-privilege per job; `npm ci --ignore-scripts`; Dependabot on `npm`, `docker` and `github-actions`                                                                           |
+| Audit                           | every production deploy writes an `audit_event` of kind `ADMIN.DEPLOYED` (actor = the approving GitHub user, from the workflow's OIDC claims) via the post-deploy step, so a deploy is in the same trail as a payroll publication |
 
 ### 8.4 Rollback — the SPA
 
@@ -1981,12 +1981,12 @@ broken production.
 
 There is no `down` migration (§4.6), and there does not need to be:
 
-| Scenario | Response |
-|---|---|
-| Migration applied, new API bad | **Roll the API image back only.** The expand-phase schema is compatible with the previous image by construction. Do not touch the database. |
-| Migration itself is wrong but harmless (a bad index, a wrong default) | Fix forward: a new migration in the next deploy. |
+| Scenario                                                                           | Response                                                                                                                                                                                                                                                                                                                                       |
+| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Migration applied, new API bad                                                     | **Roll the API image back only.** The expand-phase schema is compatible with the previous image by construction. Do not touch the database.                                                                                                                                                                                                    |
+| Migration itself is wrong but harmless (a bad index, a wrong default)              | Fix forward: a new migration in the next deploy.                                                                                                                                                                                                                                                                                               |
 | Migration is wrong and destructive (contract phase dropped something still needed) | This is why the contract phase is a separate deploy two releases later, and why the linter forbids destructive DDL alongside its replacement. If it still happens: PITR restore (§4.5) to the pre-migration recovery point recorded in the job summary, then forward-fix. Declare an incident; a restore rewinds every write since that point. |
-| Migration left `failed` in `_prisma_migrations` | Repair by hand on `DIRECT_DATABASE_URL`, then `prisma migrate resolve --applied <name>` or `--rolled-back <name>`. **Never** `migrate reset`. Write the incident up before the next deploy is approved. |
+| Migration left `failed` in `_prisma_migrations`                                    | Repair by hand on `DIRECT_DATABASE_URL`, then `prisma migrate resolve --applied <name>` or `--rolled-back <name>`. **Never** `migrate reset`. Write the incident up before the next deploy is approved.                                                                                                                                        |
 
 ### 8.7 Dependency and supply-chain posture in the pipeline
 
@@ -2025,7 +2025,7 @@ employee's payslip not appear?" a single query rather than an investigation.
 2. **Allowlist — the real control.** Request and response **bodies are never logged at all**;
    the HTTP logger emits only the fixed field list above. An ESLint rule forbids template
    literals and string concatenation in a logger's message argument, which is what stops
-   `` log.info(`saving ${email}`) `` — the single most common PII leak into logs.
+   ``log.info(`saving ${email}`)`` — the single most common PII leak into logs.
 
 Never logged under any level: passwords or derivatives; access/refresh/reset/invite/CSRF
 tokens; TOTP secrets, codes or recovery codes; any DEK, KEK, pepper or HMAC key; decrypted
@@ -2039,44 +2039,44 @@ Retention: **30 days hot, 180 days cold, then deleted.** Logs are an operational
 
 ### 9.2 Health, readiness and version endpoints
 
-| Endpoint | Exposure | Semantics |
-|---|---|---|
-| `GET /api/v1/healthz` | public, `ip` 60/min, `Cache-Control: no-store` | **Liveness only, touching no dependency** — `200 {"status":"ok"}`. Wired to the container `HEALTHCHECK` and to Render's `healthCheckPath`. A Postgres blip must not restart-loop the API. |
-| `GET /api/v1/readyz` | **private interface only, not internet-routable** | `200 {"status":"ready","checks":{"db":"ok","objectStorage":"ok","kms":"ok","rateLimitStore":"ok","mailProvider":"degraded"}}` or `503`. `db`, `kms` and `rateLimitStore` failing ⇒ not ready. **`mailProvider: "degraded"` does not fail readiness** — the outbox absorbs it (§6.5). Flips to `503` immediately on `SIGTERM` so the platform drains the instance before it stops accepting. |
-| `GET /api/v1/version` | requires `auth:login` | `{"apiVersion","gitSha","builtAt","schemaSha256","payrollEngineVersion"}`. No dependency versions, no hostnames, no env names — a version endpoint is reconnaissance surface. |
-| `GET /api/v1/metrics` | private interface **and** `METRICS_BEARER_TOKEN` | Prometheus exposition (§9.3) |
+| Endpoint              | Exposure                                          | Semantics                                                                                                                                                                                                                                                                                                                                                                                   |
+| --------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/v1/healthz` | public, `ip` 60/min, `Cache-Control: no-store`    | **Liveness only, touching no dependency** — `200 {"status":"ok"}`. Wired to the container `HEALTHCHECK` and to Render's `healthCheckPath`. A Postgres blip must not restart-loop the API.                                                                                                                                                                                                   |
+| `GET /api/v1/readyz`  | **private interface only, not internet-routable** | `200 {"status":"ready","checks":{"db":"ok","objectStorage":"ok","kms":"ok","rateLimitStore":"ok","mailProvider":"degraded"}}` or `503`. `db`, `kms` and `rateLimitStore` failing ⇒ not ready. **`mailProvider: "degraded"` does not fail readiness** — the outbox absorbs it (§6.5). Flips to `503` immediately on `SIGTERM` so the platform drains the instance before it stops accepting. |
+| `GET /api/v1/version` | requires `auth:login`                             | `{"apiVersion","gitSha","builtAt","schemaSha256","payrollEngineVersion"}`. No dependency versions, no hostnames, no env names — a version endpoint is reconnaissance surface.                                                                                                                                                                                                               |
+| `GET /api/v1/metrics` | private interface **and** `METRICS_BEARER_TOKEN`  | Prometheus exposition (§9.3)                                                                                                                                                                                                                                                                                                                                                                |
 
 ### 9.3 Metrics worth collecting
 
 Prometheus counters and histograms (`SECURITY.md` §11.3), scraped by the platform's metrics
 agent or Grafana Cloud's agent:
 
-| Group | Metrics |
-|---|---|
-| **HTTP** | `http_requests_total{route,status}`, `http_request_duration_seconds{route}` (p50/p95/p99), `http_response_size_bytes` |
-| **Auth** | `auth_login_total{outcome}`, `auth_lockout_total`, `mfa_failure_total`, `refresh_reuse_total`, `authz_denied_total{permission,role}` |
-| **Abuse** | `rate_limit_tripped_total{route}`, `csrf_rejected_total{reason}`, `upload_rejected_total{reason}` |
-| **Privacy** | `pii_unmask_total{kind,actor_role}`, `export_total{kind}` |
-| **Payroll** | `payroll_state_transitions_total{from,to}`, **`payroll_cycle_duration_seconds{phase}`** (a histogram per phase: input upload → attendance submitted → manager approved → validated → calculated → published), `payroll_validation_failures_total{check}`, `payslips_generated_total`, `payslips_published_total` |
-| **Queues** | `outbox_pending`, `outbox_failed_total`, `outbox_send_duration_seconds`, `background_job_duration_seconds{job_name}`, `background_job_failures_total{job_name}`, `background_job_lease_expired_total` |
-| **Integrity** | `audit_chain_verification_failures_total`, `audit_write_latency_seconds`, `decrypt_failures_total`, `file_integrity_mismatch_total`, `orphan_ciphertext_total`, `shadow_object_total` |
-| **Dependencies** | `db_pool_in_use`, `db_query_duration_seconds`, `pgbouncer_cl_waiting`, `hibp_degraded_total`, `clamav_unavailable_total`, `ses_send_failures_total{reason}` |
+| Group            | Metrics                                                                                                                                                                                                                                                                                                          |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **HTTP**         | `http_requests_total{route,status}`, `http_request_duration_seconds{route}` (p50/p95/p99), `http_response_size_bytes`                                                                                                                                                                                            |
+| **Auth**         | `auth_login_total{outcome}`, `auth_lockout_total`, `mfa_failure_total`, `refresh_reuse_total`, `authz_denied_total{permission,role}`                                                                                                                                                                             |
+| **Abuse**        | `rate_limit_tripped_total{route}`, `csrf_rejected_total{reason}`, `upload_rejected_total{reason}`                                                                                                                                                                                                                |
+| **Privacy**      | `pii_unmask_total{kind,actor_role}`, `export_total{kind}`                                                                                                                                                                                                                                                        |
+| **Payroll**      | `payroll_state_transitions_total{from,to}`, **`payroll_cycle_duration_seconds{phase}`** (a histogram per phase: input upload → attendance submitted → manager approved → validated → calculated → published), `payroll_validation_failures_total{check}`, `payslips_generated_total`, `payslips_published_total` |
+| **Queues**       | `outbox_pending`, `outbox_failed_total`, `outbox_send_duration_seconds`, `background_job_duration_seconds{job_name}`, `background_job_failures_total{job_name}`, `background_job_lease_expired_total`                                                                                                            |
+| **Integrity**    | `audit_chain_verification_failures_total`, `audit_write_latency_seconds`, `decrypt_failures_total`, `file_integrity_mismatch_total`, `orphan_ciphertext_total`, `shadow_object_total`                                                                                                                            |
+| **Dependencies** | `db_pool_in_use`, `db_query_duration_seconds`, `pgbouncer_cl_waiting`, `hibp_degraded_total`, `clamav_unavailable_total`, `ses_send_failures_total{reason}`                                                                                                                                                      |
 
 `payroll_cycle_duration_seconds` earns its place: it is the single number that tells HR
 whether the mandated six-step workflow is being completed on time, and its per-phase split
-shows *which* actor is the bottleneck — all derived from persisted `payroll_cycle` timestamps,
+shows _which_ actor is the bottleneck — all derived from persisted `payroll_cycle` timestamps,
 never from an estimate.
 
 ### 9.4 Uptime checks
 
-| Check | Target | Interval | From | Fails after |
-|---|---|---|---|---|
-| API liveness | `GET https://api-ess.widedrop.com/api/v1/healthz` expecting `200` and `"ok"` | 60 s | 3 regions incl. Mumbai/Singapore | 2 consecutive |
-| SPA availability | `GET https://ess.widedrop.com/` expecting `200` and the `Strict-Transport-Security` header | 60 s | 3 regions | 2 consecutive |
-| Synthetic login | scripted `login → MFA → GET /me/dashboard` with a dedicated, least-privileged probe account | 15 min | 1 region | 2 consecutive |
-| TLS expiry | both hosts | daily | — | < 21 days |
-| Worker heartbeat | the worker writes `ess_ops.background_job('worker-heartbeat')` every minute; a dead-man check alerts if the newest row is older than 5 minutes | 60 s | — | 5 min |
-| DNS drift | `ess`, `api-ess`, and the apex/`www`/`MX` of `widedrop.com` compared against `infra/dns/*.before.txt` | daily | — | any diff |
+| Check            | Target                                                                                                                                         | Interval | From                             | Fails after   |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | -------- | -------------------------------- | ------------- |
+| API liveness     | `GET https://api-ess.widedrop.com/api/v1/healthz` expecting `200` and `"ok"`                                                                   | 60 s     | 3 regions incl. Mumbai/Singapore | 2 consecutive |
+| SPA availability | `GET https://ess.widedrop.com/` expecting `200` and the `Strict-Transport-Security` header                                                     | 60 s     | 3 regions                        | 2 consecutive |
+| Synthetic login  | scripted `login → MFA → GET /me/dashboard` with a dedicated, least-privileged probe account                                                    | 15 min   | 1 region                         | 2 consecutive |
+| TLS expiry       | both hosts                                                                                                                                     | daily    | —                                | < 21 days     |
+| Worker heartbeat | the worker writes `ess_ops.background_job('worker-heartbeat')` every minute; a dead-man check alerts if the newest row is older than 5 minutes | 60 s     | —                                | 5 min         |
+| DNS drift        | `ess`, `api-ess`, and the apex/`www`/`MX` of `widedrop.com` compared against `infra/dns/*.before.txt`                                          | daily    | —                                | any diff      |
 
 The worker heartbeat matters more than it looks: a worker that dies silently stops the
 outbox, the SLA escalations, the leave accruals and the payroll calculation, and **nothing in
@@ -2088,32 +2088,32 @@ later. The dead-man check converts that into a page.
 Defined in `infra/monitoring/alerts.yaml`, reviewed quarterly, every P1 with a runbook in
 `docs/runbooks/`.
 
-| Alert | Condition | Sev | Route |
-|---|---|---|---|
-| API down | uptime check failing 2× | **P1** | page |
-| Error rate | `5xx` > 2 % of requests over 5 min, or any `500` on `/auth/*` | **P1** | page |
-| Latency | p95 > 2 s for 10 min | **P2** | alert channel |
-| Refresh-token reuse | any `AUTH.REFRESH_REUSE_DETECTED` | **P1** | page + email the affected user |
-| Audit chain broken | any verification failure | **P1** | page |
-| Decrypt failure / AAD mismatch | `decrypt_failures_total` > 0 | **P1** | page |
-| Mass PII unmask | `pii_unmask_total` > 30 per actor per hour | **P1** | page + auto-suspend that session pending review |
-| Malware in upload | any `SECURITY.UPLOAD_MALWARE_DETECTED` | **P1** | page |
-| Database | connections > 80 % of `max_connections`, disk > 80 %, replication/PITR lag > 15 min, or `pgbouncer_cl_waiting` > 0 for 5 min | **P1** | page |
-| Worker dead | heartbeat older than 5 min | **P1** | page |
-| Credential-stuffing wave | > 100 `AUTH.LOGIN_FAILED` org-wide in 5 min, or ≥ 25 distinct accounts from one `ip_hash` in 10 min | **P2** | alert channel |
-| Failed logins, single account | > 10 in 10 min for one account | **P2** | alert + notify the user |
-| Payroll published outside the change window | `PAYROLL.RUN_PUBLISHED` outside the configured window, or by a first-time publisher | **P2** | alert + HR notification |
-| Payroll cycle stalled | a cycle in one phase > 72 h, or `payroll_cycle_duration_seconds` beyond the 90th percentile of the last 6 cycles | **P2** | alert to HR + Accounts |
-| Bulk approvals | > 100 approve/reject by one actor in an hour | **P2** | alert (rubber-stamping or a compromised manager) |
-| Role granted | any `ADMIN.ROLE_GRANTED` for `HR`/`ACCOUNTS` | **P2** | alert channel, **always**, even when legitimate |
-| Export volume | any export > 1 000 rows, or > 3 exports per actor per day | **P2** | alert |
-| Spam complaint | any SES `Complaint` | **P2** | alert |
-| Outbox backlog | `outbox_pending` > 50 for 15 min, or any `TICKET.EMAIL_FAILED` | **P3** | ticket |
-| Job failures | `background_job_failures_total{job_name}` > 3 in an hour | **P3** | ticket |
-| Breach-check degraded | `hibp_degraded_total` rising for 15 min | **P3** | ticket |
-| ClamAV unavailable | `clamav_unavailable_total` > 0 for 30 min (uploads are piling up `QUARANTINED`) | **P3** | ticket |
-| CSP violations | a new `blocked-uri` appearing after a release | **P3** | ticket |
-| Cert expiry / DNS drift | < 21 days / any diff | **P3** | ticket |
+| Alert                                       | Condition                                                                                                                    | Sev    | Route                                            |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------ |
+| API down                                    | uptime check failing 2×                                                                                                      | **P1** | page                                             |
+| Error rate                                  | `5xx` > 2 % of requests over 5 min, or any `500` on `/auth/*`                                                                | **P1** | page                                             |
+| Latency                                     | p95 > 2 s for 10 min                                                                                                         | **P2** | alert channel                                    |
+| Refresh-token reuse                         | any `AUTH.REFRESH_REUSE_DETECTED`                                                                                            | **P1** | page + email the affected user                   |
+| Audit chain broken                          | any verification failure                                                                                                     | **P1** | page                                             |
+| Decrypt failure / AAD mismatch              | `decrypt_failures_total` > 0                                                                                                 | **P1** | page                                             |
+| Mass PII unmask                             | `pii_unmask_total` > 30 per actor per hour                                                                                   | **P1** | page + auto-suspend that session pending review  |
+| Malware in upload                           | any `SECURITY.UPLOAD_MALWARE_DETECTED`                                                                                       | **P1** | page                                             |
+| Database                                    | connections > 80 % of `max_connections`, disk > 80 %, replication/PITR lag > 15 min, or `pgbouncer_cl_waiting` > 0 for 5 min | **P1** | page                                             |
+| Worker dead                                 | heartbeat older than 5 min                                                                                                   | **P1** | page                                             |
+| Credential-stuffing wave                    | > 100 `AUTH.LOGIN_FAILED` org-wide in 5 min, or ≥ 25 distinct accounts from one `ip_hash` in 10 min                          | **P2** | alert channel                                    |
+| Failed logins, single account               | > 10 in 10 min for one account                                                                                               | **P2** | alert + notify the user                          |
+| Payroll published outside the change window | `PAYROLL.RUN_PUBLISHED` outside the configured window, or by a first-time publisher                                          | **P2** | alert + HR notification                          |
+| Payroll cycle stalled                       | a cycle in one phase > 72 h, or `payroll_cycle_duration_seconds` beyond the 90th percentile of the last 6 cycles             | **P2** | alert to HR + Accounts                           |
+| Bulk approvals                              | > 100 approve/reject by one actor in an hour                                                                                 | **P2** | alert (rubber-stamping or a compromised manager) |
+| Role granted                                | any `ADMIN.ROLE_GRANTED` for `HR`/`ACCOUNTS`                                                                                 | **P2** | alert channel, **always**, even when legitimate  |
+| Export volume                               | any export > 1 000 rows, or > 3 exports per actor per day                                                                    | **P2** | alert                                            |
+| Spam complaint                              | any SES `Complaint`                                                                                                          | **P2** | alert                                            |
+| Outbox backlog                              | `outbox_pending` > 50 for 15 min, or any `TICKET.EMAIL_FAILED`                                                               | **P3** | ticket                                           |
+| Job failures                                | `background_job_failures_total{job_name}` > 3 in an hour                                                                     | **P3** | ticket                                           |
+| Breach-check degraded                       | `hibp_degraded_total` rising for 15 min                                                                                      | **P3** | ticket                                           |
+| ClamAV unavailable                          | `clamav_unavailable_total` > 0 for 30 min (uploads are piling up `QUARANTINED`)                                              | **P3** | ticket                                           |
+| CSP violations                              | a new `blocked-uri` appearing after a release                                                                                | **P3** | ticket                                           |
+| Cert expiry / DNS drift                     | < 21 days / any diff                                                                                                         | **P3** | ticket                                           |
 
 **Alert hygiene:** every alert names the runbook that resolves it; an alert that fires more
 than twice without action is either fixed or deleted; P1 pages a human, P2 posts to the
@@ -2125,16 +2125,16 @@ acts on trains people to ignore the ones that matter.
 Sentry (or GlitchTip, self-hosted, if a processor must be avoided), with PII scrubbing
 configured **before** the first event is sent:
 
-| Setting | Value |
-|---|---|
-| `sendDefaultPii` | **`false`** |
-| `beforeSend` | drops the event entirely if its message or any frame's local variables match the denylist of §9.1; strips `request.data`, `request.cookies`, `request.headers.authorization`, and every query string |
-| User context | `{ id: <uuid>, roles: [...] }` only — **never** an email, a name, or an employee code |
-| Breadcrumbs | `console` and `fetch` breadcrumbs carry the **templated** route and the status only; the URL's path parameters are masked (`/payslips/[id]`) |
-| `tracesSampleRate` | `0.05` server, `0.02` browser |
-| Release | the git SHA, so an error maps to a deploy; source maps uploaded **and then deleted from the published bundle** (`sourcemap: 'hidden'` in the Vite production config — they are needed by Sentry, not by the public) |
-| Data residency | Sentry's `de`/`us` region choice recorded in `docs/PROCESSORS.md`; only scrubbed, identifier-level data leaves the primary region |
-| Retention | 90 days |
+| Setting            | Value                                                                                                                                                                                                               |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sendDefaultPii`   | **`false`**                                                                                                                                                                                                         |
+| `beforeSend`       | drops the event entirely if its message or any frame's local variables match the denylist of §9.1; strips `request.data`, `request.cookies`, `request.headers.authorization`, and every query string                |
+| User context       | `{ id: <uuid>, roles: [...] }` only — **never** an email, a name, or an employee code                                                                                                                               |
+| Breadcrumbs        | `console` and `fetch` breadcrumbs carry the **templated** route and the status only; the URL's path parameters are masked (`/payslips/[id]`)                                                                        |
+| `tracesSampleRate` | `0.05` server, `0.02` browser                                                                                                                                                                                       |
+| Release            | the git SHA, so an error maps to a deploy; source maps uploaded **and then deleted from the published bundle** (`sourcemap: 'hidden'` in the Vite production config — they are needed by Sentry, not by the public) |
+| Data residency     | Sentry's `de`/`us` region choice recorded in `docs/PROCESSORS.md`; only scrubbed, identifier-level data leaves the primary region                                                                                   |
+| Retention          | 90 days                                                                                                                                                                                                             |
 
 The browser DSN is public by design (it is in the bundle) and is rate-limited and
 origin-restricted at Sentry. The server DSN is a secret (§7.2).
@@ -2149,59 +2149,59 @@ re-verify before committing — the ratios matter more than the absolutes.**
 
 ### 10.1 Recommended production configuration
 
-| Line | Service | Spec | $/mo |
-|---|---|---|---|
-| ESS SPA | Netlify (free tier, own team) | static hosting, built in CI so 0 build minutes | **0** |
-| API | Render Web Service × 2 | Standard, 1 vCPU / 2 GB, `singapore` | 50 |
-| Worker | Render Background Worker × 1 | Starter, 0.5 vCPU / 512 MB | 7 |
-| PgBouncer | Render Private Service × 1 | Starter | 7 |
-| ClamAV | Render Private Service × 1 | Standard, 2 GB (signature DB) | 25 |
-| Database | Render PostgreSQL | Standard, 4 GB RAM / 100 GB SSD, daily backup + PITR | 95 |
-| Staging (API + worker + DB) | Render | Starter × 2 + Postgres Basic | 33 |
-| Object storage | Cloudflare R2 | 20 GB stored, ~200k Class-A/B ops, **zero egress** | 2 |
-| Off-provider backup bucket | R2 in a second account | 20 GB, object-lock | 1 |
-| Email | Amazon SES `ap-south-1` | ~8 000 messages | 1 |
-| Error tracking | Sentry Team | 50k events, 90-day retention | 26 |
-| Logs | Better Stack / Grafana Cloud | ~10 GB ingest, 30 d hot | 25 |
-| Uptime + status page | Better Stack Uptime | 6 monitors, 60 s, 3 regions | 8 |
-| DNS | existing registrar / Cloudflare | 2 records added | 0 |
-| Container registry | GHCR | under the free private allowance | 0 |
-| CI | GitHub Actions | ~600 min/mo on a private repo (2 000 free) | 0 |
-| | | **Total** | **≈ 280** |
+| Line                        | Service                         | Spec                                                 | $/mo      |
+| --------------------------- | ------------------------------- | ---------------------------------------------------- | --------- |
+| ESS SPA                     | Netlify (free tier, own team)   | static hosting, built in CI so 0 build minutes       | **0**     |
+| API                         | Render Web Service × 2          | Standard, 1 vCPU / 2 GB, `singapore`                 | 50        |
+| Worker                      | Render Background Worker × 1    | Starter, 0.5 vCPU / 512 MB                           | 7         |
+| PgBouncer                   | Render Private Service × 1      | Starter                                              | 7         |
+| ClamAV                      | Render Private Service × 1      | Standard, 2 GB (signature DB)                        | 25        |
+| Database                    | Render PostgreSQL               | Standard, 4 GB RAM / 100 GB SSD, daily backup + PITR | 95        |
+| Staging (API + worker + DB) | Render                          | Starter × 2 + Postgres Basic                         | 33        |
+| Object storage              | Cloudflare R2                   | 20 GB stored, ~200k Class-A/B ops, **zero egress**   | 2         |
+| Off-provider backup bucket  | R2 in a second account          | 20 GB, object-lock                                   | 1         |
+| Email                       | Amazon SES `ap-south-1`         | ~8 000 messages                                      | 1         |
+| Error tracking              | Sentry Team                     | 50k events, 90-day retention                         | 26        |
+| Logs                        | Better Stack / Grafana Cloud    | ~10 GB ingest, 30 d hot                              | 25        |
+| Uptime + status page        | Better Stack Uptime             | 6 monitors, 60 s, 3 regions                          | 8         |
+| DNS                         | existing registrar / Cloudflare | 2 records added                                      | 0         |
+| Container registry          | GHCR                            | under the free private allowance                     | 0         |
+| CI                          | GitHub Actions                  | ~600 min/mo on a private repo (2 000 free)           | 0         |
+|                             |                                 | **Total**                                            | **≈ 280** |
 
 Roughly **$2.30 per employee per month**, all-in, for a system that holds payroll.
 
 ### 10.2 What drives the number
 
-| Driver | Comment |
-|---|---|
+| Driver             | Comment                                                                                                                                                                                                             |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Database plan (95) | the single largest line, and it is bought for **PITR and backup retention**, not for size or speed. Do not economise here — it is the difference between a 2-hour recovery and a permanent loss of payroll history. |
-| ClamAV (25) | an awkward cost for a rarely-used service, but `clamd` needs 2 GB resident. §10.3 gives the cheaper arrangement and its trade-off. |
-| Egress (≈ 0) | R2's zero-egress pricing is why storage is $2 rather than $20–40: payslip and Form 16 downloads are pure egress, and they spike every month-end and every July. |
-| Netlify (0) | free tier is genuinely sufficient because the SPA is static and built in CI. The account-wide build-minute risk to the marketing site is eliminated by §2.5, not merely tolerated. |
-| Staging (33) | the cheapest insurance in the table. Do not delete it to save $33; it is where migrations and key rotations are rehearsed. |
+| ClamAV (25)        | an awkward cost for a rarely-used service, but `clamd` needs 2 GB resident. §10.3 gives the cheaper arrangement and its trade-off.                                                                                  |
+| Egress (≈ 0)       | R2's zero-egress pricing is why storage is $2 rather than $20–40: payslip and Form 16 downloads are pure egress, and they spike every month-end and every July.                                                     |
+| Netlify (0)        | free tier is genuinely sufficient because the SPA is static and built in CI. The account-wide build-minute risk to the marketing site is eliminated by §2.5, not merely tolerated.                                  |
+| Staging (33)       | the cheapest insurance in the table. Do not delete it to save $33; it is where migrations and key rotations are rehearsed.                                                                                          |
 
 ### 10.3 Cheapest viable configuration, and what it sacrifices
 
-| Line | Change | $/mo |
-|---|---|---|
-| API | 1 × Starter instead of 2 × Standard | 7 |
-| Worker | Starter (unchanged) | 7 |
-| PgBouncer | **removed** — Prisma `connection_limit=5` on a single instance | 0 |
-| ClamAV | **co-located in the worker container** on a Standard plan (worker 7 → 25) | +18 |
-| Database | Render PostgreSQL **Basic**, 1 GB / 16 GB SSD, daily backup, **no PITR** | 19 |
-| Staging | **removed** | 0 |
-| Logs | platform stdout retention only (7 days) | 0 |
-| Errors | GlitchTip self-hosted on the worker box, or Sentry free (5k events) | 0 |
-| Uptime | Healthchecks.io / UptimeRobot free | 0 |
-| Storage, email, SPA, CI | unchanged | 3 |
-| | **Total** | **≈ 54** |
+| Line                    | Change                                                                    | $/mo     |
+| ----------------------- | ------------------------------------------------------------------------- | -------- |
+| API                     | 1 × Starter instead of 2 × Standard                                       | 7        |
+| Worker                  | Starter (unchanged)                                                       | 7        |
+| PgBouncer               | **removed** — Prisma `connection_limit=5` on a single instance            | 0        |
+| ClamAV                  | **co-located in the worker container** on a Standard plan (worker 7 → 25) | +18      |
+| Database                | Render PostgreSQL **Basic**, 1 GB / 16 GB SSD, daily backup, **no PITR**  | 19       |
+| Staging                 | **removed**                                                               | 0        |
+| Logs                    | platform stdout retention only (7 days)                                   | 0        |
+| Errors                  | GlitchTip self-hosted on the worker box, or Sentry free (5k events)       | 0        |
+| Uptime                  | Healthchecks.io / UptimeRobot free                                        | 0        |
+| Storage, email, SPA, CI | unchanged                                                                 | 3        |
+|                         | **Total**                                                                 | **≈ 54** |
 
 **What that sacrifices, stated plainly so the decision is informed:**
 
 1. **No PITR.** RPO goes from 5 minutes to **24 hours**. A bad `UPDATE` at 16:00 costs the
    whole day. For a payroll system this is the sacrifice to think hardest about; the weekly
-   off-provider `pg_dump` (§4.5) becomes *essential* rather than a belt-and-braces measure,
+   off-provider `pg_dump` (§4.5) becomes _essential_ rather than a belt-and-braces measure,
    and should be moved to daily.
 2. **No zero-downtime deploys.** One API instance means every deploy and every platform
    restart is a 20–40 second outage. Acceptable for an internal portal deployed outside
@@ -2214,23 +2214,23 @@ Roughly **$2.30 per employee per month**, all-in, for a system that holds payrol
    and a connection leak becomes an outage rather than a queue.
 6. **7-day log retention**, so any investigation older than a week has only
    `ess.audit_event` to work from. The audit trail is deliberately designed to be sufficient
-   for the *security* questions; it is not sufficient for performance forensics.
+   for the _security_ questions; it is not sufficient for performance forensics.
 7. **ClamAV in the worker** couples upload scanning to job processing: a payroll run at 100 %
    CPU slows virus scanning, and an OOM in either kills both.
 
 **Recommended middle path (~$150):** keep PITR (Standard database), keep staging, run
 1 × Standard API, drop the paid log backend, keep ClamAV separate. That preserves every
-*recovery* and *rehearsal* property and gives up only redundancy and log depth.
+_recovery_ and _rehearsal_ property and gives up only redundancy and log depth.
 
 ### 10.4 Scaling markers
 
-| Marker | Change | Added $/mo |
-|---|---|---|
-| > 500 employees | API 2 → 3 Standard; database → 8 GB | ~70 |
-| > 200 rps sustained | rate-limit store → managed Redis (`RATE_LIMIT_STORE=redis`) | ~15 |
-| Payroll run > 10 min | worker Starter → Standard, `WORKER_CONCURRENCY` 4 → 8 | 18 |
-| In-country residency required | Fly.io `bom` + Neon/Crunchy `ap-south-1` (§3.7) | ~+20 |
-| Audit retention > 8 years | partition `ess.audit_event` by year, archive cold partitions to R2 | ~5 |
+| Marker                        | Change                                                             | Added $/mo |
+| ----------------------------- | ------------------------------------------------------------------ | ---------- |
+| > 500 employees               | API 2 → 3 Standard; database → 8 GB                                | ~70        |
+| > 200 rps sustained           | rate-limit store → managed Redis (`RATE_LIMIT_STORE=redis`)        | ~15        |
+| Payroll run > 10 min          | worker Starter → Standard, `WORKER_CONCURRENCY` 4 → 8              | 18         |
+| In-country residency required | Fly.io `bom` + Neon/Crunchy `ap-south-1` (§3.7)                    | ~+20       |
+| Audit retention > 8 years     | partition `ess.audit_event` by year, archive cold partitions to R2 | ~5         |
 
 ---
 
@@ -2325,7 +2325,7 @@ credential is created by the human who will own it, over TLS, from a single-use 
 
 **Roles:** Accounts (payroll inputs), HR (attendance submission), Managers (attendance
 approval), Accounts (publication). Separation of duties is enforced server-side; this
-runbook is the *operational* sequence around it. The ordering is the mandated workflow and
+runbook is the _operational_ sequence around it. The ordering is the mandated workflow and
 the system will refuse to proceed out of order — nothing here can be skipped by agreement.
 
 ```
@@ -2693,17 +2693,17 @@ Q8.  Confirm the empty-state guarantee still holds: point a scratch API at a fre
 
 ## 12. Open risks and reconciliations
 
-| # | Item | Impact | Proposed resolution |
-|---|---|---|---|
-| R-1 | API hostname: this document, `SECURITY.md` and `API.md` use `api-ess.widedrop.com`; the task brief proposed `api.ess.widedrop.com` | none technically; a documentation inconsistency if left unstated | §0.2. Confirm with the domain owner, then the string is fixed in four places. |
-| R-2 | `SECURITY.md` §10.2 requires `MAIL_FROM` to end `@widedrop.com`, but the mandated help-desk address and the `WORKFLOWS.md` sender are `@widedroptech.com` | the boot check would reject a correct configuration | Amend `SECURITY.md` §10.2 to `@widedroptech.com`. Keeps all mail DNS out of the `widedrop.com` zone. |
-| R-3 | `apps/api/src/config/env.ts` uses single-version key names | rotation procedures in `SECURITY.md` §3.2/§7.3 cannot be executed | §0.4 rename table, before any production secret is minted. |
-| R-4 | `POST /api/v1/webhooks/ses` (bounce/complaint) is not in `API.md` §13 | delivery state would be `SENT` forever and bounces invisible | Add the route with the §6.4 guard block, plus its `public: true` allowlist entry. |
-| R-5 | `SECURITY.md` §6.4 names `apps/web/public/_headers` as a header source | duplicate/conflicting `Content-Security-Policy` headers at the edge | §2.3: `netlify.toml` owns all headers except CSP; CSP is generated into `dist/_headers`; a build assertion fails if `public/_headers` exists. |
-| R-6 | `infra/certs/render-postgres-ca.pem` is referenced by the Dockerfile but does not exist in the repo | the image build fails, or `sslmode=verify-full` cannot be used | Download the provider CA at bootstrap, commit it (a public certificate, not a secret), and add a CI check that it is not expiring within 90 days. |
-| R-7 | Render has no India region; Postgres and the API sit in Singapore | a future contract or policy may require in-country storage | Documented in `docs/PROCESSORS.md`; §3.7 gives the Fly.io `bom` + `ap-south-1` Postgres path. The migration is a restore plus a DNS change, not a rewrite. |
-| R-8 | SES has no provider-side idempotency key, which `WORKFLOWS.md` §6.3 assumes | a crash between send and status write could duplicate one message | §6.1: `Message-ID` derived from `email_outbox.id` plus the `SENDING` claim and 10-minute sweep bound it. Switch `MAIL_PROVIDER` to Resend if strict idempotency becomes a requirement. |
-| R-9 | Single worker instance | the outbox, SLA escalations, accruals and payroll calculation all stop if it dies | Mitigated by the heartbeat dead-man alert (§9.4) rather than by redundancy, because the lease design makes a restart safe and a second instance adds cost without removing the failure mode. Revisit above ~500 employees. |
-| R-10 | ClamAV unavailable ⇒ uploads land `QUARANTINED` | expense claims and tickets accept files that nobody can then read | Correct and deliberate (`SECURITY.md` §5.3.10), but the UI must say so honestly; the P3 alert (§9.5) exists so it is noticed within 30 minutes rather than at month-end. |
-| R-11 | `ess_owner` credentials exist in a sealed envelope | a two-person offline process is a real operational dependency | Test it during the quarterly review (Q3) — an escrow nobody has ever opened is not an escrow. |
-| R-12 | Netlify free tier has no SLA | an outage takes the SPA down while the API stays up | Accepted: the SPA is static and the API's data is unaffected. If an SLA is required, the ESS site moves to a paid Netlify plan (~$19) or to Cloudflare Pages, changing only §2 and the CSP `connect-src` consumer. |
+| #    | Item                                                                                                                                                      | Impact                                                                            | Proposed resolution                                                                                                                                                                                                        |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R-1  | API hostname: this document, `SECURITY.md` and `API.md` use `api-ess.widedrop.com`; the task brief proposed `api.ess.widedrop.com`                        | none technically; a documentation inconsistency if left unstated                  | §0.2. Confirm with the domain owner, then the string is fixed in four places.                                                                                                                                              |
+| R-2  | `SECURITY.md` §10.2 requires `MAIL_FROM` to end `@widedrop.com`, but the mandated help-desk address and the `WORKFLOWS.md` sender are `@widedroptech.com` | the boot check would reject a correct configuration                               | Amend `SECURITY.md` §10.2 to `@widedroptech.com`. Keeps all mail DNS out of the `widedrop.com` zone.                                                                                                                       |
+| R-3  | `apps/api/src/config/env.ts` uses single-version key names                                                                                                | rotation procedures in `SECURITY.md` §3.2/§7.3 cannot be executed                 | §0.4 rename table, before any production secret is minted.                                                                                                                                                                 |
+| R-4  | `POST /api/v1/webhooks/ses` (bounce/complaint) is not in `API.md` §13                                                                                     | delivery state would be `SENT` forever and bounces invisible                      | Add the route with the §6.4 guard block, plus its `public: true` allowlist entry.                                                                                                                                          |
+| R-5  | `SECURITY.md` §6.4 names `apps/web/public/_headers` as a header source                                                                                    | duplicate/conflicting `Content-Security-Policy` headers at the edge               | §2.3: `netlify.toml` owns all headers except CSP; CSP is generated into `dist/_headers`; a build assertion fails if `public/_headers` exists.                                                                              |
+| R-6  | `infra/certs/render-postgres-ca.pem` is referenced by the Dockerfile but does not exist in the repo                                                       | the image build fails, or `sslmode=verify-full` cannot be used                    | Download the provider CA at bootstrap, commit it (a public certificate, not a secret), and add a CI check that it is not expiring within 90 days.                                                                          |
+| R-7  | Render has no India region; Postgres and the API sit in Singapore                                                                                         | a future contract or policy may require in-country storage                        | Documented in `docs/PROCESSORS.md`; §3.7 gives the Fly.io `bom` + `ap-south-1` Postgres path. The migration is a restore plus a DNS change, not a rewrite.                                                                 |
+| R-8  | SES has no provider-side idempotency key, which `WORKFLOWS.md` §6.3 assumes                                                                               | a crash between send and status write could duplicate one message                 | §6.1: `Message-ID` derived from `email_outbox.id` plus the `SENDING` claim and 10-minute sweep bound it. Switch `MAIL_PROVIDER` to Resend if strict idempotency becomes a requirement.                                     |
+| R-9  | Single worker instance                                                                                                                                    | the outbox, SLA escalations, accruals and payroll calculation all stop if it dies | Mitigated by the heartbeat dead-man alert (§9.4) rather than by redundancy, because the lease design makes a restart safe and a second instance adds cost without removing the failure mode. Revisit above ~500 employees. |
+| R-10 | ClamAV unavailable ⇒ uploads land `QUARANTINED`                                                                                                           | expense claims and tickets accept files that nobody can then read                 | Correct and deliberate (`SECURITY.md` §5.3.10), but the UI must say so honestly; the P3 alert (§9.5) exists so it is noticed within 30 minutes rather than at month-end.                                                   |
+| R-11 | `ess_owner` credentials exist in a sealed envelope                                                                                                        | a two-person offline process is a real operational dependency                     | Test it during the quarterly review (Q3) — an escrow nobody has ever opened is not an escrow.                                                                                                                              |
+| R-12 | Netlify free tier has no SLA                                                                                                                              | an outage takes the SPA down while the API stays up                               | Accepted: the SPA is static and the API's data is unaffected. If an SLA is required, the ESS site moves to a paid Netlify plan (~$19) or to Cloudflare Pages, changing only §2 and the CSP `connect-src` consumer.         |

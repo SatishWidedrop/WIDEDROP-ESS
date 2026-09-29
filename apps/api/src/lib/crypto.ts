@@ -94,10 +94,7 @@ export function seal(
   };
 }
 
-export function open(
-  sealed: SealedValue,
-  opts: { kek: string; context: string },
-): string {
+export function open(sealed: SealedValue, opts: { kek: string; context: string }): string {
   const kek = decodeKek(opts.kek);
   const salt = Buffer.from(sealed.s, 'base64');
   const key = hkdf(kek, salt, opts.context);
@@ -129,7 +126,9 @@ export function deserializeSealed(raw: string): SealedValue {
   if (
     typeof parsed !== 'object' ||
     parsed === null ||
-    !['v', 's', 'i', 'c', 't'].every((k) => typeof (parsed as Record<string, unknown>)[k] === 'string')
+    !['v', 's', 'i', 'c', 't'].every(
+      (k) => typeof (parsed as Record<string, unknown>)[k] === 'string',
+    )
   ) {
     throw new Error('Malformed sealed value');
   }
@@ -289,11 +288,22 @@ export function verifyAuditChain(
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index]!;
     if (row.previousHash !== previous) {
-      return { valid: false, checked: index, brokenAt: { id: row.id, index, reason: 'link-mismatch' } };
+      return {
+        valid: false,
+        checked: index,
+        brokenAt: { id: row.id, index, reason: 'link-mismatch' },
+      };
     }
-    const expected = sealAuditRow({ previousHash: row.previousHash, payload: row.payload }, hmacKeyBase64);
+    const expected = sealAuditRow(
+      { previousHash: row.previousHash, payload: row.payload },
+      hmacKeyBase64,
+    );
     if (!safeEqual(expected, row.rowHash)) {
-      return { valid: false, checked: index, brokenAt: { id: row.id, index, reason: 'hash-mismatch' } };
+      return {
+        valid: false,
+        checked: index,
+        brokenAt: { id: row.id, index, reason: 'hash-mismatch' },
+      };
     }
     previous = row.rowHash;
   }

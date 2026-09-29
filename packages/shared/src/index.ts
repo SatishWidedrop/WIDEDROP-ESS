@@ -21,3 +21,4 @@ export * from './domain/workflows.js';
 export * from './domain/notifications.js';
 
 export * from './contracts/common.js';
+export * from './contracts/auth.js';

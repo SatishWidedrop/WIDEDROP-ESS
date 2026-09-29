@@ -113,7 +113,13 @@ describe('least privilege over personal data', () => {
   });
 
   it('keeps the directory to work contact details only', () => {
-    for (const forbidden of ['dateOfBirth', 'personalEmail', 'bankAccountNumber', 'pan', 'salary']) {
+    for (const forbidden of [
+      'dateOfBirth',
+      'personalEmail',
+      'bankAccountNumber',
+      'pan',
+      'salary',
+    ]) {
       expect(DIRECTORY_FIELDS as readonly string[]).not.toContain(forbidden);
     }
   });

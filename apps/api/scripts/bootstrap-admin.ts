@@ -84,7 +84,9 @@ async function main(): Promise<void> {
 
   const organization = await prisma.organization.findFirst({ orderBy: { createdAt: 'asc' } });
   if (!organization) {
-    console.error('No organization exists. Run the reference seed first:\n  npm run db:seed:reference -w @widedrop/api');
+    console.error(
+      'No organization exists. Run the reference seed first:\n  npm run db:seed:reference -w @widedrop/api',
+    );
     process.exitCode = 1;
     return;
   }
@@ -106,8 +108,7 @@ async function main(): Promise<void> {
 
   const [firstName, ...rest] = name.split(/\s+/);
   const lastName = rest.join(' ') || firstName!;
-  const employeeNumber =
-    values['employee-number'] ?? `${organization.employeeNumberPrefix}-00001`;
+  const employeeNumber = values['employee-number'] ?? `${organization.employeeNumberPrefix}-00001`;
 
   const password = generatePassword();
   const passwordHash = await hashPassword(password, pepper);
@@ -123,57 +124,59 @@ async function main(): Promise<void> {
     return;
   }
 
-  await runAsSystem({ requestId: 'bootstrap', organizationId: organization.id, job: 'bootstrap-admin' }, () =>
-    prisma.$transaction(async (tx) => {
-      const user = await tx.appUser.create({
-        data: {
-          organizationId: organization.id,
-          email,
-          passwordHash,
-          passwordUpdatedAt: new Date(),
-          // They change it at first sign-in, so even this generated value has a
-          // short life.
-          passwordMustChange: true,
-          status: 'ACTIVE',
-          emailVerifiedAt: new Date(),
-        },
-        select: { id: true },
-      });
+  await runAsSystem(
+    { requestId: 'bootstrap', organizationId: organization.id, job: 'bootstrap-admin' },
+    () =>
+      prisma.$transaction(async (tx) => {
+        const user = await tx.appUser.create({
+          data: {
+            organizationId: organization.id,
+            email,
+            passwordHash,
+            passwordUpdatedAt: new Date(),
+            // They change it at first sign-in, so even this generated value has a
+            // short life.
+            passwordMustChange: true,
+            status: 'ACTIVE',
+            emailVerifiedAt: new Date(),
+          },
+          select: { id: true },
+        });
 
-      await tx.employee.create({
-        data: {
-          organizationId: organization.id,
-          appUserId: user.id,
-          employeeNumber,
-          firstName: firstName!,
-          lastName,
-          workEmail: email,
-          dateOfJoining: new Date(),
-          employmentStatus: 'ACTIVE',
-          isDirectoryListed: false,
-        },
-      });
+        await tx.employee.create({
+          data: {
+            organizationId: organization.id,
+            appUserId: user.id,
+            employeeNumber,
+            firstName: firstName!,
+            lastName,
+            workEmail: email,
+            dateOfJoining: new Date(),
+            employmentStatus: 'ACTIVE',
+            isDirectoryListed: false,
+          },
+        });
 
-      for (const role of roles) {
-        await tx.userRole.create({ data: { appUserId: user.id, roleId: role.id } });
-      }
+        for (const role of roles) {
+          await tx.userRole.create({ data: { appUserId: user.id, roleId: role.id } });
+        }
 
-      await recordAudit(
-        tx,
-        {
-          organizationId: organization.id,
-          action: 'PERMISSION_GRANT',
-          entityType: 'app_user',
-          entityId: user.id,
-          summary: `Bootstrap administrator created with HR and Accounts${values.force ? ' (forced)' : ''}`,
-          after: { email, employeeNumber, roles: roles.map((r) => r.persona) },
-          actor: { kind: 'MIGRATION' },
-        },
-        hmacKey,
-      );
+        await recordAudit(
+          tx,
+          {
+            organizationId: organization.id,
+            action: 'PERMISSION_GRANT',
+            entityType: 'app_user',
+            entityId: user.id,
+            summary: `Bootstrap administrator created with HR and Accounts${values.force ? ' (forced)' : ''}`,
+            after: { email, employeeNumber, roles: roles.map((r) => r.persona) },
+            actor: { kind: 'MIGRATION' },
+          },
+          hmacKey,
+        );
 
-      return user;
-    }),
+        return user;
+      }),
   );
 
   // Printed once. Nothing writes it to a file or a log.

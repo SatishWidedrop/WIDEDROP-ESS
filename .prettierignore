@@ -2,6 +2,12 @@ node_modules
 dist
 build
 coverage
+
+# The prototype is the supplied artifact, kept byte-for-byte.
 design/prototype
+
+# Generated: rewriting these would create noise on every regeneration and
+# diverge from what the generator produces.
+apps/api/src/generated
 apps/api/prisma/migrations
 package-lock.json

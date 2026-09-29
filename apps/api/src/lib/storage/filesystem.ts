@@ -56,7 +56,13 @@ export class FilesystemStorage implements StorageDriver {
     if (/[\u0000-\u001F\u007F\\]/.test(key)) return false;
     if (key.startsWith('/') || key.endsWith('/')) return false;
     const segments = key.split('/');
-    return segments.every((segment) => segment.length > 0 && /^[A-Za-z0-9._-]+$/.test(segment) && segment !== '.' && segment !== '..');
+    return segments.every(
+      (segment) =>
+        segment.length > 0 &&
+        /^[A-Za-z0-9._-]+$/.test(segment) &&
+        segment !== '.' &&
+        segment !== '..',
+    );
   }
 
   async put(input: PutObjectInput): Promise<StoredObject> {
@@ -114,8 +120,10 @@ export class FilesystemStorage implements StorageDriver {
     if (expected.length !== signature.length) return false;
     // Both sides are hex of the same length, so a plain comparison over buffers
     // is safe to do in constant time.
-    return createHmac('sha256', this.signingKey).update(expected).digest('hex') ===
-      createHmac('sha256', this.signingKey).update(signature).digest('hex');
+    return (
+      createHmac('sha256', this.signingKey).update(expected).digest('hex') ===
+      createHmac('sha256', this.signingKey).update(signature).digest('hex')
+    );
   }
 
   private sign(key: string, expires: number, nonce: string): string {

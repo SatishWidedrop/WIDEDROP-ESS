@@ -24,12 +24,7 @@ describe('the pipeline cannot be short-circuited', () => {
   });
 
   it('will not validate before attendance is approved', () => {
-    for (const from of [
-      'DRAFT',
-      'INPUTS_OPEN',
-      'INPUTS_LOCKED',
-      'ATTENDANCE_SUBMITTED',
-    ] as const) {
+    for (const from of ['DRAFT', 'INPUTS_OPEN', 'INPUTS_LOCKED', 'ATTENDANCE_SUBMITTED'] as const) {
       expect(m.can(from, 'VALIDATE')).toBe(false);
     }
   });
@@ -111,9 +106,7 @@ describe('payslip existence and visibility', () => {
   });
 
   it('shows a payslip to its employee only once the cycle is published', () => {
-    for (const state of PAYROLL_CYCLE_STATES.filter(
-      (s) => s !== 'PUBLISHED' && s !== 'CLOSED',
-    )) {
+    for (const state of PAYROLL_CYCLE_STATES.filter((s) => s !== 'PUBLISHED' && s !== 'CLOSED')) {
       expect(payslipVisibleToEmployee(state)).toBe(false);
     }
     expect(payslipVisibleToEmployee('PUBLISHED')).toBe(true);
@@ -127,10 +120,7 @@ describe('payslip existence and visibility', () => {
   });
 
   it('never lets a payslip exist while the pipeline is still upstream of it', () => {
-    const upstream = PAYROLL_CYCLE_STATES.slice(
-      0,
-      PAYROLL_CYCLE_STATES.indexOf('CALCULATING'),
-    );
+    const upstream = PAYROLL_CYCLE_STATES.slice(0, PAYROLL_CYCLE_STATES.indexOf('CALCULATING'));
     expect(upstream.filter(payslipsMayExist)).toEqual([]);
   });
 });
@@ -195,7 +185,9 @@ describe('terminal states and recovery', () => {
 
 describe('validation checklist', () => {
   it('defines every declared check exactly once', () => {
-    expect(PAYROLL_CHECKS.map((c) => c.check).sort()).toEqual([...PAYROLL_VALIDATION_CHECKS].sort());
+    expect(PAYROLL_CHECKS.map((c) => c.check).sort()).toEqual(
+      [...PAYROLL_VALIDATION_CHECKS].sort(),
+    );
   });
 
   it('blocks on everything payroll cannot be computed without', () => {

@@ -30,9 +30,10 @@ export const requestContextPlugin = fp(
         requestId,
         personas: [],
         ip: clientIp(request, options.trustProxy),
-        userAgent: typeof request.headers['user-agent'] === 'string'
-          ? request.headers['user-agent'].slice(0, 300)
-          : undefined,
+        userAgent:
+          typeof request.headers['user-agent'] === 'string'
+            ? request.headers['user-agent'].slice(0, 300)
+            : undefined,
         route: request.routeOptions?.url ?? request.url.split('?')[0],
       };
 

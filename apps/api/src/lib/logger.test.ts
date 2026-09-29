@@ -16,7 +16,9 @@ describe('redactValue', () => {
   });
 
   it('strips statutory identifiers', () => {
-    expect(redactValue({ pan: 'AXYPR1234K', aadhaar: '111122223333', uan: '101234567890' })).toEqual({
+    expect(
+      redactValue({ pan: 'AXYPR1234K', aadhaar: '111122223333', uan: '101234567890' }),
+    ).toEqual({
       pan: REDACTED,
       aadhaar: REDACTED,
       uan: REDACTED,
@@ -24,7 +26,9 @@ describe('redactValue', () => {
   });
 
   it('matches keys regardless of casing or separators', () => {
-    expect(redactValue({ Bank_Account_Number: '123', 'set-cookie': 'x', ACCESSTOKEN: 'y' })).toEqual({
+    expect(
+      redactValue({ Bank_Account_Number: '123', 'set-cookie': 'x', ACCESSTOKEN: 'y' }),
+    ).toEqual({
       Bank_Account_Number: REDACTED,
       'set-cookie': REDACTED,
       ACCESSTOKEN: REDACTED,
@@ -39,7 +43,9 @@ describe('redactValue', () => {
   });
 
   it('keeps non-sensitive operational fields', () => {
-    expect(redactValue({ employeeId: 'emp_1', payrollCycleId: 'pc_1', netPayPaise: 12345 })).toEqual({
+    expect(
+      redactValue({ employeeId: 'emp_1', payrollCycleId: 'pc_1', netPayPaise: 12345 }),
+    ).toEqual({
       employeeId: 'emp_1',
       payrollCycleId: 'pc_1',
       netPayPaise: 12345,

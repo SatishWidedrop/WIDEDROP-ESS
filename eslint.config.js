@@ -61,7 +61,17 @@ export default tseslint.config(
     },
   },
   {
-    files: ['**/*.test.ts', '**/*.test.tsx', '**/test/**', 'prisma/**', 'scripts/**'],
+    // Tests, seeds and CLI scripts: console output is the point of the last two,
+    // and the globs are anchored with ** because flat-config patterns resolve
+    // against the config file rather than each workspace.
+    files: [
+      '**/*.test.ts',
+      '**/*.test.tsx',
+      '**/test/**',
+      '**/prisma/**',
+      '**/scripts/**',
+      '**/*.config.ts',
+    ],
     rules: { 'no-console': 'off' },
   },
   prettier,

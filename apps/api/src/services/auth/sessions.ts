@@ -229,11 +229,7 @@ export async function pruneExpiredTokens(tx: Tx, olderThanDays = 30): Promise<nu
 }
 
 export function sessionExpiredError(): AppError {
-  return new AppError(
-    401,
-    ERROR_CODES.SESSION_EXPIRED,
-    'Your session has expired. Sign in again.',
-  );
+  return new AppError(401, ERROR_CODES.SESSION_EXPIRED, 'Your session has expired. Sign in again.');
 }
 
 export function tokenReuseError(): AppError {

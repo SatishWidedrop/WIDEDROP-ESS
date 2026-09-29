@@ -25,7 +25,8 @@ export const ICON_PATHS = {
 
   // Additional icons for the HR and Accounts surfaces and shared UI. Drawn in
   // the same 24×24 / 1.7-stroke outline language as the prototype's set.
-  payroll: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9.5 9a2.5 2.5 0 0 1 5 0M14.5 15a2.5 2.5 0 0 1-5 0M12 6.5v11',
+  payroll:
+    'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9.5 9a2.5 2.5 0 0 1 5 0M14.5 15a2.5 2.5 0 0 1-5 0M12 6.5v11',
   upload: 'M12 16V4M7.5 8.5L12 4l4.5 4.5M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2',
   download: 'M12 4v12M7.5 11.5L12 16l4.5-4.5M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2',
   employees:
@@ -38,7 +39,8 @@ export const ICON_PATHS = {
   chevronDown: 'M6 9l6 6 6-6',
   chevronRight: 'M9 6l6 6-6 6',
   check: 'M5 12.5l4.5 4.5L19 7',
-  alert: 'M12 8v5M12 16.5h.01M10.3 3.9L2.5 17.4A1.5 1.5 0 0 0 3.8 19.7h16.4a1.5 1.5 0 0 0 1.3-2.3L13.7 3.9a2 2 0 0 0-3.4 0z',
+  alert:
+    'M12 8v5M12 16.5h.01M10.3 3.9L2.5 17.4A1.5 1.5 0 0 0 3.8 19.7h16.4a1.5 1.5 0 0 0 1.3-2.3L13.7 3.9a2 2 0 0 0-3.4 0z',
   info: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v5M12 7.5h.01',
   inbox: 'M3 13h5l1.5 3h5L16 13h5M5 5h14l2 8v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5z',
   logout: 'M9 21H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h4M16 16l4-4-4-4M20 12H9',

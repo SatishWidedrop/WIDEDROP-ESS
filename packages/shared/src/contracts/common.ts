@@ -17,12 +17,13 @@ import { z } from 'zod';
  *     differently from the one that was stored
  * Tab, newline and carriage return are allowed only where noted.
  */
+/* eslint-disable no-control-regex -- matching control characters is the point */
 const DISALLOWED_ANYWHERE =
   /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/;
 
 /** As above, and additionally forbids tab, newline and carriage return. */
-const DISALLOWED_SINGLE_LINE =
-  /[\u0000-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/;
+const DISALLOWED_SINGLE_LINE = /[\u0000-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/;
+/* eslint-enable no-control-regex */
 
 const NOT_ALLOWED = 'Contains characters that are not allowed';
 
@@ -47,15 +48,15 @@ export const freeText = (max: number) =>
  * Email. Lower-cased so an account cannot be duplicated by capitalisation, and
  * length-bounded well under the RFC maximum to keep indexes small.
  */
-export const email = z
-  .string()
-  .trim()
-  .toLowerCase()
-  .email('Enter a valid email address')
-  .max(254);
+export const email = z.string().trim().toLowerCase().email('Enter a valid email address').max(254);
 
 /** CUID-style identifier, as Prisma generates. */
-export const id = z.string().trim().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/, 'Invalid identifier');
+export const id = z
+  .string()
+  .trim()
+  .min(8)
+  .max(64)
+  .regex(/^[A-Za-z0-9_-]+$/, 'Invalid identifier');
 
 export const isoDate = z
   .string()
@@ -235,6 +236,7 @@ export function safeDisplayFilename(name: string): string {
   const base = name.split(/[/\\]/).pop() ?? 'file';
   return (
     base
+      // eslint-disable-next-line no-control-regex -- stripping them is the point
       .replace(/[\u0000-\u001F\u007F]/g, '')
       .replace(/[^A-Za-z0-9._ -]/g, '_')
       .replace(/^\.+/, '')

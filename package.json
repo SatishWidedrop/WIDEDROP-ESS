@@ -2,7 +2,8 @@
   "name": "widedrop-ess",
   "version": "1.0.0",
   "private": true,
-  "description": "Widedrop Technologies — Employee Self-Service portal",
+  "type": "module",
+  "description": "Widedrop Technologies \u2014 Employee Self-Service portal",
   "license": "UNLICENSED",
   "engines": {
     "node": ">=22.0.0",

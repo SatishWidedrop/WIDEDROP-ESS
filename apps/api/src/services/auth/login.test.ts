@@ -27,9 +27,7 @@ async function makeUser(input: {
       email: input.email,
       status: input.status ?? 'ACTIVE',
       passwordHash:
-        input.status === 'INVITED'
-          ? null
-          : await hashPassword(input.password ?? PASSWORD, PEPPER),
+        input.status === 'INVITED' ? null : await hashPassword(input.password ?? PASSWORD, PEPPER),
       passwordUpdatedAt: new Date(),
     },
     select: { id: true },
@@ -102,11 +100,7 @@ beforeEach(async () => {
 });
 
 const login = (email: string, password: string) =>
-  attemptLogin(
-    db,
-    { organizationId, email, password, pepper: PEPPER, ip: '203.0.113.5' },
-    HMAC,
-  );
+  attemptLogin(db, { organizationId, email, password, pepper: PEPPER, ip: '203.0.113.5' }, HMAC);
 
 describe('successful sign-in', () => {
   it('authenticates a correct password', async () => {
@@ -125,10 +119,14 @@ describe('successful sign-in', () => {
     const userId = await makeUser({ email: 'priya@widedrop.test', code: 'WDT-1' });
     await login('priya@widedrop.test', 'wrong');
     await login('priya@widedrop.test', 'wrong');
-    expect((await db.appUser.findUniqueOrThrow({ where: { id: userId } })).failedLoginCount).toBe(2);
+    expect((await db.appUser.findUniqueOrThrow({ where: { id: userId } })).failedLoginCount).toBe(
+      2,
+    );
 
     await login('priya@widedrop.test', PASSWORD);
-    expect((await db.appUser.findUniqueOrThrow({ where: { id: userId } })).failedLoginCount).toBe(0);
+    expect((await db.appUser.findUniqueOrThrow({ where: { id: userId } })).failedLoginCount).toBe(
+      0,
+    );
   });
 });
 

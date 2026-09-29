@@ -29,12 +29,7 @@ export const ATTENDANCE_PERIOD_STATES = [
 export type AttendancePeriodState = (typeof ATTENDANCE_PERIOD_STATES)[number];
 
 export type AttendancePeriodEvent =
-  | 'SUBMIT'
-  | 'ROUTE_TO_MANAGERS'
-  | 'RETURN'
-  | 'APPROVE_ALL'
-  | 'LOCK'
-  | 'REOPEN';
+  'SUBMIT' | 'ROUTE_TO_MANAGERS' | 'RETURN' | 'APPROVE_ALL' | 'LOCK' | 'REOPEN';
 
 export const attendancePeriodMachine = new StateMachine<
   AttendancePeriodState,
@@ -45,12 +40,42 @@ export const attendancePeriodMachine = new StateMachine<
   states: ATTENDANCE_PERIOD_STATES,
   transitions: [
     { from: 'OPEN', to: 'HR_SUBMITTED', event: 'SUBMIT', description: 'HR submits the period.' },
-    { from: 'HR_SUBMITTED', to: 'MANAGER_APPROVAL_PENDING', event: 'ROUTE_TO_MANAGERS', description: 'One approval task is raised per manager with people in the period.' },
-    { from: 'MANAGER_APPROVAL_PENDING', to: 'REOPENED', event: 'RETURN', description: 'A manager returns their slice to HR with a reason.' },
-    { from: 'REOPENED', to: 'HR_SUBMITTED', event: 'SUBMIT', description: 'HR resubmits after correcting the flagged records.' },
-    { from: 'MANAGER_APPROVAL_PENDING', to: 'APPROVED', event: 'APPROVE_ALL', description: 'The last outstanding manager approves.' },
-    { from: 'APPROVED', to: 'LOCKED', event: 'LOCK', description: 'A payroll cycle consumes the period.' },
-    { from: 'APPROVED', to: 'REOPENED', event: 'REOPEN', description: 'HR reopens the period before payroll consumes it.' },
+    {
+      from: 'HR_SUBMITTED',
+      to: 'MANAGER_APPROVAL_PENDING',
+      event: 'ROUTE_TO_MANAGERS',
+      description: 'One approval task is raised per manager with people in the period.',
+    },
+    {
+      from: 'MANAGER_APPROVAL_PENDING',
+      to: 'REOPENED',
+      event: 'RETURN',
+      description: 'A manager returns their slice to HR with a reason.',
+    },
+    {
+      from: 'REOPENED',
+      to: 'HR_SUBMITTED',
+      event: 'SUBMIT',
+      description: 'HR resubmits after correcting the flagged records.',
+    },
+    {
+      from: 'MANAGER_APPROVAL_PENDING',
+      to: 'APPROVED',
+      event: 'APPROVE_ALL',
+      description: 'The last outstanding manager approves.',
+    },
+    {
+      from: 'APPROVED',
+      to: 'LOCKED',
+      event: 'LOCK',
+      description: 'A payroll cycle consumes the period.',
+    },
+    {
+      from: 'APPROVED',
+      to: 'REOPENED',
+      event: 'REOPEN',
+      description: 'HR reopens the period before payroll consumes it.',
+    },
   ],
 });
 
@@ -110,11 +135,36 @@ export const leaveRequestMachine = new StateMachine<LeaveRequestState, LeaveRequ
   initial: 'DRAFT',
   states: LEAVE_REQUEST_STATES,
   transitions: [
-    { from: 'DRAFT', to: 'PENDING_APPROVAL', event: 'SUBMIT', description: 'The employee submits the request; the balance is reserved.' },
-    { from: 'PENDING_APPROVAL', to: 'APPROVED', event: 'APPROVE', description: 'The reporting manager approves; the reservation is consumed.' },
-    { from: 'PENDING_APPROVAL', to: 'REJECTED', event: 'REJECT', description: 'The reporting manager rejects; the reservation is released.' },
-    { from: 'PENDING_APPROVAL', to: 'WITHDRAWN', event: 'WITHDRAW', description: 'The employee withdraws; the reservation is released.' },
-    { from: 'APPROVED', to: 'CANCELLED', event: 'CANCEL', description: 'Cancelled before the leave started; the balance is credited back.' },
+    {
+      from: 'DRAFT',
+      to: 'PENDING_APPROVAL',
+      event: 'SUBMIT',
+      description: 'The employee submits the request; the balance is reserved.',
+    },
+    {
+      from: 'PENDING_APPROVAL',
+      to: 'APPROVED',
+      event: 'APPROVE',
+      description: 'The reporting manager approves; the reservation is consumed.',
+    },
+    {
+      from: 'PENDING_APPROVAL',
+      to: 'REJECTED',
+      event: 'REJECT',
+      description: 'The reporting manager rejects; the reservation is released.',
+    },
+    {
+      from: 'PENDING_APPROVAL',
+      to: 'WITHDRAWN',
+      event: 'WITHDRAW',
+      description: 'The employee withdraws; the reservation is released.',
+    },
+    {
+      from: 'APPROVED',
+      to: 'CANCELLED',
+      event: 'CANCEL',
+      description: 'Cancelled before the leave started; the balance is credited back.',
+    },
   ],
 });
 
@@ -167,18 +217,78 @@ export const expenseClaimMachine = new StateMachine<ExpenseClaimState, ExpenseCl
   initial: 'DRAFT',
   states: EXPENSE_CLAIM_STATES,
   transitions: [
-    { from: 'DRAFT', to: 'SUBMITTED', event: 'SUBMIT', description: 'The employee submits the claim with its bills.' },
-    { from: 'SUBMITTED', to: 'PENDING_MANAGER', event: 'ROUTE_TO_MANAGER', description: 'An approval task is raised for the reporting manager.' },
-    { from: 'PENDING_MANAGER', to: 'MANAGER_APPROVED', event: 'MANAGER_APPROVE', description: 'The reporting manager approves the business purpose.' },
-    { from: 'PENDING_MANAGER', to: 'MANAGER_REJECTED', event: 'MANAGER_REJECT', description: 'The reporting manager rejects with a reason.' },
-    { from: 'PENDING_MANAGER', to: 'WITHDRAWN', event: 'WITHDRAW', description: 'The employee withdraws before a decision.' },
-    { from: 'SUBMITTED', to: 'WITHDRAWN', event: 'WITHDRAW', description: 'The employee withdraws before it reaches their manager.' },
-    { from: 'MANAGER_APPROVED', to: 'PENDING_FINANCE', event: 'ROUTE_TO_FINANCE', description: 'The claim moves to Accounts for verification.' },
-    { from: 'PENDING_FINANCE', to: 'FINANCE_APPROVED', event: 'FINANCE_APPROVE', description: 'Accounts verifies the bills and applies the category cap.' },
-    { from: 'PENDING_FINANCE', to: 'FINANCE_REJECTED', event: 'FINANCE_REJECT', description: 'Accounts rejects with a reason.' },
-    { from: 'FINANCE_APPROVED', to: 'QUEUED_FOR_PAYMENT', event: 'QUEUE_FOR_PAYMENT', description: 'The claim joins the reimbursement batch for a named payroll cycle.' },
-    { from: 'QUEUED_FOR_PAYMENT', to: 'REIMBURSED', event: 'REIMBURSE', description: 'The payroll cycle pays it.' },
-    { from: 'QUEUED_FOR_PAYMENT', to: 'FINANCE_APPROVED', event: 'CANCEL', description: 'The batch was cancelled; the claim returns to the queue.' },
+    {
+      from: 'DRAFT',
+      to: 'SUBMITTED',
+      event: 'SUBMIT',
+      description: 'The employee submits the claim with its bills.',
+    },
+    {
+      from: 'SUBMITTED',
+      to: 'PENDING_MANAGER',
+      event: 'ROUTE_TO_MANAGER',
+      description: 'An approval task is raised for the reporting manager.',
+    },
+    {
+      from: 'PENDING_MANAGER',
+      to: 'MANAGER_APPROVED',
+      event: 'MANAGER_APPROVE',
+      description: 'The reporting manager approves the business purpose.',
+    },
+    {
+      from: 'PENDING_MANAGER',
+      to: 'MANAGER_REJECTED',
+      event: 'MANAGER_REJECT',
+      description: 'The reporting manager rejects with a reason.',
+    },
+    {
+      from: 'PENDING_MANAGER',
+      to: 'WITHDRAWN',
+      event: 'WITHDRAW',
+      description: 'The employee withdraws before a decision.',
+    },
+    {
+      from: 'SUBMITTED',
+      to: 'WITHDRAWN',
+      event: 'WITHDRAW',
+      description: 'The employee withdraws before it reaches their manager.',
+    },
+    {
+      from: 'MANAGER_APPROVED',
+      to: 'PENDING_FINANCE',
+      event: 'ROUTE_TO_FINANCE',
+      description: 'The claim moves to Accounts for verification.',
+    },
+    {
+      from: 'PENDING_FINANCE',
+      to: 'FINANCE_APPROVED',
+      event: 'FINANCE_APPROVE',
+      description: 'Accounts verifies the bills and applies the category cap.',
+    },
+    {
+      from: 'PENDING_FINANCE',
+      to: 'FINANCE_REJECTED',
+      event: 'FINANCE_REJECT',
+      description: 'Accounts rejects with a reason.',
+    },
+    {
+      from: 'FINANCE_APPROVED',
+      to: 'QUEUED_FOR_PAYMENT',
+      event: 'QUEUE_FOR_PAYMENT',
+      description: 'The claim joins the reimbursement batch for a named payroll cycle.',
+    },
+    {
+      from: 'QUEUED_FOR_PAYMENT',
+      to: 'REIMBURSED',
+      event: 'REIMBURSE',
+      description: 'The payroll cycle pays it.',
+    },
+    {
+      from: 'QUEUED_FOR_PAYMENT',
+      to: 'FINANCE_APPROVED',
+      event: 'CANCEL',
+      description: 'The batch was cancelled; the claim returns to the queue.',
+    },
   ],
 });
 
@@ -220,12 +330,44 @@ export const policyVersionMachine = new StateMachine<PolicyVersionState, PolicyV
   initial: 'DRAFT',
   states: POLICY_VERSION_STATES,
   transitions: [
-    { from: 'DRAFT', to: 'IN_REVIEW', event: 'SUBMIT_FOR_REVIEW', description: 'The owning team circulates the draft for review.' },
-    { from: 'IN_REVIEW', to: 'DRAFT', event: 'WITHDRAW', description: 'Review sends it back for changes.' },
-    { from: 'IN_REVIEW', to: 'PUBLISHED', event: 'PUBLISH', description: 'HR publishes it with an effective date and assigns it to everyone it applies to.' },
-    { from: 'DRAFT', to: 'PUBLISHED', event: 'PUBLISH', description: 'HR publishes a version that needed no review.' },
-    { from: 'PUBLISHED', to: 'SUPERSEDED', event: 'SUPERSEDE', description: 'A newer version is published in its place; acknowledgements of this one stay valid.' },
-    { from: 'PUBLISHED', to: 'WITHDRAWN', event: 'WITHDRAW', description: 'HR withdraws the policy without a successor.' },
+    {
+      from: 'DRAFT',
+      to: 'IN_REVIEW',
+      event: 'SUBMIT_FOR_REVIEW',
+      description: 'The owning team circulates the draft for review.',
+    },
+    {
+      from: 'IN_REVIEW',
+      to: 'DRAFT',
+      event: 'WITHDRAW',
+      description: 'Review sends it back for changes.',
+    },
+    {
+      from: 'IN_REVIEW',
+      to: 'PUBLISHED',
+      event: 'PUBLISH',
+      description:
+        'HR publishes it with an effective date and assigns it to everyone it applies to.',
+    },
+    {
+      from: 'DRAFT',
+      to: 'PUBLISHED',
+      event: 'PUBLISH',
+      description: 'HR publishes a version that needed no review.',
+    },
+    {
+      from: 'PUBLISHED',
+      to: 'SUPERSEDED',
+      event: 'SUPERSEDE',
+      description:
+        'A newer version is published in its place; acknowledgements of this one stay valid.',
+    },
+    {
+      from: 'PUBLISHED',
+      to: 'WITHDRAWN',
+      event: 'WITHDRAW',
+      description: 'HR withdraws the policy without a successor.',
+    },
     { from: 'DRAFT', to: 'WITHDRAWN', event: 'WITHDRAW', description: 'HR discards the draft.' },
   ],
 });
@@ -271,18 +413,68 @@ export const ticketMachine = new StateMachine<TicketState, TicketEvent>({
   initial: 'OPEN',
   states: TICKET_STATES,
   transitions: [
-    { from: 'OPEN', to: 'ASSIGNED', event: 'ASSIGN', description: 'The ticket is assigned to an owner.' },
+    {
+      from: 'OPEN',
+      to: 'ASSIGNED',
+      event: 'ASSIGN',
+      description: 'The ticket is assigned to an owner.',
+    },
     { from: 'ASSIGNED', to: 'IN_PROGRESS', event: 'START', description: 'The owner starts work.' },
-    { from: 'OPEN', to: 'IN_PROGRESS', event: 'START', description: 'An owner picks the ticket up directly.' },
-    { from: 'REOPENED', to: 'IN_PROGRESS', event: 'START', description: 'The owner picks the reopened ticket back up.' },
-    { from: 'IN_PROGRESS', to: 'WAITING_ON_EMPLOYEE', event: 'REQUEST_INFO', description: 'The owner asks the requester for more detail; the SLA clock pauses.' },
-    { from: 'WAITING_ON_EMPLOYEE', to: 'IN_PROGRESS', event: 'REQUESTER_REPLIED', description: 'The requester replies and the clock resumes.' },
-    { from: 'IN_PROGRESS', to: 'RESOLVED', event: 'RESOLVE', description: 'The owner resolves the ticket.' },
-    { from: 'ASSIGNED', to: 'RESOLVED', event: 'RESOLVE', description: 'The owner resolves it without further work.' },
-    { from: 'RESOLVED', to: 'CLOSED', event: 'CLOSE', description: 'Closed by the requester, or automatically after the grace period.' },
-    { from: 'RESOLVED', to: 'REOPENED', event: 'REOPEN', description: 'The requester reopens it within the grace period.' },
+    {
+      from: 'OPEN',
+      to: 'IN_PROGRESS',
+      event: 'START',
+      description: 'An owner picks the ticket up directly.',
+    },
+    {
+      from: 'REOPENED',
+      to: 'IN_PROGRESS',
+      event: 'START',
+      description: 'The owner picks the reopened ticket back up.',
+    },
+    {
+      from: 'IN_PROGRESS',
+      to: 'WAITING_ON_EMPLOYEE',
+      event: 'REQUEST_INFO',
+      description: 'The owner asks the requester for more detail; the SLA clock pauses.',
+    },
+    {
+      from: 'WAITING_ON_EMPLOYEE',
+      to: 'IN_PROGRESS',
+      event: 'REQUESTER_REPLIED',
+      description: 'The requester replies and the clock resumes.',
+    },
+    {
+      from: 'IN_PROGRESS',
+      to: 'RESOLVED',
+      event: 'RESOLVE',
+      description: 'The owner resolves the ticket.',
+    },
+    {
+      from: 'ASSIGNED',
+      to: 'RESOLVED',
+      event: 'RESOLVE',
+      description: 'The owner resolves it without further work.',
+    },
+    {
+      from: 'RESOLVED',
+      to: 'CLOSED',
+      event: 'CLOSE',
+      description: 'Closed by the requester, or automatically after the grace period.',
+    },
+    {
+      from: 'RESOLVED',
+      to: 'REOPENED',
+      event: 'REOPEN',
+      description: 'The requester reopens it within the grace period.',
+    },
     { from: 'CLOSED', to: 'REOPENED', event: 'REOPEN', description: 'Reopened by the help desk.' },
-    { from: 'OPEN', to: 'CANCELLED', event: 'CANCEL', description: 'The requester cancels before anyone picks it up.' },
+    {
+      from: 'OPEN',
+      to: 'CANCELLED',
+      event: 'CANCEL',
+      description: 'The requester cancels before anyone picks it up.',
+    },
   ],
 });
 
@@ -316,12 +508,42 @@ export const documentRequestMachine = new StateMachine<DocumentRequestState, Doc
   initial: 'SUBMITTED',
   states: DOCUMENT_REQUEST_STATES,
   transitions: [
-    { from: 'SUBMITTED', to: 'IN_REVIEW', event: 'REVIEW', description: 'HR picks up the request.' },
-    { from: 'SUBMITTED', to: 'CANCELLED', event: 'CANCEL', description: 'The employee cancels before it is picked up.' },
-    { from: 'IN_REVIEW', to: 'PROCESSING', event: 'START', description: 'HR accepts it and the letter is being prepared.' },
-    { from: 'IN_REVIEW', to: 'REJECTED', event: 'REJECT', description: 'HR declines the request with a reason.' },
-    { from: 'PROCESSING', to: 'ISSUED', event: 'ISSUE', description: 'The letter is issued; the PDF is stored against the request.' },
-    { from: 'PROCESSING', to: 'REJECTED', event: 'REJECT', description: 'Preparation found the request cannot be fulfilled.' },
+    {
+      from: 'SUBMITTED',
+      to: 'IN_REVIEW',
+      event: 'REVIEW',
+      description: 'HR picks up the request.',
+    },
+    {
+      from: 'SUBMITTED',
+      to: 'CANCELLED',
+      event: 'CANCEL',
+      description: 'The employee cancels before it is picked up.',
+    },
+    {
+      from: 'IN_REVIEW',
+      to: 'PROCESSING',
+      event: 'START',
+      description: 'HR accepts it and the letter is being prepared.',
+    },
+    {
+      from: 'IN_REVIEW',
+      to: 'REJECTED',
+      event: 'REJECT',
+      description: 'HR declines the request with a reason.',
+    },
+    {
+      from: 'PROCESSING',
+      to: 'ISSUED',
+      event: 'ISSUE',
+      description: 'The letter is issued; the PDF is stored against the request.',
+    },
+    {
+      from: 'PROCESSING',
+      to: 'REJECTED',
+      event: 'REJECT',
+      description: 'Preparation found the request cannot be fulfilled.',
+    },
   ],
 });
 
@@ -347,10 +569,30 @@ export const changeRequestMachine = new StateMachine<ChangeRequestState, ChangeR
   initial: 'SUBMITTED',
   states: CHANGE_REQUEST_STATES,
   transitions: [
-    { from: 'SUBMITTED', to: 'UNDER_REVIEW', event: 'REVIEW', description: 'HR or Payroll begins verification.' },
-    { from: 'SUBMITTED', to: 'WITHDRAWN', event: 'WITHDRAW', description: 'The employee withdraws the request.' },
-    { from: 'UNDER_REVIEW', to: 'APPLIED', event: 'APPROVE', description: 'The change is applied to the employee record.' },
-    { from: 'UNDER_REVIEW', to: 'REJECTED', event: 'REJECT', description: 'The change is declined with a reason.' },
+    {
+      from: 'SUBMITTED',
+      to: 'UNDER_REVIEW',
+      event: 'REVIEW',
+      description: 'HR or Payroll begins verification.',
+    },
+    {
+      from: 'SUBMITTED',
+      to: 'WITHDRAWN',
+      event: 'WITHDRAW',
+      description: 'The employee withdraws the request.',
+    },
+    {
+      from: 'UNDER_REVIEW',
+      to: 'APPLIED',
+      event: 'APPROVE',
+      description: 'The change is applied to the employee record.',
+    },
+    {
+      from: 'UNDER_REVIEW',
+      to: 'REJECTED',
+      event: 'REJECT',
+      description: 'The change is declined with a reason.',
+    },
   ],
 });
 
@@ -372,27 +614,62 @@ export const EMPLOYMENT_STATES = [
 export type EmploymentState = (typeof EMPLOYMENT_STATES)[number];
 
 export type EmploymentEvent =
-  | 'ACTIVATE'
-  | 'SUSPEND'
-  | 'REINSTATE'
-  | 'START_NOTICE'
-  | 'OFFBOARD'
-  | 'REVOKE_INVITE';
+  'ACTIVATE' | 'SUSPEND' | 'REINSTATE' | 'START_NOTICE' | 'OFFBOARD' | 'REVOKE_INVITE';
 
 export const employmentMachine = new StateMachine<EmploymentState, EmploymentEvent>({
   name: 'employment',
   initial: 'INVITED',
   states: EMPLOYMENT_STATES,
   transitions: [
-    { from: 'INVITED', to: 'ACTIVE', event: 'ACTIVATE', description: 'The employee accepts the invitation and sets a password.' },
-    { from: 'INVITED', to: 'OFFBOARDED', event: 'REVOKE_INVITE', description: 'HR revokes an invitation that was never accepted.' },
-    { from: 'ACTIVE', to: 'SUSPENDED', event: 'SUSPEND', description: 'HR suspends access; every session is revoked.' },
+    {
+      from: 'INVITED',
+      to: 'ACTIVE',
+      event: 'ACTIVATE',
+      description: 'The employee accepts the invitation and sets a password.',
+    },
+    {
+      from: 'INVITED',
+      to: 'OFFBOARDED',
+      event: 'REVOKE_INVITE',
+      description: 'HR revokes an invitation that was never accepted.',
+    },
+    {
+      from: 'ACTIVE',
+      to: 'SUSPENDED',
+      event: 'SUSPEND',
+      description: 'HR suspends access; every session is revoked.',
+    },
     { from: 'SUSPENDED', to: 'ACTIVE', event: 'REINSTATE', description: 'HR restores access.' },
-    { from: 'ACTIVE', to: 'NOTICE_PERIOD', event: 'START_NOTICE', description: 'Resignation accepted; the last working day is recorded.' },
-    { from: 'NOTICE_PERIOD', to: 'ACTIVE', event: 'REINSTATE', description: 'The resignation is withdrawn.' },
-    { from: 'NOTICE_PERIOD', to: 'OFFBOARDED', event: 'OFFBOARD', description: 'The last working day passes; access ends.' },
-    { from: 'ACTIVE', to: 'OFFBOARDED', event: 'OFFBOARD', description: 'Employment ends immediately.' },
-    { from: 'SUSPENDED', to: 'OFFBOARDED', event: 'OFFBOARD', description: 'Employment ends during suspension.' },
+    {
+      from: 'ACTIVE',
+      to: 'NOTICE_PERIOD',
+      event: 'START_NOTICE',
+      description: 'Resignation accepted; the last working day is recorded.',
+    },
+    {
+      from: 'NOTICE_PERIOD',
+      to: 'ACTIVE',
+      event: 'REINSTATE',
+      description: 'The resignation is withdrawn.',
+    },
+    {
+      from: 'NOTICE_PERIOD',
+      to: 'OFFBOARDED',
+      event: 'OFFBOARD',
+      description: 'The last working day passes; access ends.',
+    },
+    {
+      from: 'ACTIVE',
+      to: 'OFFBOARDED',
+      event: 'OFFBOARD',
+      description: 'Employment ends immediately.',
+    },
+    {
+      from: 'SUSPENDED',
+      to: 'OFFBOARDED',
+      event: 'OFFBOARD',
+      description: 'Employment ends during suspension.',
+    },
   ],
 });
 

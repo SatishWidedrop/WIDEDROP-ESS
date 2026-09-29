@@ -186,7 +186,11 @@ describe('employee scope', () => {
 
   it('gives a manager their reporting chain for reads', async () => {
     const scope = await employeeScopeFor(db, principal('arjun', ['MANAGER']), 'leave:read');
-    expect(scope).toMatchObject({ kind: 'chain', ancestorEmployeeId: people.arjun, includeSelf: true });
+    expect(scope).toMatchObject({
+      kind: 'chain',
+      ancestorEmployeeId: people.arjun,
+      includeSelf: true,
+    });
   });
 
   it('confines a manager to direct reports for decisions', async () => {
@@ -253,16 +257,18 @@ describe('scope enforcement on a named employee', () => {
     await expect(
       assertEmployeeInScope(db, arjun, 'leave:read', people.neha!),
     ).resolves.toBeUndefined();
-    await expect(
-      assertEmployeeInScope(db, arjun, 'leave:decide', people.neha!),
-    ).rejects.toThrow(AppError);
+    await expect(assertEmployeeInScope(db, arjun, 'leave:decide', people.neha!)).rejects.toThrow(
+      AppError,
+    );
   });
 
   it('lets HR reach anyone in the organisation', async () => {
     const hr = principal('ananya', ['HR']);
     for (const key of Object.keys(people)) {
-      await expect(assertEmployeeInScope(db, hr, 'employee:read', people[key]!), key)
-        .resolves.toBeUndefined();
+      await expect(
+        assertEmployeeInScope(db, hr, 'employee:read', people[key]!),
+        key,
+      ).resolves.toBeUndefined();
     }
   });
 
