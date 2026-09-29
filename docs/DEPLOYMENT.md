@@ -732,7 +732,9 @@ RUN npm prune --omit=dev --workspace @widedrop/api --workspace @widedrop/shared 
 # Stage 3 — runtime. bookworm-slim rather than distroless because the Prisma
 # query engine links OpenSSL 3 and because tini + a shell make the container
 # debuggable under incident conditions. No compilers, no npm, no source, no
-# dev dependencies, no .env, non-root, read-only root filesystem.
+# dev dependencies, no .env, non-root. The filesystem is treated as read-only
+# by the application (nothing is written outside /tmp); where the platform
+# supports it, run the container with `--read-only --tmpfs /tmp:size=64m`.
 # ---------------------------------------------------------------------------
 FROM node:22.11-bookworm-slim AS runtime
 ENV NODE_ENV=production \
@@ -1667,3 +1669,1041 @@ scanned for secret patterns with the job failed and the log purged on a match; a
 `prisma/seed.ts` containing no credential of any kind (§11.1). **A secret that reaches a
 commit is compromised even after a force-push** — it is rotated per §11.6, not deleted and
 forgotten.
+
+---
+
+## 8. CI/CD
+
+Two workflows. `.github/workflows/ci.yml` already exists and is **extended**;
+`.github/workflows/deploy.yml` is **new**. Both set `permissions: contents: read` at the top
+level and widen per job. Every third-party action is pinned to a full commit SHA (shown here
+as `@<sha> # vX.Y.Z` for readability). `pull_request_target` is never used.
+
+### 8.1 On pull request — `.github/workflows/ci.yml`
+
+```yaml
+name: CI
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  quality:                        # typecheck · lint · format · env-parity · migration lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@<sha>
+      - uses: actions/setup-node@<sha>
+        with: { node-version: '22', cache: npm }
+      - run: npm ci --ignore-scripts
+      - run: npm rebuild @node-rs/argon2 sharp
+      - run: npm run build -w @widedrop/shared
+      - run: npm run db:generate -w @widedrop/api
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format:check
+      - run: node scripts/check-env-parity.mjs      # env.ts ⇄ .env.example (§7.5)
+      - run: node scripts/lint-migration.mjs        # expand/contract rules (§4.6)
+      - run: node scripts/check-vite-env-names.mjs  # no secret-shaped VITE_* (§7.2)
+
+  test:                           # unit + integration against a real Postgres 16
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ess
+          POSTGRES_PASSWORD: ess_ci
+          POSTGRES_DB: widedrop_ess_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ess -d widedrop_ess_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      NODE_ENV: test
+      DATABASE_URL:        postgresql://ess:ess_ci@127.0.0.1:5432/widedrop_ess_test?schema=public
+      DIRECT_DATABASE_URL: postgresql://ess:ess_ci@127.0.0.1:5432/widedrop_ess_test?schema=public
+    steps:
+      - uses: actions/checkout@<sha>
+      - uses: actions/setup-node@<sha>
+        with: { node-version: '22', cache: npm }
+      - run: npm ci --ignore-scripts
+      - run: npm rebuild @node-rs/argon2 sharp
+      - run: npm run build -w @widedrop/shared
+      - run: npm run db:generate -w @widedrop/api
+      - run: npm run db:migrate -w @widedrop/api       # prisma migrate deploy
+      - run: npm run db:seed:reference -w @widedrop/api
+      - run: npm test                                   # vitest: api (Fastify inject) + web
+      - run: npm run build                              # api tsc + web vite build
+      - run: node apps/web/scripts/assert-no-inline-styles.mjs
+      - uses: actions/upload-artifact@<sha>
+        with: { name: web-dist, path: apps/web/dist, retention-days: 7 }
+
+  security:
+    runs-on: ubuntu-latest
+    permissions: { contents: read, security-events: write }
+    steps:
+      - uses: actions/checkout@<sha>
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@<sha>
+        with: { node-version: '22', cache: npm }
+      - run: npm ci --ignore-scripts
+      - run: npm audit --audit-level=high                         # dependency audit
+      - uses: gitleaks/gitleaks-action@<sha>                      # secret scan, full history
+        env: { GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }
+      - uses: semgrep/semgrep-action@<sha>                        # SAST
+        with:
+          config: >-
+            p/typescript
+            p/nodejs
+            p/owasp-top-ten
+            p/secrets
+            .semgrep/widedrop.yml        # project rules: no raw SET, no === on *Hash,
+                                          # no template literal in a log message,
+                                          # no route without a permission declaration
+      - run: docker build -f apps/api/Dockerfile -t ess-api:scan .
+      - uses: aquasecurity/trivy-action@<sha>                     # image CVE scan
+        with: { image-ref: 'ess-api:scan', severity: 'HIGH,CRITICAL', exit-code: '1' }
+
+  codeql:                         # existing .github/workflows/codeql.yml
+    uses: ./.github/workflows/codeql.yml
+```
+
+Two integration tests are treated as **release gates**, not ordinary tests, and are named
+explicitly in the required-checks list:
+
+- `payroll-visibility.spec.ts` — walks the full six-step workflow and asserts `404` on every
+  employee-facing payslip route at each earlier step (`SECURITY.md` Appendix A.3).
+- `outbox.spec.ts` — the help-desk email-failure test of §6.5.
+
+### 8.2 On merge to `main` — `.github/workflows/deploy.yml`
+
+```yaml
+name: Deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write        # GHCR push
+  id-token: write        # OIDC
+
+concurrency:
+  group: deploy-production      # one deploy at a time, never cancelled mid-flight
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------- 1 ----
+  build-image:
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@<sha>
+      - uses: docker/setup-buildx-action@<sha>
+      - uses: docker/login-action@<sha>
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: push
+        uses: docker/build-push-action@<sha>
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: true
+          provenance: true          # SLSA attestation
+          sbom: true                # SBOM attached to the image
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            BUILT_AT=${{ github.event.head_commit.timestamp }}
+          tags: ghcr.io/widedrop/ess-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+
+  # ---------------------------------------------------------------- 2 ----
+  deploy-staging:
+    needs: build-image
+    environment: staging          # no approval required
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@<sha>
+      - name: Migrate staging
+        run: node scripts/run-migration-job.mjs --env staging
+        env: { RENDER_API_KEY: '${{ secrets.RENDER_API_KEY }}' }
+      - name: Deploy staging API + worker
+        run: node scripts/render-deploy.mjs --env staging --digest ${{ needs.build-image.outputs.digest }}
+        env: { RENDER_API_KEY: '${{ secrets.RENDER_API_KEY }}' }
+      - name: Smoke test staging
+        run: node scripts/smoke.mjs https://api-ess-staging.widedrop.com
+
+  # ---------------------------------------------------------------- 3 ----
+  migrate-production:
+    needs: [build-image, deploy-staging]
+    environment: production       # ⛔ REQUIRED REVIEWER — the pipeline pauses here
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@<sha>
+      - name: Record pre-migration recovery point
+        run: node scripts/record-recovery-point.mjs >> "$GITHUB_STEP_SUMMARY"
+        env: { RENDER_API_KEY: '${{ secrets.RENDER_API_KEY }}' }
+      # Runs `prisma migrate status && prisma migrate deploy && record-schema-guard
+      # && assert-privileges` as a Render ONE-OFF JOB on the private network, as
+      # role ess_migrator, and polls to completion. No database credential ever
+      # reaches the CI runner (§4.6).
+      - name: Apply migrations
+        run: node scripts/run-migration-job.mjs --env production --wait
+        env: { RENDER_API_KEY: '${{ secrets.RENDER_API_KEY }}' }
+
+  # ---------------------------------------------------------------- 4 ----
+  deploy-api:
+    needs: [build-image, migrate-production]
+    environment: production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@<sha>
+      # API first, then worker, each polled to `live`; a health-check failure
+      # leaves the previous instances serving and fails the job.
+      - run: node scripts/render-deploy.mjs --service ess-api    --digest ${{ needs.build-image.outputs.digest }} --wait
+      - run: node scripts/render-deploy.mjs --service ess-worker --digest ${{ needs.build-image.outputs.digest }} --wait
+        env: { RENDER_API_KEY: '${{ secrets.RENDER_API_KEY }}' }
+      - name: Post-deploy verification
+        run: |
+          node scripts/smoke.mjs https://api-ess.widedrop.com
+          curl -fsS -H "Authorization: Bearer $SMOKE_TOKEN" \
+            https://api-ess.widedrop.com/api/v1/version | tee /dev/stderr \
+            | grep -q '"gitSha":"${{ github.sha }}"'
+        env: { SMOKE_TOKEN: '${{ secrets.SMOKE_TOKEN }}' }
+
+  # ---------------------------------------------------------------- 5 ----
+  deploy-web:
+    needs: deploy-api             # SPA last: it may call endpoints the new API adds
+    environment: production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@<sha>
+      - uses: actions/setup-node@<sha>
+        with: { node-version: '22', cache: npm }
+      - run: npm ci --ignore-scripts
+      - run: npm run build -w @widedrop/shared
+      - run: npm run build -w @widedrop/web
+        env:
+          VITE_API_BASE_URL: https://api-ess.widedrop.com
+          VITE_APP_ENV:      production
+          VITE_BUILD_SHA:    ${{ github.sha }}
+          VITE_SENTRY_DSN:   ${{ vars.VITE_SENTRY_DSN }}
+      - run: node apps/web/scripts/gen-csp-headers.mjs        # writes dist/_headers (§2.3)
+      - run: node apps/web/scripts/assert-no-inline-styles.mjs
+      - name: Deploy to Netlify (no Netlify build minutes consumed)
+        run: |
+          npx netlify-cli@17 deploy --prod --no-build \
+            --dir=apps/web/dist --site="$NETLIFY_SITE_ID" --auth="$NETLIFY_AUTH_TOKEN" \
+            --message="ess-web ${GITHUB_SHA::7}" --json > deploy.json
+          node scripts/record-netlify-deploy.mjs deploy.json >> "$GITHUB_STEP_SUMMARY"
+        env:
+          NETLIFY_SITE_ID:    ${{ secrets.NETLIFY_SITE_ID }}
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+      - name: Verify headers reached the edge
+        run: node scripts/assert-headers.mjs https://ess.widedrop.com
+```
+
+**Deploy order is API → worker → SPA, and it is not arbitrary.** The schema is always ahead
+of the API (expand/contract), the API is always ahead of the SPA, and the SPA is the only
+component a user's browser caches — so at no instant does a client call an endpoint that does
+not exist.
+
+### 8.3 Environment protection and required checks
+
+| Control | Setting |
+|---|---|
+| Branch protection on `main` | linear history; no force-push; no deletion; **required reviewers 1** (2 for anything under `apps/api/src/auth/**`, `apps/api/src/crypto/**`, `prisma/migrations/**`, `infra/**`, `.github/workflows/**` via `CODEOWNERS`) |
+| Required status checks | `quality`, `test`, `security`, `codeql`, `payroll-visibility`, `outbox` — all must pass, and the branch must be up to date |
+| GitHub environment `staging` | no reviewer; secrets scoped to staging |
+| GitHub environment `production` | **required reviewer** (a named ops owner, who may not be the PR author), a 10-minute wait timer, deployment branch restricted to `main` only, secrets scoped to production |
+| Secrets in CI | no long-lived cloud credentials: OIDC to GHCR; `RENDER_API_KEY` scoped to deploy-only; Netlify token scoped to the ESS site. CI never receives a database URL, a KEK, a JWT key or a mail credential. |
+| Actions hygiene | all actions pinned to a full SHA; `permissions:` least-privilege per job; `npm ci --ignore-scripts`; Dependabot on `npm`, `docker` and `github-actions` |
+| Audit | every production deploy writes an `audit_event` of kind `ADMIN.DEPLOYED` (actor = the approving GitHub user, from the workflow's OIDC claims) via the post-deploy step, so a deploy is in the same trail as a payroll publication |
+
+### 8.4 Rollback — the SPA
+
+Netlify deploys are immutable and atomic, so rollback is a publish of a prior deploy.
+
+```bash
+# 1. list recent deploys and pick the last known-good id
+npx netlify-cli@17 api listSiteDeploys --data '{"site_id":"'"$NETLIFY_SITE_ID"'"}' \
+  | jq -r '.[] | select(.state=="ready") | "\(.id)  \(.created_at)  \(.title)"' | head -10
+
+# 2. restore it — atomic, ~10 seconds, no rebuild
+npx netlify-cli@17 api restoreSiteDeploy \
+  --data '{"site_id":"'"$NETLIFY_SITE_ID"'","deploy_id":"<good-deploy-id>"}'
+
+# 3. verify
+curl -sI https://ess.widedrop.com | grep -i cache-control        # index.html: no-store
+curl -s  https://ess.widedrop.com/ | grep -o 'data-build-sha="[^"]*"'
+```
+
+`index.html` is `no-store`, so the rollback reaches every client on their next navigation
+rather than after a cache TTL. Hashed assets are immutable, so a client mid-session keeps
+working against the assets it already holds. Also available in the Netlify UI:
+Deploys → the good deploy → **Publish deploy**.
+
+### 8.5 Rollback — the API
+
+```bash
+# Previous digests are in the workflow run summary and in GHCR.
+node scripts/render-deploy.mjs --service ess-api    --digest sha256:<previous> --wait
+node scripts/render-deploy.mjs --service ess-worker --digest sha256:<previous> --wait
+curl -s https://api-ess.widedrop.com/api/v1/version   # confirm gitSha is the previous one
+```
+
+Equivalent in the Render UI: service → Events → the previous deploy → **Rollback**. Because
+images are addressed by digest and `autoDeploy: false`, a rollback is deterministic and
+cannot be re-overwritten by a stray push.
+
+**Time to rollback: under 3 minutes for both services.** It is the first response to any
+production incident that began at a deploy — investigate afterwards, from logs, not from a
+broken production.
+
+### 8.6 Rollback — a migration
+
+There is no `down` migration (§4.6), and there does not need to be:
+
+| Scenario | Response |
+|---|---|
+| Migration applied, new API bad | **Roll the API image back only.** The expand-phase schema is compatible with the previous image by construction. Do not touch the database. |
+| Migration itself is wrong but harmless (a bad index, a wrong default) | Fix forward: a new migration in the next deploy. |
+| Migration is wrong and destructive (contract phase dropped something still needed) | This is why the contract phase is a separate deploy two releases later, and why the linter forbids destructive DDL alongside its replacement. If it still happens: PITR restore (§4.5) to the pre-migration recovery point recorded in the job summary, then forward-fix. Declare an incident; a restore rewinds every write since that point. |
+| Migration left `failed` in `_prisma_migrations` | Repair by hand on `DIRECT_DATABASE_URL`, then `prisma migrate resolve --applied <name>` or `--rolled-back <name>`. **Never** `migrate reset`. Write the incident up before the next deploy is approved. |
+
+### 8.7 Dependency and supply-chain posture in the pipeline
+
+`npm audit --audit-level=high` fails the PR; Dependabot raises weekly PRs across npm, Docker
+and Actions; Trivy fails the build on a `HIGH`/`CRITICAL` image CVE; the image ships a
+**provenance attestation and an SBOM**; `npm ci --ignore-scripts` is the default, with
+`@node-rs/argon2` and `sharp` rebuilt in an explicit, reviewable step; and the lockfile is
+committed and never regenerated in CI.
+
+---
+
+## 9. Observability
+
+### 9.1 Structured logs
+
+`pino` JSON to stdout, one line per event, shipped by the platform to the log backend. Every
+line carries: `time` (ISO-8601 UTC), `level`, `service` (`ess-api` \| `ess-worker`), `env`,
+`version` (git SHA), `requestId`, `route` (**templated** — `/payslips/:id`, never the id),
+`method`, `statusCode`, `durationMs`, `userId` (uuid only), `sessionId`, `roles`, `ipHash`,
+`outcome`.
+
+`requestId` is taken from an inbound `X-Request-Id` when it is a valid UUID, otherwise
+generated; it is echoed in the response header, stored on `audit_event.request_id`, and
+**propagated into worker jobs via the job payload** — so one identifier ties an HTTP request,
+its audit rows, its logs and its background work together. This is what makes "why did this
+employee's payslip not appear?" a single query rather than an investigation.
+
+**PII redaction is two independent mechanisms**, because either alone fails
+(`SECURITY.md` §11.2):
+
+1. **Denylist** (`pino.redact`) at every depth: `authorization`, `cookie`, `x-wd-csrf`,
+   `set-cookie`, `*.password`, `*.token`, `*.refreshToken`, `*.accessToken`, `*.secret`,
+   `*.totp`, `*.otp`, `*.code`, `*.recoveryCode`, `*.pan`, `*.aadhaar`, `*.accountNumber`,
+   `*.ifsc`, `*.dateOfBirth`, `*.personalEmail`, `*.personalPhone`, `*.currentAddress`,
+   `*.permanentAddress`, `*.ciphertext`, `*.body`.
+2. **Allowlist — the real control.** Request and response **bodies are never logged at all**;
+   the HTTP logger emits only the fixed field list above. An ESLint rule forbids template
+   literals and string concatenation in a logger's message argument, which is what stops
+   `` log.info(`saving ${email}`) `` — the single most common PII leak into logs.
+
+Never logged under any level: passwords or derivatives; access/refresh/reset/invite/CSRF
+tokens; TOTP secrets, codes or recovery codes; any DEK, KEK, pepper or HMAC key; decrypted
+PAN/Aadhaar/UAN/bank/address/DOB/personal contact values; **payslip amounts**; ticket, leave
+or rejection free text; raw client IPs or user-agent strings (hashes only); full SQL
+parameter values (Prisma query logging is `warn`+ in production, never `query`).
+
+Retention: **30 days hot, 180 days cold, then deleted.** Logs are an operational artefact;
+`ess.audit_event` is the record of truth and has its own, longer retention
+(`DATA-MODEL.md` §18.3).
+
+### 9.2 Health, readiness and version endpoints
+
+| Endpoint | Exposure | Semantics |
+|---|---|---|
+| `GET /api/v1/healthz` | public, `ip` 60/min, `Cache-Control: no-store` | **Liveness only, touching no dependency** — `200 {"status":"ok"}`. Wired to the container `HEALTHCHECK` and to Render's `healthCheckPath`. A Postgres blip must not restart-loop the API. |
+| `GET /api/v1/readyz` | **private interface only, not internet-routable** | `200 {"status":"ready","checks":{"db":"ok","objectStorage":"ok","kms":"ok","rateLimitStore":"ok","mailProvider":"degraded"}}` or `503`. `db`, `kms` and `rateLimitStore` failing ⇒ not ready. **`mailProvider: "degraded"` does not fail readiness** — the outbox absorbs it (§6.5). Flips to `503` immediately on `SIGTERM` so the platform drains the instance before it stops accepting. |
+| `GET /api/v1/version` | requires `auth:login` | `{"apiVersion","gitSha","builtAt","schemaSha256","payrollEngineVersion"}`. No dependency versions, no hostnames, no env names — a version endpoint is reconnaissance surface. |
+| `GET /api/v1/metrics` | private interface **and** `METRICS_BEARER_TOKEN` | Prometheus exposition (§9.3) |
+
+### 9.3 Metrics worth collecting
+
+Prometheus counters and histograms (`SECURITY.md` §11.3), scraped by the platform's metrics
+agent or Grafana Cloud's agent:
+
+| Group | Metrics |
+|---|---|
+| **HTTP** | `http_requests_total{route,status}`, `http_request_duration_seconds{route}` (p50/p95/p99), `http_response_size_bytes` |
+| **Auth** | `auth_login_total{outcome}`, `auth_lockout_total`, `mfa_failure_total`, `refresh_reuse_total`, `authz_denied_total{permission,role}` |
+| **Abuse** | `rate_limit_tripped_total{route}`, `csrf_rejected_total{reason}`, `upload_rejected_total{reason}` |
+| **Privacy** | `pii_unmask_total{kind,actor_role}`, `export_total{kind}` |
+| **Payroll** | `payroll_state_transitions_total{from,to}`, **`payroll_cycle_duration_seconds{phase}`** (a histogram per phase: input upload → attendance submitted → manager approved → validated → calculated → published), `payroll_validation_failures_total{check}`, `payslips_generated_total`, `payslips_published_total` |
+| **Queues** | `outbox_pending`, `outbox_failed_total`, `outbox_send_duration_seconds`, `background_job_duration_seconds{job_name}`, `background_job_failures_total{job_name}`, `background_job_lease_expired_total` |
+| **Integrity** | `audit_chain_verification_failures_total`, `audit_write_latency_seconds`, `decrypt_failures_total`, `file_integrity_mismatch_total`, `orphan_ciphertext_total`, `shadow_object_total` |
+| **Dependencies** | `db_pool_in_use`, `db_query_duration_seconds`, `pgbouncer_cl_waiting`, `hibp_degraded_total`, `clamav_unavailable_total`, `ses_send_failures_total{reason}` |
+
+`payroll_cycle_duration_seconds` earns its place: it is the single number that tells HR
+whether the mandated six-step workflow is being completed on time, and its per-phase split
+shows *which* actor is the bottleneck — all derived from persisted `payroll_cycle` timestamps,
+never from an estimate.
+
+### 9.4 Uptime checks
+
+| Check | Target | Interval | From | Fails after |
+|---|---|---|---|---|
+| API liveness | `GET https://api-ess.widedrop.com/api/v1/healthz` expecting `200` and `"ok"` | 60 s | 3 regions incl. Mumbai/Singapore | 2 consecutive |
+| SPA availability | `GET https://ess.widedrop.com/` expecting `200` and the `Strict-Transport-Security` header | 60 s | 3 regions | 2 consecutive |
+| Synthetic login | scripted `login → MFA → GET /me/dashboard` with a dedicated, least-privileged probe account | 15 min | 1 region | 2 consecutive |
+| TLS expiry | both hosts | daily | — | < 21 days |
+| Worker heartbeat | the worker writes `ess_ops.background_job('worker-heartbeat')` every minute; a dead-man check alerts if the newest row is older than 5 minutes | 60 s | — | 5 min |
+| DNS drift | `ess`, `api-ess`, and the apex/`www`/`MX` of `widedrop.com` compared against `infra/dns/*.before.txt` | daily | — | any diff |
+
+The worker heartbeat matters more than it looks: a worker that dies silently stops the
+outbox, the SLA escalations, the leave accruals and the payroll calculation, and **nothing in
+the UI would show an error** — the symptoms would be "my ticket email never arrived" a day
+later. The dead-man check converts that into a page.
+
+### 9.5 Alert thresholds
+
+Defined in `infra/monitoring/alerts.yaml`, reviewed quarterly, every P1 with a runbook in
+`docs/runbooks/`.
+
+| Alert | Condition | Sev | Route |
+|---|---|---|---|
+| API down | uptime check failing 2× | **P1** | page |
+| Error rate | `5xx` > 2 % of requests over 5 min, or any `500` on `/auth/*` | **P1** | page |
+| Latency | p95 > 2 s for 10 min | **P2** | alert channel |
+| Refresh-token reuse | any `AUTH.REFRESH_REUSE_DETECTED` | **P1** | page + email the affected user |
+| Audit chain broken | any verification failure | **P1** | page |
+| Decrypt failure / AAD mismatch | `decrypt_failures_total` > 0 | **P1** | page |
+| Mass PII unmask | `pii_unmask_total` > 30 per actor per hour | **P1** | page + auto-suspend that session pending review |
+| Malware in upload | any `SECURITY.UPLOAD_MALWARE_DETECTED` | **P1** | page |
+| Database | connections > 80 % of `max_connections`, disk > 80 %, replication/PITR lag > 15 min, or `pgbouncer_cl_waiting` > 0 for 5 min | **P1** | page |
+| Worker dead | heartbeat older than 5 min | **P1** | page |
+| Credential-stuffing wave | > 100 `AUTH.LOGIN_FAILED` org-wide in 5 min, or ≥ 25 distinct accounts from one `ip_hash` in 10 min | **P2** | alert channel |
+| Failed logins, single account | > 10 in 10 min for one account | **P2** | alert + notify the user |
+| Payroll published outside the change window | `PAYROLL.RUN_PUBLISHED` outside the configured window, or by a first-time publisher | **P2** | alert + HR notification |
+| Payroll cycle stalled | a cycle in one phase > 72 h, or `payroll_cycle_duration_seconds` beyond the 90th percentile of the last 6 cycles | **P2** | alert to HR + Accounts |
+| Bulk approvals | > 100 approve/reject by one actor in an hour | **P2** | alert (rubber-stamping or a compromised manager) |
+| Role granted | any `ADMIN.ROLE_GRANTED` for `HR`/`ACCOUNTS` | **P2** | alert channel, **always**, even when legitimate |
+| Export volume | any export > 1 000 rows, or > 3 exports per actor per day | **P2** | alert |
+| Spam complaint | any SES `Complaint` | **P2** | alert |
+| Outbox backlog | `outbox_pending` > 50 for 15 min, or any `TICKET.EMAIL_FAILED` | **P3** | ticket |
+| Job failures | `background_job_failures_total{job_name}` > 3 in an hour | **P3** | ticket |
+| Breach-check degraded | `hibp_degraded_total` rising for 15 min | **P3** | ticket |
+| ClamAV unavailable | `clamav_unavailable_total` > 0 for 30 min (uploads are piling up `QUARANTINED`) | **P3** | ticket |
+| CSP violations | a new `blocked-uri` appearing after a release | **P3** | ticket |
+| Cert expiry / DNS drift | < 21 days / any diff | **P3** | ticket |
+
+**Alert hygiene:** every alert names the runbook that resolves it; an alert that fires more
+than twice without action is either fixed or deleted; P1 pages a human, P2 posts to the
+on-call channel, P3 opens a ticket. There is no "informational" severity — an alert nobody
+acts on trains people to ignore the ones that matter.
+
+### 9.6 Error tracking
+
+Sentry (or GlitchTip, self-hosted, if a processor must be avoided), with PII scrubbing
+configured **before** the first event is sent:
+
+| Setting | Value |
+|---|---|
+| `sendDefaultPii` | **`false`** |
+| `beforeSend` | drops the event entirely if its message or any frame's local variables match the denylist of §9.1; strips `request.data`, `request.cookies`, `request.headers.authorization`, and every query string |
+| User context | `{ id: <uuid>, roles: [...] }` only — **never** an email, a name, or an employee code |
+| Breadcrumbs | `console` and `fetch` breadcrumbs carry the **templated** route and the status only; the URL's path parameters are masked (`/payslips/[id]`) |
+| `tracesSampleRate` | `0.05` server, `0.02` browser |
+| Release | the git SHA, so an error maps to a deploy; source maps uploaded **and then deleted from the published bundle** (`sourcemap: 'hidden'` in the Vite production config — they are needed by Sentry, not by the public) |
+| Data residency | Sentry's `de`/`us` region choice recorded in `docs/PROCESSORS.md`; only scrubbed, identifier-level data leaves the primary region |
+| Retention | 90 days |
+
+The browser DSN is public by design (it is in the bundle) and is rate-limited and
+origin-restricted at Sentry. The server DSN is a secret (§7.2).
+
+---
+
+## 10. Cost
+
+Indicative USD/month for a small organisation (~120 employees, ~40 daily active users, one
+payroll cycle a month, < 5 GB of documents in year one). **List prices as understood in 2026;
+re-verify before committing — the ratios matter more than the absolutes.**
+
+### 10.1 Recommended production configuration
+
+| Line | Service | Spec | $/mo |
+|---|---|---|---|
+| ESS SPA | Netlify (free tier, own team) | static hosting, built in CI so 0 build minutes | **0** |
+| API | Render Web Service × 2 | Standard, 1 vCPU / 2 GB, `singapore` | 50 |
+| Worker | Render Background Worker × 1 | Starter, 0.5 vCPU / 512 MB | 7 |
+| PgBouncer | Render Private Service × 1 | Starter | 7 |
+| ClamAV | Render Private Service × 1 | Standard, 2 GB (signature DB) | 25 |
+| Database | Render PostgreSQL | Standard, 4 GB RAM / 100 GB SSD, daily backup + PITR | 95 |
+| Staging (API + worker + DB) | Render | Starter × 2 + Postgres Basic | 33 |
+| Object storage | Cloudflare R2 | 20 GB stored, ~200k Class-A/B ops, **zero egress** | 2 |
+| Off-provider backup bucket | R2 in a second account | 20 GB, object-lock | 1 |
+| Email | Amazon SES `ap-south-1` | ~8 000 messages | 1 |
+| Error tracking | Sentry Team | 50k events, 90-day retention | 26 |
+| Logs | Better Stack / Grafana Cloud | ~10 GB ingest, 30 d hot | 25 |
+| Uptime + status page | Better Stack Uptime | 6 monitors, 60 s, 3 regions | 8 |
+| DNS | existing registrar / Cloudflare | 2 records added | 0 |
+| Container registry | GHCR | under the free private allowance | 0 |
+| CI | GitHub Actions | ~600 min/mo on a private repo (2 000 free) | 0 |
+| | | **Total** | **≈ 280** |
+
+Roughly **$2.30 per employee per month**, all-in, for a system that holds payroll.
+
+### 10.2 What drives the number
+
+| Driver | Comment |
+|---|---|
+| Database plan (95) | the single largest line, and it is bought for **PITR and backup retention**, not for size or speed. Do not economise here — it is the difference between a 2-hour recovery and a permanent loss of payroll history. |
+| ClamAV (25) | an awkward cost for a rarely-used service, but `clamd` needs 2 GB resident. §10.3 gives the cheaper arrangement and its trade-off. |
+| Egress (≈ 0) | R2's zero-egress pricing is why storage is $2 rather than $20–40: payslip and Form 16 downloads are pure egress, and they spike every month-end and every July. |
+| Netlify (0) | free tier is genuinely sufficient because the SPA is static and built in CI. The account-wide build-minute risk to the marketing site is eliminated by §2.5, not merely tolerated. |
+| Staging (33) | the cheapest insurance in the table. Do not delete it to save $33; it is where migrations and key rotations are rehearsed. |
+
+### 10.3 Cheapest viable configuration, and what it sacrifices
+
+| Line | Change | $/mo |
+|---|---|---|
+| API | 1 × Starter instead of 2 × Standard | 7 |
+| Worker | Starter (unchanged) | 7 |
+| PgBouncer | **removed** — Prisma `connection_limit=5` on a single instance | 0 |
+| ClamAV | **co-located in the worker container** on a Standard plan (worker 7 → 25) | +18 |
+| Database | Render PostgreSQL **Basic**, 1 GB / 16 GB SSD, daily backup, **no PITR** | 19 |
+| Staging | **removed** | 0 |
+| Logs | platform stdout retention only (7 days) | 0 |
+| Errors | GlitchTip self-hosted on the worker box, or Sentry free (5k events) | 0 |
+| Uptime | Healthchecks.io / UptimeRobot free | 0 |
+| Storage, email, SPA, CI | unchanged | 3 |
+| | **Total** | **≈ 54** |
+
+**What that sacrifices, stated plainly so the decision is informed:**
+
+1. **No PITR.** RPO goes from 5 minutes to **24 hours**. A bad `UPDATE` at 16:00 costs the
+   whole day. For a payroll system this is the sacrifice to think hardest about; the weekly
+   off-provider `pg_dump` (§4.5) becomes *essential* rather than a belt-and-braces measure,
+   and should be moved to daily.
+2. **No zero-downtime deploys.** One API instance means every deploy and every platform
+   restart is a 20–40 second outage. Acceptable for an internal portal deployed outside
+   business hours; not acceptable during a payroll publication window.
+3. **No redundancy.** One instance dying is an outage until the platform restarts it.
+4. **No staging**, so migrations, key rotations and payroll changes are rehearsed in
+   production. This is the change most likely to cause the incident the other savings then
+   have to survive. If only one line is restored from this list, restore staging.
+5. **No connection pooler**, so the instance count can never grow without revisiting §4.3,
+   and a connection leak becomes an outage rather than a queue.
+6. **7-day log retention**, so any investigation older than a week has only
+   `ess.audit_event` to work from. The audit trail is deliberately designed to be sufficient
+   for the *security* questions; it is not sufficient for performance forensics.
+7. **ClamAV in the worker** couples upload scanning to job processing: a payroll run at 100 %
+   CPU slows virus scanning, and an OOM in either kills both.
+
+**Recommended middle path (~$150):** keep PITR (Standard database), keep staging, run
+1 × Standard API, drop the paid log backend, keep ClamAV separate. That preserves every
+*recovery* and *rehearsal* property and gives up only redundancy and log depth.
+
+### 10.4 Scaling markers
+
+| Marker | Change | Added $/mo |
+|---|---|---|
+| > 500 employees | API 2 → 3 Standard; database → 8 GB | ~70 |
+| > 200 rps sustained | rate-limit store → managed Redis (`RATE_LIMIT_STORE=redis`) | ~15 |
+| Payroll run > 10 min | worker Starter → Standard, `WORKER_CONCURRENCY` 4 → 8 | 18 |
+| In-country residency required | Fly.io `bom` + Neon/Crunchy `ap-south-1` (§3.7) | ~+20 |
+| Audit retention > 8 years | partition `ess.audit_event` by year, archive cold partitions to R2 | ~5 |
+
+---
+
+## 11. Runbooks
+
+Each lives in `docs/runbooks/<name>.md` as the executable copy; this section is the
+authority for their content. Every runbook ends by writing what actually happened to
+`docs/runbooks/oplog.md` with the date, operator and elapsed time.
+
+### 11.1 First-time production bootstrap
+
+**Goal:** a serving production system with exactly one HR/Accounts administrator who set
+their own password, and **no default credential anywhere in the system at any instant**.
+
+**Pre-conditions:** §2.7 DNS verified; the `production` GitHub environment created with its
+reviewer; every secret in §7.2 minted fresh (`openssl rand -base64 48`, `openssl rand -base64 32`
+for the KEK, `openssl genpkey -algorithm ed25519` for the JWT key) and typed into the Render
+environment group — never generated on a laptop that syncs to cloud storage, never pasted
+into a chat.
+
+```
+B1.  Apply the blueprint: create ess-postgres, ess-pgbouncer, ess-clamav, ess-api,
+     ess-worker. Confirm ipAllowList is [] and neither private service has a public URL.
+B2.  Seal the break-glass envelope: MASTER_KEK_V1, the age backup identity and the
+     ess_owner password, split between two officers (§7.3). Record in secret-inventory.md.
+     Do this BEFORE any data exists — a KEK lost after go-live is unrecoverable ciphertext.
+B3.  Create the database roles (§4.4) as ess_owner, with fresh passwords. Apply the
+     statement/lock timeouts. Then close the ess_owner session and do not reopen it.
+B4.  Run the migration job: prisma migrate deploy → record-schema-guard → assert-privileges.
+     assert-privileges MUST pass; if it does not, stop — the grants are wrong.
+B5.  Deploy ess-api and ess-worker on the first image digest. /healthz green,
+     /readyz all "ok" except mailProvider (which may be "degraded" until B7).
+B6.  Seed reference data: npm run db:seed:reference.
+     This writes ONLY configuration — leave types and schemes, holiday calendar, document
+     types, ticket categories, expense categories, notification kinds, permission and role
+     rows, tax slabs for the FY. It creates NO employee, NO payslip, NO ticket, NO
+     announcement, NO balance. Every insert is audited with actor_kind='MIGRATION'.
+     Verify: SELECT count(*) FROM ess.employee;  →  0
+             SELECT count(*) FROM ess.payslip;   →  0
+     The portal at this point is a correct, fully-rendered EMPTY system: every screen shows
+     its designed empty state (directive 9). Open it and confirm that before adding anyone.
+B7.  Verify SES: DKIM CNAMEs resolving, SPF/DMARC published, the domain "Verified" in the
+     SES console, MAIL_FROM domain verified. Send one test to helpdesk@widedroptech.com and
+     confirm the SNS Delivery event reaches /api/v1/webhooks/ses.
+B8.  Create the organisation row and its settings (legal name, PAN/TAN, address, financial
+     year start = April, pay-day rule, business hours, helpdesk_email =
+     helpdesk@widedroptech.com) via the bootstrap tool, audited as ADMIN.ORG_CREATED.
+B9.  CREATE THE FIRST ADMINISTRATOR — no password is involved at any point:
+
+       render jobs create --service ess-api --command \
+         "node apps/api/dist/scripts/bootstrap-admin.js \
+            --email first.admin@widedroptech.com \
+            --employee-code WD0001 \
+            --full-name '<name>' \
+            --roles HR,ACCOUNTS"
+
+     What the script does:
+       · REFUSES and exits 1 if any app_user already holds HR or ACCOUNTS — it is a
+         one-time bootstrap, not a back door, and it cannot be used to mint a second admin;
+       · creates the employee and the app_user in status INVITED with NO password hash
+         column populated at all (not an empty string, not a default — NULL);
+       · mints a 32-byte random activation token, stores ONLY its SHA-256, expires_at =
+         now() + 60 minutes, single use;
+       · enqueues an email_outbox row of kind USER_INVITE to that address, which the worker
+         delivers through SES;
+       · prints the token to stdout ONLY when --print-link is passed, as an explicit
+         break-glass path for when mail is not yet working;
+       · writes USER.INVITED and ADMIN.BOOTSTRAP_ADMIN_CREATED audit events.
+
+B10. The administrator opens the emailed link at https://ess.widedrop.com/activate?token=…,
+     sets their own password (checked against HIBP, Argon2id + pepper), and is FORCED
+     through TOTP enrolment before the account can reach ACTIVE — HR and ACCOUNTS have no
+     MFA grace period (SECURITY.md §2.7). Recovery codes are shown once and stored by them.
+B11. Verify the bootstrap left nothing behind:
+       SELECT id,status,password_hash IS NULL AS no_pw FROM ess.app_user;   → 1 row, ACTIVE
+       SELECT count(*) FROM ess.user_invitation WHERE consumed_at IS NULL;  → 0
+       grep -ri "password" prisma/seed*.ts                                  → no credential
+     If --print-link was used, purge that job's log from the platform now.
+B12. Second administrator: the first admin invites them through the UI (HR employee:create).
+     Granting HR or ACCOUNTS requires a second HR approver (SECURITY.md §4.9), so the org
+     is never one person away from being locked out — and never one compromised account
+     away from an unreviewed privilege grant.
+B13. Turn on the alerts in §9.5, run the synthetic-login probe, and file the first entry in
+     dr-drill-log.md with a restore drill scheduled for the end of month one.
+```
+
+**The property to preserve:** at no point does a known or default password exist. The
+credential is created by the human who will own it, over TLS, from a single-use token with a
+60-minute life, with MFA enforced before the account becomes usable.
+
+### 11.2 Running a monthly payroll cycle end to end
+
+**Roles:** Accounts (payroll inputs), HR (attendance submission), Managers (attendance
+approval), Accounts (publication). Separation of duties is enforced server-side; this
+runbook is the *operational* sequence around it. The ordering is the mandated workflow and
+the system will refuse to proceed out of order — nothing here can be skipped by agreement.
+
+```
+P0.  T-3 days — PRE-FLIGHT (ops)
+     · confirm the previous cycle is CLOSED:
+         SELECT id,period_label,status FROM ess.payroll_cycle ORDER BY period_start DESC LIMIT 3;
+     · confirm outbox_pending = 0 and no FAILED rows
+     · confirm the last audit-chain verification passed
+     · confirm a backup completed in the last 24 h
+     · if the last cycle's payroll_cycle_duration_seconds exceeded 10 min, scale
+       ess-worker to Standard for the window (§3.4) and note it here
+     · freeze deploys touching prisma/migrations/** or apps/api/src/payroll/** until P7
+
+P1.  CYCLE OPEN (job payroll-cycle-open, or Accounts via POST /payroll/cycles)
+     Creates payroll_cycle in DRAFT and its paired attendance_period in OPEN, 1:1, and
+     resolves scheduled_pay_date from the org pay-day rule against the holiday calendar.
+     Guard: no other open cycle, prior cycle closed.
+
+P2.  ACCOUNTS UPLOAD PAYROLL DATA  →  cycle INPUTS_UPLOADED
+     Accounts uploads the input file(s) (CSV/XLSX, ≤ 25 MiB). Every accepted row is
+     persisted to payroll_input_row with row_number and source_file_id; formulas are never
+     evaluated; the file's sha256 and the batch are recorded (ux_pib__cycle_file_sha makes
+     a re-upload of the same bytes idempotent).
+     Verify: the Payroll screen's counts come from payroll_input_row, not from the file.
+     Rejected rows are listed with their row numbers — fix and re-upload the corrected file.
+
+P3.  HR SUBMITS ATTENDANCE  →  attendance_period SUBMITTED
+     HR closes the attendance period. The system computes present/absent/LOP days from
+     attendance_record and the approved leave_request_day rows. Submission is blocked
+     while any employee in the period has no attendance record.
+     Verify: SELECT count(*) FROM ess.attendance_record WHERE period_id=… AND status='DRAFT'; → 0
+
+P4.  MANAGERS REVIEW AND APPROVE  →  each attendance_approval APPROVED
+     Every manager with direct reports in the period gets an approval task. Job
+     attendance-approval-reminder nags hourly; §1.6 of WORKFLOWS.md tracks who still owes.
+     Ops view:
+       SELECT manager_employee_id, count(*) FILTER (WHERE status='PENDING') AS owing
+         FROM ess.attendance_approval WHERE period_id = :p GROUP BY 1 HAVING count(*) > 0;
+     Chase the named managers. A manager on leave is handled by REASSIGNED, not by an
+     override — HR reassigning is audited and visible.
+     The period reaches APPROVED only when the last approval lands (guarded by
+     pg_advisory_xact_lock so two simultaneous approvals cannot both fire the completion).
+
+P5.  VALIDATION  →  cycle VALIDATED  (system, on demand from Accounts)
+     Runs the §1.5 checklist: every active employee has a salary structure; attendance
+     approved for all; no unresolved LOP conflict; statutory rates present for the FY; bank
+     details present and CLEAN for every payee; expense cut-off applied; no duplicate input
+     row. Failures are listed per employee with the failing check — nothing is auto-fixed.
+     THIS IS THE GATE. Until it passes, no payslip row exists anywhere in the database.
+
+P6.  GENERATION  →  cycle CALCULATING → CALCULATED
+     One worker task takes pg_advisory_lock('payroll:'||cycle_id) on a DIRECT connection
+     (§4.3) and holds it for the whole run. Each payslip records payroll_engine_version and
+     input_digest = SHA-256 over the canonical JSON of its inputs (SECURITY.md §7.4).
+     Watch: payroll_cycle_duration_seconds{phase="calculating"}, background_job_failures_total.
+     Payslips exist now but are NOT visible: no payslip_publication row exists, and the
+     employee-facing routes return 404 (API.md §11.1, enforced in SQL by the publication
+     gate in the RLS policy — not by a UI condition).
+
+P7.  REVIEW  (Accounts, and HR for headcount)
+     Compare the run's totals against the previous cycle; investigate any employee whose net
+     moved more than a configured threshold. Re-verify a sample:
+       node apps/api/dist/tools/verify-payslip-digests.js --cycle <id> --sample 25
+     A correction at this stage is a re-run (WORKFLOWS.md §1.10), not an edit: the run is
+     superseded and both remain in the audit trail.
+
+P8.  PUBLISH  →  cycle PUBLISHED, payslips visible
+     Accounts publishes. In ONE transaction: every payslip.status, every
+     payslip_publication row, the FY rollups, the TDS quarter recompute, the reimbursement
+     batch → PAID with its expense claims → REIMBURSED, the tax-regime election lock, and
+     one notification + one email_outbox row per employee.
+     ONLY NOW does a payslip appear in the employee's Payslips screen. That is directive 6,
+     and it is enforced in the database, not in the client.
+     Alerts: publication outside the configured change window, or by a first-time publisher,
+     fires a P2 by design (§9.5) — acknowledge it, do not silence it.
+
+P9.  POST-CYCLE (ops, same day)
+     · outbox_pending drains to 0; investigate any FAILED row
+     · spot-check one employee end-to-end: payslip visible, PDF downloads, amounts match
+       the persisted payslip_line rows
+     · confirm the payroll-integrity-verify nightly job passes on the new cycle
+     · scale ess-worker back to Starter if it was raised at P0
+     · unfreeze deploys
+     · record the cycle's wall-clock duration per phase in oplog.md — this is the series
+       that makes "payroll is slipping" an observation rather than an opinion
+```
+
+**If something goes wrong:** a failure in P2–P5 blocks progress and nothing is generated —
+fix the underlying data and re-run the step. A failure during P6 leaves the cycle in
+`CALCULATING` with the advisory lock released on worker death; the run is resumable and
+idempotent per `ux_payslip__one_live_per_cycle_employee`. A problem discovered **after** P8
+is never fixed by editing a payslip — it is an off-cycle correction run (`WORKFLOWS.md`
+§1.10), because a published payslip is immutable and an employee has already seen it.
+
+### 11.3 Rotating the encryption key
+
+Two distinct operations. **Rehearse both in staging first** — the staging database has the
+same schema and synthetic data, so a rehearsal proves the scripts, the timings and the
+verification queries.
+
+#### 11.3.1 KEK rotation (cheap, ~minutes, no downtime) — annually, or immediately on suspicion
+
+Only the wrapped DEKs change; **no column data is touched**.
+
+```
+K1.  Mint the new KEK:  openssl rand -base64 32   → MASTER_KEK_V2
+     Add it to the Render environment group ALONGSIDE MASTER_KEK_V1. Do not remove V1.
+     Add V2 to the sealed break-glass envelope before proceeding (§7.3).
+K2.  Set MASTER_KEK_ACTIVE_VERSION=2 and redeploy. Both KEKs are now resident: the app
+     unwraps with whichever kek_version each data_key row names, and wraps new DEKs with V2.
+K3.  Re-wrap, as a one-off job:
+       node apps/api/dist/tools/rewrap-deks.js --from 1 --to 2
+     For each data_key row, in a transaction: unwrap with V1, re-wrap with V2, set
+     kek_version=2. There are single-digit rows (one per purpose), so this is seconds.
+     Emits SECURITY.KEY_ROTATION_STARTED / _COMPLETED with counts.
+K4.  Verify:
+       SELECT purpose, kek_version, status FROM ess.data_key ORDER BY purpose;
+         → every live row kek_version = 2
+       node apps/api/dist/tools/decrypt-canary.js --all-purposes   → all OK
+K5.  Smoke: read one masked profile, one unmasked statutory id (step-up), one bank last4,
+     one encrypted ticket body. decrypt_failures_total must stay at 0 for 24 h.
+K6.  After 30 days with no decrypt failure, remove MASTER_KEK_V1 from the environment group
+     and from the sealed envelope; record the destruction in secret-inventory.md.
+     DO NOT remove it earlier — it is the only way back if K3 missed a row.
+Rollback: set MASTER_KEK_ACTIVE_VERSION=1 and run rewrap-deks.js --from 2 --to 1.
+          Safe at any point because both KEKs are resident throughout.
+```
+
+#### 11.3.2 DEK rotation / re-encryption (expensive, hours, online) — annually, or on suspicion
+
+Per `purpose` (`PII`, `STATUTORY`, `BANK`, `MFA`, `TICKET`). Run **outside** a payroll window.
+
+```
+D1.  Schedule: not during a payroll cycle (§11.2 P1–P8), not during month-end.
+     Announce a 5 % database CPU uplift for the duration.
+D2.  If BLIND_INDEX_KEY is rotating too, add BLIND_INDEX_KEY_V2 now — the *_bidx values are
+     recomputed in the SAME backfill pass, so rotating them separately would mean two scans.
+D3.  Insert the new data_key row as PENDING, wrapped under the current KEK; flip it ACTIVE
+     and the previous one RETIRING:
+       node apps/api/dist/tools/rotate-dek.js --purpose BANK --begin
+     From this moment new writes use the new DEK and reads still decrypt with whichever
+     dek_id the envelope names. This dual-read is inherent to the envelope format and needs
+     no feature flag — which is why a stall here is harmless.
+D4.  Backfill:
+       node apps/api/dist/tools/reencrypt-worker.js --purpose BANK --batch 500
+     Walks each affected table in id order, 500 rows per transaction,
+     SELECT … FOR UPDATE SKIP LOCKED, decrypt-old → encrypt-new (recomputing *_bidx when
+     the index key rotated). Progress is checkpointed in reencryption_job(purpose,
+     table_name, last_id, rows_done, …) so it is resumable after any interruption.
+     Throttle to ≤ 5 % database CPU; pause with --stop, resume with the same command.
+D5.  Monitor: db_query_duration_seconds, replication/PITR lag, decrypt_failures_total (must
+     stay 0), and the reencryption_job checkpoint advancing.
+D6.  Completion check — count envelopes still naming the retiring dek_id:
+       SELECT count(*) FROM ess.employee_bank_account
+        WHERE substring(account_number_enc from 2 for 1) = :old_dek_id;   → 0
+     Repeat for every table in the purpose. Only then set the old row RETIRED.
+D7.  Verify: decrypt-canary across all purposes; a masked read (which uses the plaintext
+     last4 column and performs NO decryption) still renders; a step-up unmask returns the
+     right value and writes its audit event.
+D8.  After 30 days, delete the retired row's wrapped material. Record in
+     secret-inventory.md. Emit SECURITY.KEY_ROTATION_COMPLETED with the row counts.
+If it stalls: the system is fully functional with the rotation half-done — that is the
+     design. Resume when convenient. Do NOT delete the retiring DEK while D6 is non-zero.
+```
+
+### 11.4 Rotating JWT signing keys
+
+Every 90 days, scheduled; immediately on suspected exposure. **Zero downtime, zero forced
+logouts**, because verification accepts every live `kid` while signing uses one.
+
+```
+J1.  Mint:
+       openssl genpkey -algorithm ed25519 -out new.pem
+       openssl pkey -in new.pem -pubout -out new.pub
+     kid = wd-ess-YYYYMM-<4 hex>, matching ^wd-ess-\d{6}-[0-9a-f]{4}$.
+J2.  Add JWT_SIGNING_KEY_<newkid> and JWT_PUBLIC_KEY_<newkid> to the environment group.
+     LEAVE the current key in place. Redeploy.
+     State: NEXT — published in JWKS, accepted for verification, not yet signing.
+J3.  Confirm the JWKS endpoint serves both kids and that a token signed by the old kid still
+     verifies. Wait one full deploy cycle so every instance holds both keys.
+J4.  Set JWT_ACTIVE_KID=<newkid>. Redeploy.
+     State: new = CURRENT (signs), old = RETIRED (verifies only).
+     Every access token issued from now carries the new kid. Existing access tokens remain
+     valid for at most ACCESS_TOKEN_TTL_SECONDS (600 s), and refresh tokens are unaffected
+     because they are opaque database rows, not JWTs — so nobody is logged out.
+J5.  Verify:
+       curl -s https://api-ess.widedrop.com/api/v1/.well-known/jwks.json | jq '.keys[].kid'
+       log in, decode the access token header, confirm the new kid
+       auth_login_total{outcome="success"} unchanged; no spike in 401s
+J6.  After 24 h (> 2 × the access-token TTL, with margin), remove the old
+     JWT_SIGNING_KEY_<oldkid> and JWT_PUBLIC_KEY_<oldkid> and redeploy. Record in
+     secret-inventory.md.
+Emergency (key believed exposed): perform J1–J4 back-to-back, then IMMEDIATELY drop the old
+     key (skip J6's wait) and bump token_version for every user, which invalidates every
+     access token at once and forces a refresh — at the cost of a brief burst of refresh
+     traffic. Then follow §11.6.
+```
+
+### 11.5 Restoring from backup
+
+The drill in §4.5 is the rehearsal; this is the incident version. **Declare an incident
+first** — a restore is never a quiet operation, because it rewinds committed work.
+
+```
+R1.  DECLARE. Name an incident lead. Open a timeline document. Note the time.
+R2.  FREEZE. Set the `production` GitHub environment to block deployments. Stop the worker
+     (scale ess-worker to 0) so no job writes to a database that is about to be replaced and
+     no email is sent about state that is about to be rewound.
+R3.  DECIDE THE TARGET TIME T. This is the hardest and most consequential decision: every
+     write after T is lost. Use ess.audit_event to find the last known-good moment —
+       SELECT seq, occurred_at, kind, actor_user_id FROM ess.audit_event
+        WHERE occurred_at BETWEEN :from AND :to ORDER BY seq;
+     — and prefer the latest T that excludes the damage. Write T in the timeline before
+     starting; do not change it silently afterwards.
+R4.  RESTORE TO A NEW INSTANCE, never in place. Provider PITR → ess-postgres-restore.
+     (If PITR is unavailable: the latest daily, then the weekly off-provider dump as a
+     cross-check — restore it separately and diff the anchor-table counts.)
+R5.  Create the four roles (§4.4) with FRESH passwords. Apply the role timeouts.
+R6.  INTEGRITY GATE — all must pass before any traffic is pointed at it:
+       a. verify-audit-chain --full            → intact, no gaps, no fork
+       b. verify-payslip-digests --sample 100  → every input_digest recomputes
+       c. decrypt-canary --all-purposes        → the KEK still opens the ciphertext
+       d. anchor counts vs. the last known-good figures: employee, app_user, payslip
+          (PUBLISHED), leave_request, expense_claim, helpdesk_ticket, audit_event
+       e. assert-privileges                    → grants are correct on the restored instance
+R7.  RECONCILE OBJECT STORAGE. R2 was not rewound. For 50 sampled file_object rows confirm
+     the object exists and its sha256 matches. Then find the two divergences:
+       · file_object rows that no longer exist after the rewind but whose objects do
+         → orphan objects; list them, do not delete during the incident
+       · objects referenced by restored rows that were deleted after T by the retention job
+         → these are genuinely lost; list them for the notification in R11
+R8.  REPOINT: update DATABASE_URL / DIRECT_DATABASE_URL to the restored instance; redeploy
+     ess-api; smoke test (login → MFA → /me/dashboard → one payslip download).
+R9.  RESTART THE WORKER only after R8 passes. Watch the outbox: it will now contain rows
+     from before T that may have ALREADY been delivered. Before scaling up, mark any row
+     whose sent_at was after T and whose delivery you have confirmed externally as SENT, so
+     employees are not emailed twice about the same event.
+R10. RETAIN the damaged instance untouched for 14 days as forensic evidence. Do not delete
+     it to save money.
+R11. COMMUNICATE what was lost: the window (T → incident time), which modules were affected,
+     and specifically whether any PUBLISHED payslip was un-published by the rewind — if so,
+     Accounts must re-publish and the affected employees must be told, because they may have
+     seen a document that is now absent.
+R12. Post-incident review within 5 working days: why the damage happened, why it was not
+     caught sooner, what detection would have caught it, and whether the achieved RPO/RTO
+     matched the §4.5 targets. Update the targets or the architecture — not the runbook
+     alone.
+```
+
+### 11.6 Responding to a suspected credential compromise
+
+Triggered by: a refresh-reuse P1, a mass-unmask P1, a gitleaks hit, a secret in a log or a
+screenshot, a departing employee with production access, a provider breach notice, or simply
+a credible suspicion. **Act first, confirm later** — rotation is cheap, a live compromise is
+not.
+
+```
+C1.  CLASSIFY (2 minutes). Which credential class?
+       (a) one USER account         → C2
+       (b) an APPLICATION secret    → C3   (JWT key, KEK, pepper, CSRF/HMAC key)
+       (c) an INFRASTRUCTURE secret → C4   (database, storage, mail, Render, Netlify, GHCR)
+     When unsure, treat it as the widest plausible class.
+
+C2.  USER ACCOUNT
+     · suspend the account (status SUSPENDED) — this revokes every session immediately
+     · bump token_version → every access token for that user dies within 600 s
+     · revoke the whole refresh family; reset MFA; invalidate recovery codes
+     · pull their audit trail:
+         SELECT occurred_at, kind, route, subject_employee_id, ip_hash
+           FROM ess.audit_event WHERE actor_user_id = :u AND occurred_at > :since
+           ORDER BY seq;
+       Pay particular attention to READ_SENSITIVE, EXPORT, PII unmask, role grants and
+       approval decisions — that is the blast radius, and audit_event tells you exactly
+       which employees' rows were read.
+     · re-invite through the §11.1 B9/B10 flow: new password set by them, MFA re-enrolled
+     · if the account held HR or ACCOUNTS, also do C3 for CSRF_KEY and review every role
+       grant they made
+
+C3.  APPLICATION SECRET
+     · JWT signing key  → §11.4 emergency path, then bump token_version org-wide
+     · MASTER_KEK       → §11.3.1 immediately (minutes). Note: KEK exposure WITHOUT
+                          database access does not expose data — the KEK only unwraps DEKs
+                          that live in Postgres. Rotate anyway, and check for database
+                          access in the same breath.
+     · PASSWORD_PEPPER  → add _V2, set the active version; hashes re-hash lazily at next
+                          login. Exposure of the pepper alone does not reveal a password,
+                          but it removes a layer against an offline attack on a stolen dump.
+     · CSRF_KEY, CURSOR_HMAC_KEY, LOG_HASH_KEY, RECOVERY_CODE_KEY
+                        → deploy new values. Cost: live cursors and CSRF tokens re-arm on
+                          the next request; recovery codes must be regenerated by users
+                          (notify them); ip_hash correlation breaks across the boundary —
+                          accepted and documented.
+     · AUDIT_CHAIN_KEY  → new version from a given seq; history is NEVER re-keyed, and the
+                          verifier must be told the boundary seq. Re-verify the full chain
+                          afterwards.
+
+C4.  INFRASTRUCTURE SECRET
+     · Database: rotate ess_app / ess_job passwords (ALTER ROLE … PASSWORD), update the
+       environment group, redeploy. Then rotate ess_migrator and, if the exposure could
+       reach it, ess_owner from the sealed envelope. Review pg_stat_activity and the
+       provider's connection logs for any client that is not ours.
+     · Object storage: delete the exposed R2 token, mint a new bucket-scoped one, redeploy.
+       Review R2 access logs for reads from an unexpected source. Remember the second layer:
+       payslip and bank-proof objects are application-encrypted, so a storage-only
+       compromise yields ciphertext.
+     · Mail: rotate the SES IAM key; check the SES sending statistics for volume that is
+       not ours (a stolen mail credential is used for phishing within hours).
+     · Render / Netlify / GHCR: revoke the token, rotate every API key, force re-login for
+       every team member, enable/verify MFA on every account, and review the deploy history
+       for a deploy nobody recognises.
+
+C5.  ALWAYS, regardless of class:
+     · verify the audit chain end to end — an attacker with database write access would have
+       had to break it, and a gap or fork is the strongest signal available:
+         node apps/api/dist/tools/verify-audit-chain.js --full
+     · mass session revocation if there is any doubt about scope (bump token_version for all
+       users; every session must re-authenticate)
+     · review ADMIN.ROLE_GRANTED events since the earliest plausible compromise — a granted
+       role is how a short compromise becomes a persistent one
+     · review app_user rows created or activated in the window
+     · check for new or modified user_invitation rows, and expire every unconsumed one
+     · rotate the exposed secret in secret-inventory.md with the date and reason
+     · a secret that ever reached a git commit is compromised even after a force-push:
+       rotate it, do not merely remove it
+
+C6.  ASSESS AND NOTIFY. Reconstruct from ess.audit_event exactly which subject_employee_id
+     rows were accessed, by which actor, at what time — the subject_employee_id index exists
+     for precisely this query. If personal data was accessed by an unauthorised party, the
+     DPDP Act notification duties in SECURITY.md §14.7 apply: the Data Protection Board and
+     every affected Data Principal, without delay. Legal and the DPO decide the wording;
+     engineering supplies the evidence, not the judgement.
+
+C7.  POST-INCIDENT. Within 5 working days: how the credential escaped, which control should
+     have stopped it, what detection would have caught it sooner, and one concrete change.
+     Update this runbook if any step proved wrong under pressure.
+```
+
+### 11.7 Quarterly operational review
+
+Small, scheduled, and the cheapest insurance in this document. Owner: the ops owner.
+
+```
+Q1.  DNS drift: diff the live zone against infra/dns/widedrop.com.before.txt. Investigate
+     EVERY difference. Specifically hunt for a CNAME pointing at a service we no longer
+     own — because every *.widedrop.com host is same-site with the API (§1.4), a dangling
+     record is a route into the same-site set.
+Q2.  Secret inventory: every entry has an owner and a next-due date; rotate anything overdue.
+Q3.  Access review: who can reach the Render account, the Netlify ESS team, GHCR, the AWS/SES
+     account, the R2 account, the break-glass envelope. Remove anyone who left. Confirm MFA
+     on every one of those accounts.
+Q4.  Restore drill (§4.5). Record the elapsed time; compare against the 2 h RTO.
+Q5.  Alert review: which alerts fired, which were actioned, which were noise. Delete or fix
+     any alert that fired more than twice without action.
+Q6.  Dependency and image review: outstanding Dependabot PRs, Trivy findings, Node 22 LTS
+     patch level, Postgres 16 minor version, the pinned action SHAs.
+Q7.  Cost review against §10, and a check that staging has not silently grown production-like
+     data (it must contain no real employee).
+Q8.  Confirm the empty-state guarantee still holds: point a scratch API at a freshly migrated,
+     reference-seeded database with zero operational rows and walk every screen. Any screen
+     that errors, renders a blank box, or shows an invented number is a bug against
+     directive 9 — and this is the only routine check that catches a regression in it.
+```
+
+---
+
+## 12. Open risks and reconciliations
+
+| # | Item | Impact | Proposed resolution |
+|---|---|---|---|
+| R-1 | API hostname: this document, `SECURITY.md` and `API.md` use `api-ess.widedrop.com`; the task brief proposed `api.ess.widedrop.com` | none technically; a documentation inconsistency if left unstated | §0.2. Confirm with the domain owner, then the string is fixed in four places. |
+| R-2 | `SECURITY.md` §10.2 requires `MAIL_FROM` to end `@widedrop.com`, but the mandated help-desk address and the `WORKFLOWS.md` sender are `@widedroptech.com` | the boot check would reject a correct configuration | Amend `SECURITY.md` §10.2 to `@widedroptech.com`. Keeps all mail DNS out of the `widedrop.com` zone. |
+| R-3 | `apps/api/src/config/env.ts` uses single-version key names | rotation procedures in `SECURITY.md` §3.2/§7.3 cannot be executed | §0.4 rename table, before any production secret is minted. |
+| R-4 | `POST /api/v1/webhooks/ses` (bounce/complaint) is not in `API.md` §13 | delivery state would be `SENT` forever and bounces invisible | Add the route with the §6.4 guard block, plus its `public: true` allowlist entry. |
+| R-5 | `SECURITY.md` §6.4 names `apps/web/public/_headers` as a header source | duplicate/conflicting `Content-Security-Policy` headers at the edge | §2.3: `netlify.toml` owns all headers except CSP; CSP is generated into `dist/_headers`; a build assertion fails if `public/_headers` exists. |
+| R-6 | `infra/certs/render-postgres-ca.pem` is referenced by the Dockerfile but does not exist in the repo | the image build fails, or `sslmode=verify-full` cannot be used | Download the provider CA at bootstrap, commit it (a public certificate, not a secret), and add a CI check that it is not expiring within 90 days. |
+| R-7 | Render has no India region; Postgres and the API sit in Singapore | a future contract or policy may require in-country storage | Documented in `docs/PROCESSORS.md`; §3.7 gives the Fly.io `bom` + `ap-south-1` Postgres path. The migration is a restore plus a DNS change, not a rewrite. |
+| R-8 | SES has no provider-side idempotency key, which `WORKFLOWS.md` §6.3 assumes | a crash between send and status write could duplicate one message | §6.1: `Message-ID` derived from `email_outbox.id` plus the `SENDING` claim and 10-minute sweep bound it. Switch `MAIL_PROVIDER` to Resend if strict idempotency becomes a requirement. |
+| R-9 | Single worker instance | the outbox, SLA escalations, accruals and payroll calculation all stop if it dies | Mitigated by the heartbeat dead-man alert (§9.4) rather than by redundancy, because the lease design makes a restart safe and a second instance adds cost without removing the failure mode. Revisit above ~500 employees. |
+| R-10 | ClamAV unavailable ⇒ uploads land `QUARANTINED` | expense claims and tickets accept files that nobody can then read | Correct and deliberate (`SECURITY.md` §5.3.10), but the UI must say so honestly; the P3 alert (§9.5) exists so it is noticed within 30 minutes rather than at month-end. |
+| R-11 | `ess_owner` credentials exist in a sealed envelope | a two-person offline process is a real operational dependency | Test it during the quarterly review (Q3) — an escrow nobody has ever opened is not an escrow. |
+| R-12 | Netlify free tier has no SLA | an outage takes the SPA down while the API stays up | Accepted: the SPA is static and the API's data is unaffected. If an SLA is required, the ESS site moves to a paid Netlify plan (~$19) or to Cloudflare Pages, changing only §2 and the CSP `connect-src` consumer. |

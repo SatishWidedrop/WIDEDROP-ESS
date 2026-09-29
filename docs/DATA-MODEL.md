@@ -48,6 +48,48 @@ on every table unless the table description says "no audit columns" (only
 `audit_event`, `leave_balance_ledger` and other append-only ledgers say that, and they
 carry only `created_at`).
 
+**Constraint-syntax legality (binding on every `CONSTRAINT … UNIQUE` written below).**
+PostgreSQL does **not** accept a `WHERE` predicate, nor an expression such as
+`coalesce(...)`, inside a table-level `UNIQUE` **constraint**. Wherever this document
+writes
+
+```sql
+CONSTRAINT ux_x__y UNIQUE (a, b) WHERE <pred>          -- notation only
+CONSTRAINT ux_x__y UNIQUE (a, coalesce(b, '…'))        -- notation only
+```
+
+the implementer **must** emit a partial / expression **unique index** instead:
+
+```sql
+CREATE UNIQUE INDEX ux_x__y ON ess.x (a, b) WHERE <pred>;
+CREATE UNIQUE INDEX ux_x__y ON ess.x (a, coalesce(b, '…'));
+```
+
+This applies to every `ux_…` in this document whose definition carries a `WHERE` clause
+or an expression, without exception: `ux_user_role__active`, `ux_fiscal_year__one_current`,
+`ux_leave_period__one_current`, `ux_employee_bank_account__one_primary`,
+`ux_attsub__period_live`, `ux_pvr__pass_rule_entity`, `ux_payroll_run__one_live`,
+`ux_payslip__one_live_per_cycle_employee`, `ux_pii__one_lop_override_per_employee_cycle`,
+`ux_pii__one_payout_per_claim`, `ux_tax_regime__fy_default`, `ux_etp__one_current`,
+`ux_etdi__declaration_section_sub`, `ux_aa__unique_target`, `ux_notification__dedupe`,
+`ux_dek__one_active`, `ux_approval_task__kind_entity`, `ux_mfa_credential__user_method`,
+`ux_pv__policy_current`, `ux_employee_personal_detail__email_fpr`,
+`ux_employee_employment__current`, `ux_employee_manager__current_primary`,
+`ux_salary_structure__current`, `ux_user_invitation__live`, `ux_session__live`.
+A unique *index* is not a unique *constraint*: it cannot be the target of a foreign key
+and it is not named in `information_schema.table_constraints`. §21.2 checks for it in
+`pg_indexes` instead.
+
+**Immutability in `CHECK` (binding).** A `CHECK` constraint must contain only
+`IMMUTABLE` expressions over the row being written. `now()`, `CURRENT_DATE`,
+`CURRENT_TIMESTAMP` and `localtimestamp` are **forbidden** in every `CHECK` and in every
+**partial-index predicate** in this schema: PostgreSQL rejects the index outright, and a
+`CHECK` written that way silently poisons the table (a row that was valid at insert
+becomes unrestorable, and every later `UPDATE` of that row fails). Where this document
+previously expressed such a rule it is restated as a `BEFORE INSERT OR UPDATE` trigger;
+the three affected rules are `ck_ec__spend_not_future` (§13.2),
+`ck_ann__scheduled` (§16.1) and `ix_user_role__user_active` (§3.4).
+
 ### 1.3 Naming
 
 - Tables: `snake_case`, **singular** (`payslip`, not `payslips`).
@@ -108,6 +150,13 @@ account number):
 | Suffix | Type | Meaning |
 |---|---|---|
 | `<field>_fpr` | `bytea` | `HMAC-SHA256(pepper_v<n>, normalise(plaintext))`, 32 bytes. Blind index for uniqueness and search. Never reversible. The pepper lives in the secret manager, not in the database. |
+| `<field>_fpr_pepper_version` | `smallint` | The `<n>` of the pepper used. **Mandatory wherever `_fpr` exists.** Without it a pepper rotation silently invalidates every uniqueness constraint that depends on the blind index (two rows peppered under different versions can never collide, so duplicates slip through). Rotation is therefore a two-phase job: `crypto-rewrap` recomputes every `_fpr` under the new pepper and bumps the version inside one transaction per row; the uniqueness indexes are `(organization_id, <field>_fpr_pepper_version, <field>_fpr)` so both generations stay enforceable during the roll. |
+
+`normalise()` is fixed per field and is part of the schema contract, because two
+spellings of the same value must produce the same fingerprint: **PAN** → `upper(trim())`;
+**Aadhaar / bank account / UAN / PRAN / ESI / PF account** → strip every character that is
+not `[0-9A-Za-z]`, then `upper()`; **email** → `lower(trim())`; **phone** → strip
+everything but digits, then keep the last 10 digits. Any other normalisation is a bug.
 
 Constraints applied to every envelope:
 
@@ -135,11 +184,18 @@ anything without a live KMS grant.
 | Field | Mask rule | Example (prototype) |
 |---|---|---|
 | Bank account number | last 4 digits, grouped: `'•••• •••• ' || right(digits, 4)` | `•••• •••• 4412` |
+| Date of birth | **year only**: `'••/••/' || to_char(dob,'YYYY')`. The mask is a *reduced* projection; the full date is produced only by decryption, gated on `profile:read_sensitive:self\|any` and audited `READ_SENSITIVE`. A mask that reproduces the plaintext is not a mask. | `••/••/1994` |
+| Personal mobile | country code + 4 bullets + last 4 digits | `+91 •••• •2234` |
+| Personal email | first character of the local part + bullets + domain | `p•••••@gmail.com` |
+| Address | `city || ' ' || pin` only | `Bengaluru 560095` |
+| Dependent / nominee / emergency-contact name | **initials only** | `KR` |
 | Bank account (inline, e.g. payslip header) | `'••' || right(digits, 4)` | `••4412` |
 | IFSC | **not encrypted** — IFSC is a public bank-branch code, stored plaintext | `HDFC0000523` |
 | PAN | first 5 + 4 bullets + last 1 | `AXYPR••••K` |
 | Aadhaar | `'•••• •••• ' || right(digits, 4)` | `•••• •••• 8821` |
-| UAN | plaintext, formatted in groups of 4 (not secret under EPFO rules, but read-restricted) | `1012 3456 7890` |
+| PF account | last 7 characters, rest bulleted | `••••••••••••0001847` |
+| ESI | last 4 digits | `••••••••••8821` |
+| UAN | **encrypted**; mask = first 8 digits in groups of 4 + 4 bullets | `1012 3456 ••••` |
 | PRAN (NPS) | `'••••' || right(digits, 4)` | `••••4471` |
 | Tax declaration amounts | no mask; whole row is permission-gated, decrypted only for the owning employee and `tax:declaration:read:any` | — |
 
@@ -149,9 +205,11 @@ anything without a live KMS grant.
 |---|---|---|
 | `employee_bank_account` | `account_number`, `account_holder_name` | `account_number_fpr` |
 | `employee_statutory_id` | `value` (PAN / Aadhaar / UAN / PRAN / ESI / PF account) | `value_fpr` |
-| `employee_personal_detail` | `personal_email`, `personal_mobile`, `date_of_birth`, `current_address`, `permanent_address` | `personal_email_fpr` |
+| `employee_personal_detail` | `personal_email`, `personal_mobile`, `date_of_birth`, `current_address`, `permanent_address`, `gender`, `marital_status`, `blood_group`, `nationality` | `personal_email_fpr`, `personal_mobile_fpr` |
 | `employee_emergency_contact` | `contact_name`, `phone`, `relationship_note` | — |
-| `dependent` | `full_name`, `date_of_birth` | — |
+| `ticket_comment` | `body` | — |
+| `profile_change_request_field` | `proposed_value`, `previous_value` | — |
+| `dependent` | `full_name`, `date_of_birth`, `relationship_note` | — |
 | `nominee` | `full_name`, `relationship`, `share_percent_note` | — |
 | `employee_tax_declaration_item` | `declared_amount_minor` (as decimal string) | — |
 | `salary_structure_component` | `amount_minor` (as decimal string) | — |
@@ -163,16 +221,45 @@ anything without a live KMS grant.
 
 > **Why salary amounts are encrypted.** Payroll amounts are the highest-value target in
 > an ESS. Encrypting them at the application layer means a stolen database dump, a
-> leaked read replica, or a logical-replication tap yields no compensation data without
-> a live KMS grant. The cost is that **aggregates over money must be computed in the
-> API layer, not in SQL**. Section 20 therefore specifies, for every money aggregate,
-> the exact row set the API fetches and folds — never a SQL `SUM()` over an encrypted
-> column. Where a money aggregate must be queryable (only two cases: `payslip`
-> totals for the Payslips YTD tiles, and `expense_claim` totals for the Expenses stat
-> tiles), a **pre-aggregated, non-reversible rollup** is persisted instead:
-> `payslip_fy_rollup` (§10.9) and `expense_fy_rollup` (§13.4), both written inside the
-> same transaction as the underlying row and both holding only per-employee,
-> per-FY totals that the employee is already entitled to see.
+> leaked read replica, or a logical-replication tap yields **no per-component
+> compensation detail** without a live KMS grant. The cost is that **aggregates over
+> money must be computed in the API layer, not in SQL**. Section 20 therefore specifies,
+> for every money aggregate, the exact row set the API fetches and folds — never a SQL
+> `SUM()` over an encrypted column.
+
+**Money-confidentiality classes (binding; this is the *complete* classification — no
+amount column exists outside it).** The earlier draft of this section claimed a dump
+yields *no* compensation data. That claim was false, because several derived tables held
+plaintext per-employee money. The classification below is the corrected, enforced rule.
+
+| Class | Rule | Columns |
+|---|---|---|
+| **M1 — envelope-encrypted** | Never plaintext at rest. Every per-employee *component-level* or *total* compensation figure. | `salary_structure.annual_ctc_minor`, `salary_structure_component.amount_minor`, `payroll_input_item.amount_minor`, `payslip_line.amount_minor`, `payslip_line.basis_amount_minor`, `payslip.{gross_earnings,total_deductions,net_pay,employer_pf,tds}_minor`, `employee_tax_declaration{,_item}` amounts, **and (corrected) `payslip_fy_rollup.{gross_earned,net_credited,total_deductions,tds,employee_pf,employer_pf}_minor`** and **`tds_quarter.tds_deducted_minor`**. A rollup is one row per employee per FY, so a single-row decrypt costs one AES-GCM operation per screen — the "single indexed read" argument for plaintext never justified handing an attacker a ready-made annual-compensation table. |
+| **M2 — plaintext, org-level aggregate** | Not attributable to any individual; readable only under `payroll:cycle:read` / `expense:reimburse`; excluded from every employee-facing payload. | `payroll_cycle.{control_gross,control_net,control_deductions}_minor`, `payroll_input_batch.{declared_total,parsed_total}_minor`, `reimbursement_batch.total_amount_minor`, `attendance_submission.total_*_days` |
+| **M3 — plaintext, employee-reimbursement** | Expense amounts are evidence the employee themself typed and their manager must read in a queue; they are not compensation, they are already visible to employee + manager + Finance, and RLS + §19 scope them. This is a deliberate, stated exception. | `expense_claim.{total_amount,approved_amount}_minor`, `expense_claim_line.*_minor`, `expense_fy_rollup.*_minor`, `reimbursement_batch_item.amount_minor`, `approval_task.amount_minor`, `expense_limit.cap_amount_minor` |
+| **M4 — plaintext, configuration** | No person attached. | `tax_regime.*`, `fiscal_year.*`, `benefit_plan_year.coverage_amount_minor`, `statutory_rate_set.*`, `statutory_pt_slab.*` |
+| **M5 — plaintext, derived tax projection** | Per-employee derived totals with a *stated* residual risk (§1.6.1). | `employee_tax_projection.*_minor` |
+
+**§1.6.1 Residual risk accepted for M5.** `employee_tax_projection` holds a per-employee
+projected annual gross and tax. A database compromise therefore reveals an approximate
+annual salary for every employee, even though M1 hides the component breakdown. This is
+accepted **only** because the Tax screen's percentage and per-month arithmetic must be
+reproducible server-side and re-derivable by an auditor without a KMS grant. The
+compensating controls are mandatory and testable: (a) the table carries the same RLS
+self/scope policy as `payslip`; (b) `ess_app` holds `SELECT` on it only through the
+row-level policy, and no `report:*` role may `SELECT` it in bulk without writing an
+`EXPORT` audit event; (c) it is excluded from every logical-replication publication and
+from every non-production database clone (the `db:anonymise` fixture nulls it); (d) it is
+listed in the DPDP record of processing as a high-sensitivity derived attribute. An
+organisation whose threat model does not accept (a)–(d) moves it to M1 and folds the
+percentages in the API layer; the schema change is additive and the query patterns in
+§20.4 are unaffected.
+
+Where a money aggregate must be queryable, a **pre-aggregated rollup** is persisted:
+`payslip_fy_rollup` (§10.9, class M1) and `expense_fy_rollup` (§13.4, class M3), both
+written inside the same transaction as the underlying row and both holding only
+per-employee, per-FY totals that the employee is already entitled to see. Neither is ever
+`SUM()`-ed in SQL across employees.
 
 ### 1.7 Prisma mapping rules
 
@@ -198,21 +285,137 @@ Authorization is enforced **server-side in the API** (that is the primary contro
 RLS is a second, independent layer so that a query-construction bug cannot leak another
 employee's row.
 
-- The API connects as role `ess_app`, which is **not** the table owner and has no
-  `BYPASSRLS`.
-- Every request opens its transaction with
-  `SET LOCAL ess.actor_user_id = $1; SET LOCAL ess.actor_employee_id = $2; SET LOCAL ess.organization_id = $3; SET LOCAL ess.scopes = $4;`
-  (`$4` is a comma-separated permission-code list).
-- Every table in `ess` has `ENABLE ROW LEVEL SECURITY` plus, at minimum, a tenancy
-  policy:
-  `USING (organization_id = current_setting('ess.organization_id')::uuid)`.
-- Employee-owned tables (`payslip`, `leave_request`, `expense_claim`, `employee_document`,
-  `policy_acknowledgement`, `notification`, `employee_bank_account`, …) add a self/scope
-  policy:
-  `USING (employee_id = current_setting('ess.actor_employee_id')::uuid OR current_setting('ess.scopes') LIKE '%<code>:read:any%' OR employee_id IN (SELECT descendant_employee_id FROM employee_reporting_closure WHERE ancestor_employee_id = current_setting('ess.actor_employee_id')::uuid AND depth > 0))`.
-- `payslip` additionally requires the publication gate in §10.7.
+#### 1.8.1 Database roles (exact DDL)
+
+```sql
+CREATE ROLE ess_owner     NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+CREATE ROLE ess_app       LOGIN   NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
+CREATE ROLE ess_job       LOGIN   NOSUPERUSER NOCREATEDB NOCREATEROLE BYPASSRLS     NOINHERIT;
+CREATE ROLE ess_migrator  LOGIN   NOSUPERUSER NOCREATEDB NOCREATEROLE BYPASSRLS     NOINHERIT;
+CREATE ROLE ess_readonly  LOGIN   NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
+
+ALTER SCHEMA ess OWNER TO ess_owner;  ALTER SCHEMA ess_ops OWNER TO ess_owner;
+REVOKE ALL ON SCHEMA public FROM PUBLIC;          -- no unqualified object creation
+REVOKE CREATE ON SCHEMA ess, ess_ops FROM PUBLIC;
+GRANT USAGE ON SCHEMA ess, ess_ops TO ess_app, ess_job, ess_readonly;
+
+-- search_path is pinned per role so no object can be shadowed by a public-schema decoy
+ALTER ROLE ess_app      SET search_path = ess, ess_ops, pg_catalog;
+ALTER ROLE ess_job      SET search_path = ess, ess_ops, pg_catalog;
+ALTER ROLE ess_migrator SET search_path = ess, ess_ops, pg_catalog;
+```
+
+- `ess_app` is **not** the owner, is `NOINHERIT`, and is granted no `SET ROLE` to
+  `ess_owner`, `ess_job` or `ess_migrator`. It therefore cannot reach `BYPASSRLS` from a
+  request path by any route.
+- Every table carries `ALTER TABLE … ENABLE ROW LEVEL SECURITY` **and**
+  `ALTER TABLE … FORCE ROW LEVEL SECURITY`. Without `FORCE`, the owning role silently
+  bypasses every policy, which would make the whole of this section decorative in any
+  migration or psql session run as the owner.
+- `ess_readonly` exists for the analytics replica only; it holds `SELECT` on nothing in
+  class M1/M5 (§1.6) and is not `BYPASSRLS`.
+- Every `LANGUAGE sql` / `plpgsql` function and every trigger function in this schema is
+  created with `SET search_path = ess, pg_catalog` attached, and none is
+  `SECURITY DEFINER` unless this document names it as such (only
+  `fn_audit_next_sequence`, §17.1, is).
+
+#### 1.8.2 Request context
+
+Every request opens its transaction with, in this order:
+
+```sql
+SET LOCAL ess.organization_id   = $1;   -- always present
+SET LOCAL ess.actor_user_id     = $2;   -- always present
+SET LOCAL ess.actor_employee_id = $3;   -- '' when the principal has no employee row
+SET LOCAL ess.actor_persona     = $4;   -- the persona the route resolved (§17.1)
+SET LOCAL ess.scopes            = $5;   -- comma-separated permission codes
+```
+
+`SET LOCAL` is used so the settings die with the transaction; the pool additionally runs
+`DISCARD ALL` when a connection is returned outside a transaction. An unauthenticated
+route opens no transaction against `ess_app` at all.
+
+**Reading the context (binding helper functions).** A bare
+`current_setting('ess.actor_employee_id')::uuid` **raises `42704` when the GUC is unset
+and `22P02` when it is the empty string** — which is the normal case for an HR or
+Accounts contractor who has an `app_user` but no `employee`. Every policy therefore goes
+through these `IMMUTABLE`-free but `STABLE` helpers, never through `current_setting`
+directly:
+
+```sql
+CREATE FUNCTION ess.ctx_org()      RETURNS uuid LANGUAGE sql STABLE SET search_path = ess, pg_catalog
+  AS $$ SELECT nullif(current_setting('ess.organization_id', true), '')::uuid $$;
+CREATE FUNCTION ess.ctx_employee() RETURNS uuid LANGUAGE sql STABLE SET search_path = ess, pg_catalog
+  AS $$ SELECT nullif(current_setting('ess.actor_employee_id', true), '')::uuid $$;
+CREATE FUNCTION ess.ctx_user()     RETURNS uuid LANGUAGE sql STABLE SET search_path = ess, pg_catalog
+  AS $$ SELECT nullif(current_setting('ess.actor_user_id', true), '')::uuid $$;
+CREATE FUNCTION ess.has_scope(p_code text) RETURNS boolean LANGUAGE sql STABLE SET search_path = ess, pg_catalog
+  AS $$ SELECT p_code = ANY (string_to_array(coalesce(current_setting('ess.scopes', true), ''), ',')) $$;
+```
+
+`has_scope()` compares whole array elements. The earlier draft used
+`current_setting('ess.scopes') LIKE '%<code>:read:any%'`, which is a **privilege-escalation
+bug**: `LIKE '%ticket:read:any%'` is satisfied by the unrelated scope
+`ticket:read:anything`, and `LIKE '%leave:request:read:any%'` by
+`xleave:request:read:any`. Substring matching on a permission list is never acceptable;
+`= ANY(string_to_array(...))` is the only permitted form.
+
+#### 1.8.3 Policy shapes
+
+- **Tenancy (every tenant-scoped table, `FOR ALL`)**:
+  `USING (organization_id = ess.ctx_org()) WITH CHECK (organization_id = ess.ctx_org())`.
+  The `WITH CHECK` half is not optional: `USING` alone constrains reads and the *old* row
+  of an update, and does nothing at all on `INSERT`. Without it a query-construction bug
+  can write a row into another tenant even though it could never read it back. Every
+  policy in this schema that permits `INSERT` or `UPDATE` carries a `WITH CHECK`.
+- **Global reference tables** (`permission`, `state_transition`) have no
+  `organization_id`. They still carry `ENABLE`/`FORCE ROW LEVEL SECURITY` with the
+  explicit policy `FOR SELECT USING (true)`, and `ess_app` is granted `SELECT` only —
+  no `INSERT`/`UPDATE`/`DELETE`. This is what satisfies §21 rule 5 for them; the CI
+  check accepts a read-only policy for exactly these two tables and no others.
+- **Employee-owned tables**, self/team/any policy, `FOR SELECT`:
+
+  ```sql
+  USING (
+       employee_id = ess.ctx_employee()
+    OR ess.has_scope('<resource>:read:any')
+    OR (ess.has_scope('<resource>:read:team') AND EXISTS (
+          SELECT 1 FROM ess.employee_reporting_closure c
+          WHERE c.ancestor_employee_id = ess.ctx_employee()
+            AND c.descendant_employee_id = employee_id
+            AND c.depth > 0))
+  )
+  ```
+
+  The team branch is **gated on holding the `:read:team` scope**. The earlier draft
+  granted the whole reporting subtree unconditionally, which meant any principal with an
+  employee row could read their subordinates' rows on every employee-owned table,
+  including `employee_bank_account` — a manager is not entitled to a report's bank
+  account. Write policies on employee-owned tables are `USING (employee_id = ess.ctx_employee())
+  WITH CHECK (employee_id = ess.ctx_employee())` unless a table below states otherwise.
+- **Depth-limited tables.** `employee_emergency_contact` uses `c.depth = 1` (the *direct*
+  manager only, matching the prototype's note "visible only to People Ops and your
+  manager"), never `depth > 0`. `employee_bank_account`, `employee_statutory_id`,
+  `employee_personal_detail`, `employee_tax_declaration{,_item}`, `payslip`,
+  `payslip_line`, `payslip_fy_rollup`, `employee_tax_projection`, `form16_document`,
+  `tds_quarter`, `salary_structure{,_component}` and `dependent`/`nominee` have **no team
+  branch at all**: self, or `:read:any`, or nothing.
+- `payslip`, `payslip_line` and `payslip_fy_rollup` additionally require the publication
+  gate in §10.7 inside the policy itself, so the gate cannot be forgotten by a caller:
+  `AND (ess.has_scope('payslip:read:any') OR EXISTS (SELECT 1 FROM ess.payslip_publication pub WHERE pub.payslip_id = payslip.id AND pub.published_at <= now() AND pub.revoked_at IS NULL))`.
+- `helpdesk_ticket` rows with `is_anonymous = true` have **no owner branch**: they are
+  visible only under `ticket:read:any`. An anonymous ticket is deliberately invisible to
+  its own raiser after submission, and the Help-desk screen says so.
+- `ticket_comment` adds `AND (visibility = 'PUBLIC' OR ess.has_scope('ticket:read:any'))`
+  so an internal note can never reach the raiser even through a mis-built query.
 - Migrations and scheduled jobs run as `ess_migrator` / `ess_job`, which carry
-  `BYPASSRLS` and are never reachable from an HTTP request path.
+  `BYPASSRLS` and are never reachable from an HTTP request path. `ess_job` sets the same
+  GUCs anyway, so audit rows written by a job still carry an organisation.
+- **RLS is the second control, never the first.** The API performs the authorization
+  decision before the query is built (SECURITY.md §4). A row that RLS filters out is a
+  bug that must fail CI, not a feature: the integration suite asserts that every
+  employee-scoped endpoint returns `404` from the *application* check, with RLS disabled,
+  before it re-runs the same suite with RLS enabled.
 
 ### 1.9 Entity-relationship overview
 
@@ -342,6 +545,23 @@ forward-only migration (`ALTER TYPE … ADD VALUE`); removing a value is forbidd
 | `ess_audit_action` | see §17.1 — `CREATE`, `UPDATE`, `DELETE`, `READ_SENSITIVE`, `LOGIN`, `LOGOUT`, `STATE_TRANSITION`, `EXPORT`, `DOWNLOAD`, `PERMISSION_GRANT`, `PERMISSION_REVOKE`, `IMPERSONATE`, `CONFIG_CHANGE`, `CRYPTO_REWRAP` |
 | `ess_actor_kind` | `USER`, `SYSTEM`, `SCHEDULER`, `MIGRATION` |
 | `ess_persona` | `EMPLOYEE`, `MANAGER`, `HR`, `ACCOUNTS` |
+| `ess_payroll_scope_disposition` | `INCLUDED`, `EXCLUDED`, `DEFERRED` |
+| `ess_payroll_cycle_kind` | `REGULAR`, `SUPPLEMENTARY`, `OFF_CYCLE`, `CORRECTION` |
+| `ess_payroll_run_kind` | `REGULAR`, `CORRECTION` |
+| `ess_payroll_correction_status` | `RAISED`, `APPROVED`, `CALCULATING`, `CALCULATED`, `PUBLISHED`, `REJECTED`, `FAILED` |
+| `ess_profile_change_status` | `DRAFT`, `SUBMITTED`, `IN_REVIEW`, `APPROVED`, `REJECTED`, `CANCELLED`, `APPLIED` |
+| `ess_profile_change_field` | `PERSONAL_EMAIL`, `PERSONAL_MOBILE`, `CURRENT_ADDRESS`, `PERMANENT_ADDRESS`, `MARITAL_STATUS`, `EMERGENCY_CONTACT`, `BANK_ACCOUNT`, `STATUTORY_ID`, `NAME`, `DATE_OF_BIRTH` |
+| `ess_session_status` | `ACTIVE`, `EXPIRED`, `REVOKED` |
+| `ess_jwks_status` | `NEXT`, `CURRENT`, `RETIRED` |
+| `ess_attendance_lop_source` | `DERIVED`, `HR_OVERRIDE`, `PAYROLL_INPUT_OVERRIDE` |
+
+> `ess_user_status` above is **extended** (forward-only `ALTER TYPE … ADD VALUE`) to
+> `INVITED`, `PENDING_MFA`, `ACTIVE`, `LOCKED`, `SUSPENDED`, `DISABLED`, `OFFBOARDED`.
+> SECURITY.md §2.7 requires `PENDING_MFA` (a role grant to a user without active MFA
+> parks them there) and §2.5 requires `SUSPENDED`/`OFFBOARDED` to be distinct from an
+> administrative `DISABLED`, because they carry different session-revocation and
+> retention consequences. The four-value list previously printed in §2 could not express
+> either rule.
 
 ### 2.1 `state_transition` — the single allowed-transition table
 
@@ -374,9 +594,38 @@ CONSTRAINT fk_state_transition__permission FOREIGN KEY (required_permission_code
 ```
 Indexes: `ix_state_transition__machine_from (machine, from_state)`.
 
-The full seeded contents are listed per module (§8.6 leave, §9.5 attendance,
-§10.2 payroll cycle, §13.3 expenses, §14.3 document requests, §15.4 policy
-acknowledgement, §16.4 help desk, §12.3 tax declaration, §19 approval tasks).
+The full seeded contents are listed per module. **Every table in this schema that carries
+a `status` column has a machine here; there are no exceptions, because
+`trg_guard_state_transition` fires on any such `UPDATE` and a missing machine means an
+unguarded status column.** The complete index:
+
+| Machine | Defined in |
+|---|---|
+| `leave_request` | §8.6 |
+| `attendance_period`, `attendance_record`, `attendance_approval` | §9.5 |
+| `payroll_cycle` | §10.2 |
+| `payroll_input_batch` | §10.5.1 |
+| `payroll_run` | §10.6.1 |
+| `payslip` | §10.7.1 |
+| `payslip_publication` | §10.8.1 |
+| `payroll_correction` | §10.11 |
+| `reimbursement_batch` | §11 |
+| `employee_tax_declaration` | §12.3 |
+| `tds_quarter` | §12.5.1 |
+| `form16_document` | §12.6.1 |
+| `benefit_enrolment` | §12.8.1 |
+| `expense_claim` | §13.3 |
+| `document_request` | §14.3 |
+| `policy_version`, `policy_acknowledgement` | §15.4 |
+| `announcement` | §16.1.1 |
+| `helpdesk_ticket` | §16.4 |
+| `approval_task` | §19.2 |
+| `profile_change_request` | §5.11 |
+| `app_user` (account lifecycle) | §5.1.1 |
+| `session` | §6.6 |
+
+A `state_transition` row whose `machine` is not in this table, or a `status` column whose
+machine is absent from `state_transition`, fails `db:verify-schema` (§21 rule 13).
 
 ---
 
@@ -387,18 +636,38 @@ acknowledgement, §16.4 help desk, §12.3 tax declaration, §19 approval tasks).
 | Column | Type | Null | Default | Notes |
 |---|---|---|---|---|
 | `id` | `uuid` | no | `gen_random_uuid()` | PK |
-| `code` | `text` | no | — | **Unique.** Format `<resource>:<action>[:<scope>]`, scope ∈ `self` \| `team` \| `any` |
-| `resource` | `text` | no | — | Generated: `split_part(code, ':', 1)` |
-| `action` | `text` | no | — | Generated: `split_part(code, ':', 2)` |
-| `scope` | `text` | no | `'self'` | Generated: `coalesce(nullif(split_part(code, ':', 3), ''), 'self')` |
+| `code` | `text` | no | — | **Unique.** Format `<domain>[:<subdomain>]:<action>[:<scope>]` — 2 to 4 colon-separated segments |
+| `domain` | `text` | no | — | **Stored, supplied by the seed** (not generated): `payroll`, `leave`, `tax`, … |
+| `subdomain` | `text` | yes | — | **Stored**: `request`, `claim`, `declaration`, `salary_structure`, … `NULL` for two-segment codes |
+| `action` | `text` | no | — | **Stored**: `read`, `create`, `approve`, `publish`, … |
+| `scope` | `ess_permission_scope` | no | `'global'` | **Stored**: `self` \| `team` \| `any` \| `finance` \| `global` |
 | `description` | `text` | no | — | Shown in the HR role-management screen |
 | `is_sensitive` | `boolean` | no | `false` | Exercising it writes an `audit_event` with `action = 'READ_SENSITIVE'` |
 
 ```sql
 CONSTRAINT ux_permission__code UNIQUE (code),
-CONSTRAINT ck_permission__code_shape CHECK (code ~ '^[a-z_]+:[a-z_]+(:(self|team|any))?$')
+CONSTRAINT ck_permission__code_shape CHECK (code ~ '^[a-z_]+(:[a-z_]+){1,3}$'),
+CONSTRAINT ck_permission__code_matches_parts CHECK (
+  code = domain
+      || coalesce(':' || subdomain, '')
+      || ':' || action
+      || CASE WHEN scope = 'global' THEN '' ELSE ':' || scope::text END)
 ```
+New enum `ess_permission_scope` = `self`, `team`, `any`, `finance`, `global`.
 Not tenant-scoped (global reference data; no `organization_id`).
+
+> **Why these are stored columns and not generated ones.** The previous definition —
+> regex `^[a-z_]+:[a-z_]+(:(self|team|any))?$` with `resource/action/scope` generated by
+> `split_part` — is **wrong for the majority of the codes seeded below**. It rejects
+> every four-segment code (`tax:declaration:read:self`, `leave:request:approve:team`,
+> `payroll:salary_structure:read:any`, `approval:task:read:any`, `expense:claim:approve:finance`,
+> `document:request:fulfil`, `profile:read_sensitive:self`, `security:session:revoke`, …),
+> it rejects the scope `finance`, and for a two-segment org-wide code such as
+> `payroll:validate` it would silently derive `scope = 'self'`, which is the opposite of
+> that permission's meaning. Because `has_scope()` (§1.8.2) and the seeded persona
+> mapping are both keyed on the exact code string, a derivation bug here is an
+> authorization bug. The parts are therefore stated explicitly by the seed and the
+> `ck_permission__code_matches_parts` constraint proves the two agree.
 
 **Seeded permission codes** (complete list; the four personas are composed from these):
 
@@ -441,9 +710,16 @@ announcement:read                  announcement:author               announcemen
 ticket:create:self                 ticket:read:self                  ticket:read:any
 ticket:comment:self                ticket:comment:any                ticket:assign
 ticket:resolve                     ticket:config:manage
-approval:task:read:self            approval:task:read:any            approval:task:act
+approval:task:read:self            approval:task:read:team           approval:task:read:any
+approval:task:act
 notification:read:self             notification:mark_read:self
-org:read                           org:manage                        employee:create
+profile:change_request:create:self profile:change_request:read:self  profile:change_request:read:any
+profile:change_request:decide
+payroll:correction:raise           payroll:correction:approve        payroll:correction:read
+payroll:statutory:manage
+expense:claim:approve:skip_level
+org:read                           org:manage                        org:setting:read
+org:setting:update                 employee:create
 employee:read:any                  employee:update:any               employee:deactivate
 role:read                          role:assign                       role:manage
 audit:read                         audit:export                      security:session:revoke
@@ -454,7 +730,15 @@ report:payroll:read                report:leave:read                 report:expe
 `is_sensitive = true` for: `profile:read_sensitive:*`, `payslip:read:any`,
 `payslip:download:any`, `payroll:salary_structure:read:any`,
 `tax:declaration:read:any`, `audit:read`, `audit:export`, `file:download:any`,
-`employee:read:any`, `security:mfa:reset`, `security:session:revoke`.
+`employee:read:any`, `security:mfa:reset`, `security:session:revoke`,
+`profile:change_request:read:any`, `payroll:correction:approve`.
+
+**No permission code may be orphaned.** Every code seeded here must appear in at least
+one persona's grant in §3.3, and `db:verify-schema` (§21 rule 14) fails otherwise. The
+previous draft left `role:manage` and `audit:export` granted to nobody, which is not
+"least privilege" — it is an unreachable capability that will be granted ad hoc in
+production by someone with `psql`. Both are assigned to HR below, and both are
+`is_sensitive`, step-up-MFA-gated (SECURITY.md §2.7) and dual-logged.
 
 ### 3.2 `role` — reference data, seeded (exactly four)
 
@@ -504,9 +788,25 @@ Every insert/delete writes an `audit_event` with `action` `PERMISSION_GRANT` /
 - **MANAGER** — everything in EMPLOYEE, plus `profile:read:team`,
   `leave:request:read:team`, `leave:request:approve:team`, `leave:balance:read:team`,
   `attendance:read:team`, `attendance:approve:team`, `expense:claim:read:team`,
-  `expense:claim:approve:team`, `approval:task:{read:any,act}`, `report:leave:read`.
+  `expense:claim:approve:team`, `approval:task:{read:team,act}`, `report:leave:read`.
   Manager scope is **always** bounded by `employee_reporting_closure` (§5.5) — a
   Manager never sees an employee outside their subtree.
+  > **Corrected.** The previous draft granted MANAGER `approval:task:read:any`. That is a
+  > privilege escalation and it contradicts the sentence immediately after it: the RLS
+  > policy shape of §1.8.3 admits a row when the actor `has_scope('<resource>:read:any')`,
+  > so a Manager holding `approval:task:read:any` could read **every** manager's approval
+  > queue in the organisation, including tasks about their own peers and seniors, with the
+  > amount, subject name and subtitle attached. `approval:task:read:team` is the correct
+  > grant; it is bounded by `assignee_employee_id = :me` in the query and by the team
+  > branch of the policy. `approval:task:read:any` is held by HR only, for the
+  > escalation and audit surfaces.
+  > A Manager holds **no** `:read:any` code of any kind. A Manager also does **not**
+  > receive `profile:read_sensitive:*`: a manager may see a report's emergency contact
+  > (§5.9, depth 1) and nothing else that is envelope-encrypted.
+  > Holding the MANAGER persona is *not* what makes someone an approver: routing is by
+  > `approval_task.assignee_employee_id`, which is derived from `employee_manager`. A user
+  > can hold MANAGER and have no reports, in which case every team-scoped query returns
+  > zero rows and every Manager surface renders its empty state.
 - **HR** — everything in EMPLOYEE, plus `profile:read:any`, `profile:update:any`,
   `profile:read_sensitive:any`, `employee:{create,read:any,update:any,deactivate}`,
   `leave:*:any` + `leave:balance:adjust` + `leave:config:manage`, `holiday:manage`,
@@ -515,24 +815,62 @@ Every insert/delete writes an `audit_event` with `action` `PERMISSION_GRANT` /
   `document:{read:any,upload:any,type:manage}`, `document:request:{read:any,fulfil}`,
   `policy:{author,publish}`, `policy:ack:read:any`,
   `announcement:{author,publish}`, `ticket:{read:any,comment:any,assign,resolve,config:manage}`,
-  `role:{read,assign}`, `org:manage`, `audit:read`, `security:{session:revoke,mfa:reset}`,
+  `role:{read,assign,manage}`, `org:{manage,setting:read,setting:update}`,
+  `audit:{read,export}`, `security:{session:revoke,mfa:reset}`,
   `file:download:any`, `report:{leave,expense}:read`, `payroll:cycle:read`,
-  `tax:form16:read:any`.
+  `tax:form16:read:any`, `approval:task:read:any`,
+  `profile:change_request:{read:any,decide}`.
   **HR does not hold** `payroll:calculate`, `payroll:approve`, `payroll:publish`,
-  `payroll:input:*`, or `payroll:salary_structure:*` — separation of duties.
+  `payroll:input:*`, `payroll:correction:*`, `payslip:read:any`, or
+  `payroll:salary_structure:*` — separation of duties. HR can see that a payroll cycle
+  exists and what state it is in (`payroll:cycle:read`); HR can never see an amount on
+  anyone's payslip.
 - **ACCOUNTS** — everything in EMPLOYEE, plus `payroll:cycle:{read,create,transition}`,
   `payroll:input:{upload,read,commit}`, `payroll:{validate,calculate,approve,publish,close}`,
   `payroll:salary_structure:{read:any,write}`, `payroll:component:manage`,
   `payslip:{read:any,download:any}`, `tax:{declaration:read:any,declaration:verify,form16:{read:any,issue},quarter:{read:any,manage}}`,
   `expense:{claim:read:any,claim:approve:finance,reimburse,config:manage}`,
-  `attendance:read:any`, `report:payroll:read`, `audit:read`, `file:download:any`.
-  **ACCOUNTS does not hold** `attendance:submit` or `attendance:approve:*` — the payroll
-  operator cannot manufacture their own attendance inputs.
+  `attendance:read:any`, `report:payroll:read`, `audit:read`, `file:download:any`,
+  `payroll:correction:{raise,approve,read}`, `payroll:statutory:manage`,
+  `org:setting:read`.
+  **ACCOUNTS does not hold** `attendance:submit`, `attendance:capture` or
+  `attendance:approve:*` — the payroll operator cannot manufacture their own attendance
+  inputs. ACCOUNTS also does not hold `employee:*`, `role:*` or `profile:update:any`: it
+  cannot create the employee whose payroll it runs, nor grant itself a second Accounts
+  identity to satisfy dual control.
 
 > **Dual control.** `payroll:approve` and `payroll:publish` are held by ACCOUNTS, but
 > the guard `payroll.distinct_approver` (§10.2) forbids the same `app_user` from being
-> both `calculated_by_user_id` and `approved_by_user_id` on a cycle. Two Accounts users
-> are therefore required to publish payroll.
+> both `calculated_by_user_id` and `approved_by_user_id` on a cycle, **and**
+> `published_by_user_id` from equalling `calculated_by_user_id` (§10.1). Two Accounts
+> users are therefore structurally required to publish payroll.
+>
+> **Dual control needs two people to exist.** A guard that compares two user ids is
+> vacuous if the organisation has one Accounts user, because the cycle simply cannot
+> advance and someone will "temporarily" grant the second role to the same human's second
+> account. Two controls make that visible rather than silent:
+> 1. `bootstrap:admin` and the HR role-assignment surface both refuse to leave the
+>    organisation with fewer than **two distinct, `ACTIVE`, MFA-enrolled `app_user` rows
+>    holding the ACCOUNTS persona**, and `payroll:cycle:create` returns
+>    `409 {"code":"DUAL_CONTROL_UNAVAILABLE"}` when that count is below two. The count is
+>    a query, not a setting: `SELECT count(DISTINCT ur.app_user_id) FROM user_role ur JOIN role r ON r.id = ur.role_id JOIN app_user u ON u.id = ur.app_user_id WHERE r.persona = 'ACCOUNTS' AND ur.revoked_at IS NULL AND u.status = 'ACTIVE' AND EXISTS (SELECT 1 FROM mfa_credential m WHERE m.app_user_id = u.id AND m.confirmed_at IS NOT NULL AND m.disabled_at IS NULL)`.
+> 2. Granting a second persona to a user who already holds ACCOUNTS, or granting ACCOUNTS
+>    to a user who already holds HR, writes a `PERMISSION_GRANT` audit event with
+>    `metadata.sod_conflict = true` and raises a standing compliance finding on the HR
+>    audit screen until it is revoked. The grant is not blocked — a small organisation may
+>    need it — but it can never be quiet.
+>
+> **Separation of duties, stated as invariants** (each is asserted by
+> `apps/api/test/separation.test.ts` against the seeded `role_permission` rows, so a seed
+> edit that breaks one fails CI):
+> | # | Invariant |
+> |---|---|
+> | SoD-1 | No persona holds both `attendance:submit` and `payroll:calculate`. |
+> | SoD-2 | No persona holds both `attendance:submit` and `attendance:approve:team`. |
+> | SoD-3 | No persona holds both `payroll:input:upload` and `attendance:capture`. |
+> | SoD-4 | No persona holds both `payslip:read:any` and `employee:update:any` (the payroll reader cannot edit the employee whose pay they read). |
+> | SoD-5 | No persona holds both `role:assign` and `payroll:approve`. |
+> | SoD-6 | `payroll:correction:raise` and `payroll:correction:approve` are held by the same persona but the DB `CHECK` on `payroll_correction` forbids the same user doing both. |
 
 ### 3.4 `user_role`
 
@@ -557,7 +895,21 @@ CONSTRAINT ck_user_role__revocation  CHECK (num_nulls(revoked_at, revoked_by_use
 Indexes:
 - `ux_user_role__active (app_user_id, role_id) WHERE revoked_at IS NULL` — one live grant per role.
 - `ix_user_role__org_role (organization_id, role_id) WHERE revoked_at IS NULL`.
-- `ix_user_role__user_active (app_user_id) WHERE revoked_at IS NULL AND (valid_to IS NULL OR valid_to >= CURRENT_DATE)`.
+- `ix_user_role__user_active (app_user_id, valid_to) WHERE revoked_at IS NULL`.
+  **Corrected:** the predicate previously read
+  `… AND (valid_to IS NULL OR valid_to >= CURRENT_DATE)`. PostgreSQL rejects that index —
+  a partial-index predicate must be `IMMUTABLE`, and `CURRENT_DATE` is `STABLE`. The
+  date comparison moves into the query (`AND (valid_to IS NULL OR valid_to >= CURRENT_DATE)`),
+  which the index above still supports.
+
+**Scope resolution is re-read, never trusted from the token.** The `scopes` claim is a
+cache. On every request the guard compares the token's `ver` against
+`app_user.token_version`; on a mismatch it re-resolves from `user_role` → `role_permission`
+and returns `401 {"code":"TOKEN_STALE"}` so the SPA refreshes once. A change to
+`role_permission` (which is organisation-wide) therefore also bumps `token_version` for
+**every** `app_user` in that organisation, in the same transaction as the grant — a
+permission removed from a persona must not stay live in outstanding tokens for their full
+10-minute TTL.
 
 **A user may hold more than one persona** (the prototype's `role` prop toggles the
 Manager group; in production the sidebar renders a group per held persona). The
@@ -783,20 +1135,58 @@ One row per person who can sign in. An `app_user` **may** have no `employee`
 | `locked_until` | `timestamptz` | yes | — | Progressive lockout (§6.4) |
 | `last_login_at` | `timestamptz` | yes | — | |
 | `last_login_ip` | `inet` | yes | — | |
-| `mfa_enforced_at` | `timestamptz` | yes | — | Non-NULL ⇒ MFA mandatory for this user |
-| `is_service_account` | `boolean` | no | `false` | Cannot hold an `employee`; cannot use interactive login |
-| `token_epoch` | `integer` | no | `1` | Bumped on password change, role change, or "revoke all sessions". Access tokens carry `epc`; a mismatch ⇒ `401`. |
+| `mfa_enforced_at` | `timestamptz` | yes | — | Non-NULL ⇒ MFA is blocking **now** for this user (grace exhausted or never granted) |
+| `is_service_account` | `boolean` | no | `false` | Machine principal: holds no `employee`, is refused by the interactive login route, authenticates only by mTLS/OIDC workload identity |
+| `token_version` | `integer` | no | `1` | Bumped on password change, role grant/revoke, `role_permission` change, MFA reset, status change to `SUSPENDED`/`DISABLED`/`OFFBOARDED`, refresh-token reuse detection, and "sign out everywhere". Access tokens carry this as the `ver` claim; a mismatch ⇒ `401 {"code":"TOKEN_STALE"}`. **Renamed** from `token_epoch`/`epc` to match SECURITY.md §2.9 and §3.1 — one name for one concept. |
+| `mfa_required_from` | `date` | yes | — | When MFA becomes blocking for this user. Set to `CURRENT_DATE` on any grant of MANAGER/HR/ACCOUNTS (no grace, SECURITY.md §2.7); set to `activation_date + org_setting.mfa_grace_days` for an EMPLOYEE-only account. |
+| `mfa_enrolled_at` | `timestamptz` | yes | — | First `mfa_credential.confirmed_at`. NULL while unenrolled. |
 | `terms_accepted_at` | `timestamptz` | yes | — | |
 | `disabled_at` | `timestamptz` | yes | — | |
 | `disabled_reason` | `text` | yes | — | |
 
 ```sql
 CONSTRAINT ux_app_user__org_email UNIQUE (organization_id, email),
-CONSTRAINT ck_app_user__password_present CHECK (status = 'INVITED' OR password_hash IS NOT NULL),
-CONSTRAINT ck_app_user__service_no_login CHECK (NOT is_service_account OR mfa_enforced_at IS NULL),
+CONSTRAINT ck_app_user__password_present CHECK (
+  status IN ('INVITED','OFFBOARDED') OR is_service_account OR password_hash IS NOT NULL),
+CONSTRAINT ck_app_user__service_no_password CHECK (NOT is_service_account OR password_hash IS NULL),
 CONSTRAINT ck_app_user__failed_count CHECK (failed_login_count >= 0),
-CONSTRAINT ck_app_user__disabled CHECK (num_nulls(disabled_at, disabled_reason) IN (0, 2))
+CONSTRAINT ck_app_user__token_version CHECK (token_version >= 1),
+CONSTRAINT ck_app_user__disabled CHECK (num_nulls(disabled_at, disabled_reason) IN (0, 2)),
+CONSTRAINT ck_app_user__mfa_enrolled CHECK (status <> 'ACTIVE' OR mfa_enforced_at IS NULL OR mfa_enrolled_at IS NOT NULL)
 ```
+Trigger `trg_app_user_service_has_no_employee` (`AFTER INSERT OR UPDATE`) raises when
+`is_service_account` and an `employee` row references this user; the symmetric check runs
+on `employee`. (A `CHECK` cannot express it: it spans two tables.)
+
+> **Corrected — the previous `ck_app_user__service_no_login` was backwards.** It read
+> `CHECK (NOT is_service_account OR mfa_enforced_at IS NULL)`, i.e. *"a service account
+> must NOT have MFA enforced"*. That constraint forbids the safe state and permits every
+> unsafe one: it does not stop a service account holding an `employee`, does not stop it
+> using the interactive login route, and does not stop a human account from having MFA
+> silently un-enforced. The replacement forbids a service account from having a password
+> at all (so the password route cannot authenticate it), moves the "no employee" rule to
+> a trigger that can actually see both tables, and adds
+> `ck_app_user__mfa_enrolled` so an account cannot sit in `ACTIVE` with MFA blocking and
+> no enrolled credential.
+
+**§5.1.1 Account lifecycle (`machine = 'app_user'`).**
+
+| from | to | permission | guard | effect |
+|---|---|---|---|---|
+| `NULL` | `INVITED` | `employee:create` | `user.email_unique_in_org` | creates `user_invitation` (§6.5.1) + `USER_INVITE` email |
+| `INVITED` | `PENDING_MFA` | *(system, on invitation acceptance)* | `user.invitation_live`, `user.password_set` | — |
+| `PENDING_MFA` | `ACTIVE` | *(system)* | `user.mfa_confirmed_or_within_grace` | grants the EMPLOYEE persona when an `employee` row exists |
+| `ACTIVE` | `PENDING_MFA` | `role:assign` | `user.privileged_role_granted_without_mfa` | bumps `token_version`, revokes every session |
+| `ACTIVE` | `LOCKED` | *(system)* | `user.lockout_threshold_reached` (§6.4) | sets `locked_until` |
+| `LOCKED` | `ACTIVE` | *(system or `security:session:revoke`)* | `user.lockout_expired_or_admin_cleared` | clears counters |
+| `ACTIVE`/`LOCKED`/`PENDING_MFA` | `SUSPENDED` | `employee:deactivate` | `approval.note_required` | revokes every session + refresh family, bumps `token_version` |
+| `SUSPENDED` | `ACTIVE` | `employee:deactivate` | `approval.note_required` | — |
+| any | `DISABLED` | `employee:deactivate` | `approval.note_required` | administrative disable; sessions revoked |
+| any | `OFFBOARDED` | `employee:deactivate` | `user.employee_exited` | terminal; `password_hash` nulled, MFA credentials disabled, sessions revoked, row retained for audit |
+
+Terminal: `OFFBOARDED`. Every transition writes an `audit_event`
+(`action = 'STATE_TRANSITION'`, `entity_type = 'app_user'`) and, for
+`SUSPENDED`/`DISABLED`/`OFFBOARDED`, a `SECURITY_ALERT` email to the user's work address.
 Indexes:
 - `ux_app_user__org_email (organization_id, email)`
 - `ix_app_user__status (organization_id, status)`
@@ -963,10 +1353,10 @@ No audit columns (derived table); it is rebuilt, not edited.
 | `id` | `uuid` | no | `gen_random_uuid()` | PK |
 | `organization_id` | `uuid` | no | — | FK → `organization(id)` `ON DELETE RESTRICT` |
 | `employee_id` | `uuid` | no | — | FK → `employee(id)` `ON DELETE CASCADE`; **unique** |
-| `gender` | `ess_gender` | no | `'UNDISCLOSED'` | |
-| `marital_status` | `ess_marital_status` | no | `'UNDISCLOSED'` | |
-| `blood_group` | `ess_blood_group` | no | `'UNKNOWN'` | |
-| `nationality` | `text` | yes | — | `Indian` |
+| `gender_ct/_iv/_tag/_dek_id` | envelope (no mask) | yes | — | Plaintext is one of `ess_gender`. Encrypted because gender, marital status, blood group and nationality are special-category personal data under the DPDP Act 2023 and are exactly the attributes SECURITY.md §7.1 requires at Layer 2. `NULL` envelope ⇒ not recorded; the UI omits the row rather than rendering `UNDISCLOSED` as if it were an answer. |
+| `marital_status_ct/_iv/_tag/_dek_id` | envelope (no mask) | yes | — | Plaintext is one of `ess_marital_status` |
+| `blood_group_ct/_iv/_tag/_dek_id` | envelope (no mask) | yes | — | Plaintext is one of `ess_blood_group`. **Health data** — never returned to a manager, only to the employee and `profile:read_sensitive:any`. |
+| `nationality_ct/_iv/_tag/_dek_id` | envelope (no mask) | yes | — | `Indian` |
 | `date_of_birth_ct/_iv/_tag/_dek_id/_mask` | envelope | yes | — | Mask renders `14 Feb 1994` only to `profile:read_sensitive:self|any`; otherwise the field is omitted from the payload entirely |
 | `personal_email_ct/_iv/_tag/_dek_id/_mask` | envelope | yes | — | Mask `p•••••••@gmail.com` |
 | `personal_email_fpr` | `bytea` | yes | — | Blind index (duplicate detection) |
@@ -988,8 +1378,9 @@ Index: `ux_employee_personal_detail__email_fpr (organization_id, personal_email_
 | `organization_id` | `uuid` | no | — | FK → `organization(id)` `ON DELETE RESTRICT` |
 | `employee_id` | `uuid` | no | — | FK → `employee(id)` `ON DELETE CASCADE` |
 | `kind` | `ess_statutory_id_kind` | no | — | |
-| `value_ct/_iv/_tag/_dek_id/_mask` | envelope | no | — | e.g. PAN mask `AXYPR••••K` |
-| `value_fpr` | `bytea` | no | — | Blind index; detects the same PAN on two employees |
+| `value_ct/_iv/_tag/_dek_id/_mask` | envelope | yes | — | e.g. PAN mask `AXYPR••••K`. **Nullable**, because a row may legitimately record *the absence* of an identifier (`is_applicable = false` — the prototype's `ESI · Not applicable`). Requiring a ciphertext there would force an implementer to invent an ESI number to say the employee has none, which is exactly the fabrication directive 2 forbids. |
+| `value_fpr` | `bytea` | yes | — | Blind index; detects the same PAN on two employees. NULL exactly when `value_ct` is NULL. |
+| `value_fpr_pepper_version` | `smallint` | yes | — | §1.6 |
 | `is_verified` | `boolean` | no | `false` | |
 | `verified_at` | `timestamptz` | yes | — | |
 | `verified_by_user_id` | `uuid` | yes | — | FK → `app_user(id)` `ON DELETE SET NULL` |
@@ -998,10 +1389,24 @@ Index: `ux_employee_personal_detail__email_fpr (organization_id, personal_email_
 
 ```sql
 CONSTRAINT ux_employee_statutory_id__employee_kind UNIQUE (employee_id, kind),
-CONSTRAINT ux_employee_statutory_id__org_kind_fpr UNIQUE (organization_id, kind, value_fpr),
 CONSTRAINT ck_employee_statutory_id__verified CHECK (num_nulls(verified_at, verified_by_user_id) IN (0, 2)),
-CONSTRAINT ck_employee_statutory_id__verified_flag CHECK (is_verified = (verified_at IS NOT NULL))
+CONSTRAINT ck_employee_statutory_id__verified_flag CHECK (is_verified = (verified_at IS NOT NULL)),
+CONSTRAINT ck_employee_statutory_id__applicable CHECK (
+  (is_applicable = false AND value_ct IS NULL AND value_fpr IS NULL AND is_verified = false)
+  OR (is_applicable = true AND value_ct IS NOT NULL AND value_fpr IS NOT NULL)),
+CONSTRAINT ck_employee_statutory_id__fpr_pair CHECK (
+  num_nulls(value_fpr, value_fpr_pepper_version) IN (0, 2))
 ```
+```sql
+-- partial + composite (see §1.6 on pepper rotation, §1.2 on syntax)
+CREATE UNIQUE INDEX ux_employee_statutory_id__org_kind_fpr
+  ON ess.employee_statutory_id (organization_id, kind, value_fpr_pepper_version, value_fpr)
+  WHERE value_fpr IS NOT NULL;
+```
+A collision on this index means two employees were given the same PAN/Aadhaar/UAN. The
+API surfaces it as `409 {"code":"STATUTORY_ID_DUPLICATE"}` naming only the *kind*, never
+the other employee — the error must not become an oracle for testing whether a PAN is
+already on file.
 
 ### 5.8 `employee_bank_account`
 
@@ -1054,46 +1459,230 @@ Index: `ix_employee_bank_account__employee_current (employee_id) WHERE effective
 CONSTRAINT ux_employee_emergency_contact__employee_priority UNIQUE (employee_id, priority),
 CONSTRAINT ck_employee_emergency_contact__priority CHECK (priority BETWEEN 1 AND 3)
 ```
-Visible to the employee, their current primary manager, and `profile:read_sensitive:any`
-— matching the prototype's note "visible only to People Ops and your manager".
+Visible to the employee, their **current primary manager only** (`employee_reporting_closure`
+`depth = 1`, not the whole subtree — see §1.8.3), and `profile:read_sensitive:any`,
+matching the prototype's note "visible only to People Ops and your manager". A
+second-level manager, a skip-level manager and a peer all read zero rows.
+
+An employee with no recorded contacts is a normal state: the tab renders the designed
+empty state (`ui_copy` key `empty.profile.emergency`) with a "Add a contact" action that
+opens a `profile_change_request` (§5.11). It never renders a blank table or a placeholder
+name.
+
+### 5.10 `employee_reporting_closure` rebuild contract
+
+The trigger `trg_rebuild_reporting_closure` is the only writer. Its contract, because the
+Manager RLS branch and every team query depend on it being exactly right:
+
+- It rebuilds the closure for the **affected subtree only** — the inserted/updated/deleted
+  employee, every current ancestor of it before and after the change, and every
+  descendant — inside the same transaction as the `employee_manager` write, holding
+  `pg_advisory_xact_lock(hashtext('closure:' || organization_id))` so two concurrent
+  re-orgs cannot interleave into a corrupt closure.
+- Only `relationship_kind = 'PRIMARY'` rows with `effective_to IS NULL` participate.
+  `DOTTED_LINE` and `DELEGATE` never widen anyone's data scope; a delegate approver is
+  expressed by `approval_task.assignee_employee_id`, not by the closure.
+- `depth = 0` self-rows exist for every employee, including employees with no manager and
+  no reports, so `ancestor = descendant` joins never lose a row.
+- `path_employee_ids` is ancestor → descendant inclusive, `cardinality = depth + 1`.
+- Cycles are impossible by `trg_employee_manager_no_cycle`; the closure builder
+  additionally aborts if it revisits a node, so a trigger-ordering bug fails loudly
+  instead of looping.
+- The nightly `reporting-closure-verify` job recomputes the whole closure into a temp
+  table and diffs. A difference writes a `CONFIG_CHANGE` audit event, raises a P1, and
+  **does not auto-repair** — a silent repair would erase the evidence of the bug that
+  caused it.
+
+### 5.11 `profile_change_request` and `profile_change_request_field`
+
+Required by API.md §13.2 (`POST /me/profile-change-requests`) and WORKFLOWS.md §8, and by
+`ess_approval_task_kind.PROFILE_CHANGE`, whose `ck_at__entity_fk` branch previously
+pointed at no table at all. It also resolves the prototype's contradiction: the Personal
+tab's note says address and contact changes "update instantly after HR review", which is
+not instant — it is a reviewed change with a before/after record. This table is that
+record.
+
+`profile_change_request`
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` | PK |
+| `organization_id` | `uuid` | no | — | FK → `organization(id)` `ON DELETE RESTRICT` |
+| `request_no` | `citext` | no | — | `WDT-PCR-2026-00318`. Unique per org. |
+| `employee_id` | `uuid` | no | — | FK → `employee(id)` `ON DELETE RESTRICT` — the subject **and** the requester; an employee may only request changes to their own profile (`profile:change_request:create:self`) |
+| `status` | `ess_profile_change_status` | no | `'DRAFT'` | |
+| `submitted_at` | `timestamptz` | yes | — | |
+| `assigned_to_user_id` | `uuid` | yes | — | FK → `app_user(id)` `ON DELETE SET NULL` — the HR reviewer |
+| `decided_at` | `timestamptz` | yes | — | |
+| `decided_by_user_id` | `uuid` | yes | — | FK → `app_user(id)` `ON DELETE RESTRICT` |
+| `decision_note` | `text` | yes | — | Mandatory on `REJECTED` |
+| `applied_at` | `timestamptz` | yes | — | When the approved values were written to the target tables |
+| `proof_file_object_id` | `uuid` | yes | — | FK → `file_object(id)` `ON DELETE SET NULL` — cancelled cheque, government ID |
+| `requires_proof` | `boolean` | no | *(generated)* | `GENERATED ALWAYS AS (false) STORED` is **not** usable here; it is maintained by trigger as "true when any field row has `ess_profile_change_field` ∈ (`NAME`,`DATE_OF_BIRTH`,`BANK_ACCOUNT`,`STATUTORY_ID`)" — the prototype's rule "Name and date of birth changes need a government ID … Bank and statutory changes need a cancelled cheque" |
+| `helpdesk_ticket_id` | `uuid` | yes | — | FK → `helpdesk_ticket(id)` `ON DELETE SET NULL` — set when the employee raised it from the Help desk instead of the profile screen |
+| `approval_task_id` | `uuid` | yes | — | FK → `approval_task(id)` `ON DELETE SET NULL` |
+| `row_version` | `integer` | no | `1` | |
+
+```sql
+CONSTRAINT ux_pcr__org_no UNIQUE (organization_id, request_no),
+CONSTRAINT ck_pcr__submitted CHECK (status = 'DRAFT' OR submitted_at IS NOT NULL),
+CONSTRAINT ck_pcr__decided CHECK (
+  (status IN ('APPROVED','REJECTED')) = (decided_at IS NOT NULL AND decided_by_user_id IS NOT NULL)),
+CONSTRAINT ck_pcr__reject_note CHECK (status <> 'REJECTED' OR decision_note IS NOT NULL),
+CONSTRAINT ck_pcr__applied CHECK ((status = 'APPLIED') = (applied_at IS NOT NULL)),
+CONSTRAINT ck_pcr__proof CHECK (NOT requires_proof OR status IN ('DRAFT') OR proof_file_object_id IS NOT NULL)
+```
+Indexes: `ix_pcr__employee (employee_id, submitted_at DESC)`,
+`ix_pcr__queue (organization_id, status) WHERE status IN ('SUBMITTED','IN_REVIEW')`.
+
+`profile_change_request_field` — one row per field changed. **Both the proposed and the
+previous value are envelope-encrypted** (§1.6): a change request to a bank account
+otherwise stores the account number in plaintext next to the encrypted one it replaces,
+which would make this table the softest target in the schema.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` | PK |
+| `organization_id` | `uuid` | no | — | FK → `organization(id)` `ON DELETE RESTRICT` |
+| `profile_change_request_id` | `uuid` | no | — | FK → `profile_change_request(id)` `ON DELETE CASCADE` |
+| `field` | `ess_profile_change_field` | no | — | |
+| `target_table` | `text` | no | — | `employee`, `employee_personal_detail`, `employee_bank_account`, `employee_statutory_id`, `employee_emergency_contact` |
+| `target_row_id` | `uuid` | yes | — | NULL when the change creates a new row (a first emergency contact) |
+| `proposed_value_ct/_iv/_tag/_dek_id/_mask` | envelope | no | — | The mask is what the HR reviewer sees by default; revealing the plaintext requires `profile:read_sensitive:any` and writes `READ_SENSITIVE` |
+| `previous_value_ct/_iv/_tag/_dek_id/_mask` | envelope | yes | — | NULL when there was no prior value |
+| `applied_at` | `timestamptz` | yes | — | |
+
+```sql
+CONSTRAINT ux_pcrf__request_field_target UNIQUE (profile_change_request_id, field, coalesce(target_row_id, '00000000-0000-0000-0000-000000000000'::uuid))
+```
+(As a unique **index**, per §1.2.) Index: `ix_pcrf__request (profile_change_request_id)`.
+
+**State machine** `machine = 'profile_change_request'`:
+`NULL→DRAFT` (`profile:change_request:create:self`, guard `profile.self_only`) ·
+`DRAFT→SUBMITTED` (`profile:change_request:create:self`, guards `profile.self_only`,
+`profile.has_fields`, `profile.proof_if_required`; creates an `approval_task` of kind
+`PROFILE_CHANGE` assigned to the employee's HR business partner, falling back to any user
+holding `profile:change_request:decide`) ·
+`SUBMITTED→IN_REVIEW` (`profile:change_request:decide`) ·
+`IN_REVIEW→APPROVED` (`profile:change_request:decide`, guard
+`profile.proof_if_required`; step-up MFA required for `BANK_ACCOUNT` and `STATUTORY_ID`,
+SECURITY.md §2.7) ·
+`IN_REVIEW→REJECTED` (`profile:change_request:decide`, guard `approval.note_required`) ·
+`APPROVED→APPLIED` (*system*, guard `profile.target_row_unchanged_since_submit` —
+the write is refused if the target row's `row_version` moved after submission, so a
+concurrent HR edit is never silently overwritten) ·
+`DRAFT|SUBMITTED→CANCELLED` (`profile:change_request:create:self`, guard
+`profile.self_only`, only while `decided_at IS NULL`).
+Terminal: `APPLIED`, `REJECTED`, `CANCELLED`.
+Applying a request writes the new values to the target tables **and** a single
+`audit_event` per field with `before_data`/`after_data` redacted per §17.1, plus a
+`PROFILE_CHANGE_DECIDED` notification to the employee.
+
+> **The employee never writes a sensitive field directly.** `profile:update:self` covers
+> only fields with no identity or payment consequence (preferred name, communication
+> preferences). Every field in `ess_profile_change_field` goes through this machine. Bank
+> and statutory changes additionally re-set `employee_bank_account.is_verified = false`
+> and `employee_statutory_id.is_verified = false` on apply, which makes the affected
+> employee fail the `payroll.bank_verified` validation on the next cycle until Payroll
+> re-verifies — the prototype's "verified by Payroll within 2 working days", expressed as
+> a state the system actually enforces rather than a caption.
 
 ---
 ## 6. Sessions, MFA and login security
 
+### 6.0 `session` — the server-side revocation point
+
+**This table was missing.** SECURITY.md §3.1 puts a `sid` claim in every access token and
+looks it up on **every** request; §2.7 reads `session.mfa_verified_at` for step-up; §3.2
+deletes `session` rows on refresh-token reuse. Without it, a 10-minute access token
+cannot be revoked at all between `token_version` bumps, and step-up MFA has nowhere to
+record that it happened. `refresh_token` cannot stand in for it: a refresh family is a
+cookie lineage, not a live login, and it is not consulted on ordinary requests.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` | PK. The `sid` claim. |
+| `organization_id` | `uuid` | no | — | FK → `organization(id)` `ON DELETE CASCADE` |
+| `app_user_id` | `uuid` | no | — | FK → `app_user(id)` `ON DELETE CASCADE` |
+| `status` | `ess_session_status` | no | `'ACTIVE'` | |
+| `created_at` | `timestamptz` | no | `now()` | |
+| `last_seen_at` | `timestamptz` | no | `now()` | Updated at most once per 60 s (a write per request would be a hot-row bottleneck) |
+| `absolute_expires_at` | `timestamptz` | no | — | `created_at + interval '14 days'`; matches the refresh family cap |
+| `idle_expires_at` | `timestamptz` | no | — | `last_seen_at + interval '7 days'` |
+| `auth_time` | `timestamptz` | no | — | The original password authentication — the `auth_time` claim |
+| `mfa_verified_at` | `timestamptz` | yes | — | Last successful MFA assertion. **Step-up gate:** a route declaring `stepUp: true` requires `now() - mfa_verified_at < interval '5 minutes'`, else `403 {"code":"MFA_STEP_UP_REQUIRED"}`. |
+| `amr` | `text[]` | no | `'{pwd}'` | `{pwd}` or `{pwd,otp}` / `{pwd,recovery_code}` |
+| `ip_hash` | `bytea` | no | — | `HMAC-SHA256(pepper, ip)` — 32 bytes. The raw IP is **not** stored on the session: it is a per-request access-log field with a 30-day life, not a 14-day identity attribute. |
+| `ip_asn` | `integer` | yes | — | Coarse enrichment for the "new location" alert |
+| `user_agent_hash` | `bytea` | no | — | `HMAC-SHA256(pepper, ua)` |
+| `device_label` | `text` | yes | — | Coarse, derived (`Chrome on macOS`) — the only human-readable device string, shown on the "Active sessions" screen |
+| `revoked_at` | `timestamptz` | yes | — | |
+| `revoked_reason` | `text` | yes | — | `LOGOUT`, `LOGOUT_ALL`, `REUSE_DETECTED`, `ADMIN_REVOKE`, `PASSWORD_CHANGE`, `ROLE_CHANGE`, `STATUS_CHANGE`, `IDLE_EXPIRED`, `ABSOLUTE_EXPIRED` |
+
+```sql
+CONSTRAINT ck_session__expiry CHECK (absolute_expires_at > created_at AND idle_expires_at > created_at),
+CONSTRAINT ck_session__revocation CHECK (num_nulls(revoked_at, revoked_reason) IN (0, 2)),
+CONSTRAINT ck_session__revoked_status CHECK ((status = 'REVOKED') = (revoked_at IS NOT NULL)),
+CONSTRAINT ck_session__hash_len CHECK (octet_length(ip_hash) = 32 AND octet_length(user_agent_hash) = 32),
+CONSTRAINT ck_session__amr CHECK (cardinality(amr) BETWEEN 1 AND 4)
+```
+Indexes:
+- `ix_session__user_live (app_user_id, last_seen_at DESC) WHERE status = 'ACTIVE'` — the "Active sessions" screen and bulk revocation
+- `ix_session__sweep (idle_expires_at) WHERE status = 'ACTIVE'`
+- `ux_session__live` — not required; a user may hold several concurrent sessions by design.
+
+**Lookup cost.** The per-request `sid` check is a single primary-key read and is cached
+in-process for 10 s keyed by `(sid, token_version)`; a revocation is therefore effective
+within 10 s, not 10 minutes. The cache is invalidated immediately in the process that
+performs the revocation and by a Redis pub/sub `session:revoked` message in the others.
+
+**State machine** `machine = 'session'` (see §6.6).
+
+Every `refresh_token` belongs to exactly one `session`; revoking the session revokes the
+family, and vice versa.
+
 ### 6.1 `refresh_token` — rotating, hashed, family-tracked
 
-Access tokens are stateless JWTs (10 min TTL, never persisted). Refresh tokens are
-opaque 256-bit random values delivered in an `httpOnly; Secure; SameSite=Strict;
-Path=/api/auth` cookie and persisted **only as a hash**.
+Access tokens are stateless JWTs (10 min TTL, never persisted) carrying `sid`; they are
+verifiable offline **and** revocable, because §6.0's session row is consulted on every
+request. Refresh tokens are opaque 256-bit random values delivered in a
+`__Host-wd_rt` cookie (`httpOnly; Secure; SameSite=Strict; Path=/api/auth`; the
+`__Host-` prefix pins it to the exact host with no `Domain` attribute, so a compromised
+sibling subdomain cannot set it) and persisted **only as a hash**.
 
 | Column | Type | Null | Default | Notes |
 |---|---|---|---|---|
 | `id` | `uuid` | no | `gen_random_uuid()` | PK. Also the token's `jti`. |
 | `organization_id` | `uuid` | no | — | FK → `organization(id)` `ON DELETE CASCADE` |
 | `app_user_id` | `uuid` | no | — | FK → `app_user(id)` `ON DELETE CASCADE` |
-| `family_id` | `uuid` | no | — | Lineage root. Constant across every rotation descended from one login. |
+| `session_id` | `uuid` | no | — | FK → `session(id)` `ON DELETE CASCADE`. **Added:** SECURITY.md §3.3 requires it, and it is what makes "revoke this session" and "revoke this family" one act. |
+| `family_id` | `uuid` | no | — | Lineage root. Constant across every rotation descended from one login. Equal to the first token's `id`. |
 | `parent_token_id` | `uuid` | yes | — | FK → `refresh_token(id)` `ON DELETE SET NULL`. `NULL` on the first token of a family. |
 | `generation` | `integer` | no | `0` | Monotonic within a family; `parent.generation + 1` |
 | `token_hash` | `bytea` | no | — | `sha256(raw_token)`, 32 bytes. The raw token never touches the database, the logs, or any audit row. |
 | `issued_at` | `timestamptz` | no | `now()` | |
-| `expires_at` | `timestamptz` | no | — | `issued_at + interval '14 days'` (sliding cap: family dies at `family_absolute_expires_at`) |
-| `family_absolute_expires_at` | `timestamptz` | no | — | `family_created_at + interval '30 days'`; copied down every rotation |
-| `rotated_at` | `timestamptz` | yes | — | Set when this token is exchanged |
+| `expires_at` | `timestamptz` | no | — | `issued_at + interval '7 days'` (idle TTL). **Corrected** from 14 days: SECURITY.md §3.3 specifies a 7-day idle TTL and a 14-day absolute family TTL, and a data model that persisted 14/30 would silently double the exposure window of a stolen cookie relative to the security design. The two documents now agree; `ACCESS_TOKEN_TTL_SECONDS`, `REFRESH_IDLE_TTL_DAYS` and `REFRESH_FAMILY_TTL_DAYS` are configuration, and the schema stores the resolved instants. |
+| `family_absolute_expires_at` | `timestamptz` | no | — | `family_created_at + interval '14 days'`; copied down unchanged on every rotation. Equal to `session.absolute_expires_at`. |
+| `used_at` | `timestamptz` | yes | — | Set when this token is exchanged. **Renamed** from `rotated_at` to match SECURITY.md §3.3's reuse-detection predicate, which tests `used_at IS NOT NULL`. |
 | `revoked_at` | `timestamptz` | yes | — | |
 | `revoked_reason` | `text` | yes | — | `ROTATED`, `LOGOUT`, `REUSE_DETECTED`, `ADMIN_REVOKE`, `PASSWORD_CHANGE`, `ROLE_CHANGE`, `EXPIRED` |
-| `user_agent` | `text` | yes | — | Truncated to 512 chars |
-| `ip_address` | `inet` | yes | — | |
+| `user_agent_hash` | `bytea` | yes | — | `HMAC-SHA256(pepper, ua)`. **Changed from plaintext:** a refresh-token table is not a place to accumulate 7 days of device fingerprints per user; the hash is sufficient for the only use (comparing the presenting client against the issuing client) and is what SECURITY.md §3.2 logs on reuse detection. |
+| `ip_hash` | `bytea` | yes | — | `HMAC-SHA256(pepper, ip)` — same reasoning. |
 | `ip_asn` | `integer` | yes | — | Optional enrichment; drives the "new location" security alert |
-| `device_label` | `text` | yes | — | Derived from UA; shown in a future "Active sessions" screen |
-| `mfa_satisfied_at` | `timestamptz` | yes | — | Non-NULL ⇒ this family cleared MFA |
 
 ```sql
 CONSTRAINT ux_refresh_token__hash UNIQUE (token_hash),
 CONSTRAINT ck_refresh_token__expiry CHECK (expires_at > issued_at),
-CONSTRAINT ck_refresh_token__family_cap CHECK (family_absolute_expires_at >= expires_at),
 CONSTRAINT ck_refresh_token__generation CHECK (generation >= 0),
-CONSTRAINT ck_refresh_token__revocation CHECK (num_nulls(revoked_at, revoked_reason) IN (0, 2))
+CONSTRAINT ck_refresh_token__hash_len CHECK (octet_length(token_hash) = 32),
+CONSTRAINT ck_refresh_token__revocation CHECK (num_nulls(revoked_at, revoked_reason) IN (0, 2)),
+CONSTRAINT ck_refresh_token__root CHECK ((generation = 0) = (parent_token_id IS NULL))
 ```
+`family_absolute_expires_at >= expires_at` is **not** a `CHECK`: the last rotation inside
+a family legitimately has an idle expiry beyond the family cap, and the cap — not the
+idle expiry — is what the refresh route enforces (`now() < least(expires_at,
+family_absolute_expires_at)`). Encoding it as a constraint would reject the final valid
+rotation of every long-lived family.
 Indexes:
 - `ux_refresh_token__hash (token_hash)` — the only lookup path
 - `ix_refresh_token__family (family_id, generation)`
@@ -1103,14 +1692,21 @@ Indexes:
 **Reuse detection.** On presentation of a token whose row has
 `rotated_at IS NOT NULL` **or** `revoked_at IS NOT NULL`, the API:
 1. `UPDATE refresh_token SET revoked_at = now(), revoked_reason = 'REUSE_DETECTED' WHERE family_id = $1 AND revoked_at IS NULL` — kills the whole family;
-2. increments `app_user.token_epoch` — kills every outstanding access token;
-3. writes an `audit_event` (`action = 'LOGOUT'`, `metadata.reason = 'refresh_reuse'`);
-4. enqueues an `email_outbox` row of kind `SECURITY_ALERT`;
-5. creates a `notification` of kind `SECURITY_ALERT`;
-6. responds `401` with a generic body. No information about which token was replayed.
+2. increments `app_user.token_version` — kills every outstanding access token;
+3. deletes/revokes the `session` rows of that family and increments `app_user.token_version`;
+4. writes an `audit_event` (`action = 'LOGOUT'`, `event_code = 'AUTH.REFRESH_REUSE_DETECTED'`, `metadata.reason = 'refresh_reuse'`, carrying both `ip_hash` values and both `user_agent_hash` values and **never** the token);
+5. enqueues an `email_outbox` row of kind `SECURITY_ALERT`;
+6. creates a `notification` of kind `SECURITY_ALERT`;
+7. responds `401` with a generic body. No information about which token was replayed.
 
 No audit columns (`created_by_user_id` etc.); only `issued_at`. Rows are swept 90 days
 after `expires_at` by the `session-sweep` job — after their audit trail has been written.
+
+**Refresh is a single serialisable act.** `POST /auth/refresh` runs
+`SELECT … FROM refresh_token WHERE token_hash = $1 FOR UPDATE` before any decision, so a
+genuine double-submit from one client serialises into one rotation and one replay rather
+than racing two rotations into existence. The rotation, the `used_at` stamp, the new row
+and the `session.last_seen_at` touch are one transaction.
 
 ### 6.2 `mfa_credential`
 
@@ -1131,10 +1727,38 @@ after `expires_at` by the `session-sweep` job — after their audit trail has be
 | `disabled_at` | `timestamptz` | yes | — | |
 
 ```sql
-CONSTRAINT ux_mfa_credential__user_method UNIQUE (app_user_id, method) WHERE disabled_at IS NULL,
 CONSTRAINT ck_mfa_credential__digits CHECK (digits IN (6, 8)),
-CONSTRAINT ck_mfa_credential__period CHECK (period_seconds IN (30, 60))
+CONSTRAINT ck_mfa_credential__period CHECK (period_seconds IN (30, 60)),
+CONSTRAINT ck_mfa_credential__algorithm CHECK (algorithm IN ('SHA1','SHA256','SHA512')),
+CONSTRAINT ck_mfa_credential__counter CHECK (last_used_counter IS NULL OR last_used_counter > 0),
+CONSTRAINT ck_mfa_credential__confirmed CHECK (confirmed_at IS NULL OR confirmed_at >= created_at)
 ```
+```sql
+CREATE UNIQUE INDEX ux_mfa_credential__user_method
+  ON ess.mfa_credential (app_user_id, method) WHERE disabled_at IS NULL;   -- §1.2
+```
+
+`algorithm = 'SHA1'` is the RFC 6238 default and is what Google Authenticator, Authy and
+1Password actually implement; it is retained deliberately for compatibility and is safe
+here because HMAC-SHA1 has no practical preimage weakness and the secret is 160 bits from
+a CSPRNG. The allowlist exists so a future migration to SHA256 is a data change, not a
+code change, and so a client-supplied `algorithm` can never widen it.
+
+**Verification window and replay.** A submitted code is checked against time-steps
+`t-1, t, t+1` (±30 s skew) and **only** steps strictly greater than `last_used_counter`
+are accepted; on success `last_used_counter` is set to the accepted step inside the same
+`UPDATE … WHERE last_used_counter IS DISTINCT FROM <new>` so two concurrent submissions of
+the same code cannot both win. Failed MFA attempts write a `login_attempt` row with
+`outcome = 'MFA_FAILED'` and count toward the §6.4 lockout — otherwise MFA would be an
+unrated brute-force surface behind a rate-limited password.
+
+**Who must have MFA, restated as data** (SECURITY.md §2.7):
+`app_user.mfa_required_from` is `CURRENT_DATE` for any user holding MANAGER, HR or
+ACCOUNTS (no grace), and `activation_date + org_setting.mfa_grace_days` (seeded 14) for
+an EMPLOYEE-only account. `mfa_enforced_at` is set by the `mfa-enforcement` job the first
+time `CURRENT_DATE >= mfa_required_from`; from then on the login route completes only
+through enrolment. The grace length is persisted configuration, not a literal, so the
+compliance date for the Information Security Policy v4.2 clause is auditable.
 
 ### 6.3 `mfa_recovery_code`
 
@@ -1150,8 +1774,22 @@ CONSTRAINT ck_mfa_credential__period CHECK (period_seconds IN (30, 60))
 | `invalidated_at` | `timestamptz` | yes | — | |
 
 ```sql
-CONSTRAINT ck_mfa_recovery_code__single_use CHECK (used_at IS NULL OR invalidated_at IS NULL)
+CONSTRAINT ck_mfa_recovery_code__usable CHECK (used_at IS NULL OR used_ip IS NOT NULL),
+CONSTRAINT ck_mfa_recovery_code__hash CHECK (code_hash LIKE '$argon2id$%')
 ```
+**Corrected:** the previous `CHECK (used_at IS NULL OR invalidated_at IS NULL)` forbids the
+ordinary sequence *use one code, then reissue the batch* — after reissue every code in the
+old batch is invalidated, including the one already used, and the constraint would reject
+that update. Single use is enforced by the consumption query, which is the only correct
+place for it because it must also be atomic:
+
+```sql
+UPDATE mfa_recovery_code SET used_at = now(), used_ip = $3
+ WHERE id = $1 AND used_at IS NULL AND invalidated_at IS NULL
+ RETURNING id;   -- zero rows ⇒ already used or invalidated ⇒ reject
+```
+Consuming the last live code in a batch enqueues a `SECURITY_ALERT` email and forces
+re-issue at next login; a user is never left with zero recovery codes silently.
 Indexes: `ix_mfa_recovery_code__user_live (app_user_id) WHERE used_at IS NULL AND invalidated_at IS NULL`,
 `ix_mfa_recovery_code__batch (batch_id)`.
 
@@ -1206,8 +1844,90 @@ each further failure after a lockout doubles the window to a 24-hour cap. Indepe
 CONSTRAINT ux_password_reset_token__hash UNIQUE (token_hash),
 CONSTRAINT ck_password_reset_token__expiry CHECK (expires_at > issued_at)
 ```
-Consuming a token bumps `app_user.token_epoch` and revokes every live `refresh_token`
-family for that user.
+Consuming a token bumps `app_user.token_version`, revokes every live `session` and
+`refresh_token` family for that user, and invalidates every other live
+`password_reset_token` for that user in the same transaction. Requesting a reset for an
+address that matches no user performs the same Argon2id work and returns the same
+response in the same time envelope, so the endpoint is not a user-enumeration oracle.
+
+### 6.5.1 `user_invitation` — first-login activation
+
+Required by SECURITY.md §2.4 (`activation_token`) and WORKFLOWS.md A-6. An invited
+`app_user` has `status = 'INVITED'` and no `password_hash`; this row is the only way to
+leave that state.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` | PK |
+| `organization_id` | `uuid` | no | — | FK → `organization(id)` `ON DELETE CASCADE` |
+| `app_user_id` | `uuid` | no | — | FK → `app_user(id)` `ON DELETE CASCADE` |
+| `employee_id` | `uuid` | yes | — | FK → `employee(id)` `ON DELETE CASCADE` |
+| `token_hash` | `bytea` | no | — | `sha256(raw)` of a 32-byte CSPRNG token; unique |
+| `token_fpr` | `bytea` | no | — | `HMAC-SHA256(pepper, raw)` — the lookup index, so the token is found without a table scan and without storing a reversible form |
+| `token_fpr_pepper_version` | `smallint` | no | — | §1.6 |
+| `expires_at` | `timestamptz` | no | — | `created_at + interval '7 days'` |
+| `sent_email_outbox_id` | `uuid` | yes | — | FK → `email_outbox(id)` `ON DELETE SET NULL` |
+| `accepted_at` | `timestamptz` | yes | — | |
+| `accepted_ip_hash` | `bytea` | yes | — | |
+| `revoked_at` | `timestamptz` | yes | — | |
+| `revoked_by_user_id` | `uuid` | yes | — | FK → `app_user(id)` `ON DELETE SET NULL` |
+| `attempt_count` | `smallint` | no | `0` | Bad-token presentations against this user; 10 ⇒ auto-revoke + `SECURITY_ALERT` |
+
+```sql
+CONSTRAINT ux_user_invitation__token_hash UNIQUE (token_hash),
+CONSTRAINT ck_ui__expiry CHECK (expires_at > created_at),
+CONSTRAINT ck_ui__single_outcome CHECK (num_nulls(accepted_at, revoked_at) >= 1),
+CONSTRAINT ck_ui__revocation CHECK (num_nulls(revoked_at, revoked_by_user_id) IN (0, 2)),
+CONSTRAINT ck_ui__attempts CHECK (attempt_count BETWEEN 0 AND 10)
+```
+```sql
+CREATE UNIQUE INDEX ux_user_invitation__live ON ess.user_invitation (app_user_id)
+  WHERE accepted_at IS NULL AND revoked_at IS NULL;              -- one live invite per user
+CREATE UNIQUE INDEX ux_user_invitation__fpr
+  ON ess.user_invitation (token_fpr_pepper_version, token_fpr);
+```
+Acceptance requires the token, a new password meeting the policy, and immediate MFA
+enrolment when `mfa_required_from <= CURRENT_DATE`; it is one transaction that sets
+`password_hash`, `accepted_at`, `app_user.status`, and writes an audit event.
+
+### 6.5.2 `jwks` — access-token verification keys
+
+SECURITY.md §3.2 requires it and states the private key never touches Postgres. This table
+holds **public** keys and rotation metadata only; it is here because it is persistent
+state the API reads on every unknown `kid`.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `kid` | `text` | no | — | PK. Format `wd-ess-<yyyymm>-<4 hex>` |
+| `public_key_pem` | `text` | no | — | Ed25519 SPKI PEM. **Public material only.** |
+| `alg` | `text` | no | `'EdDSA'` | `CHECK (alg = 'EdDSA')` — a one-value allowlist is the point: an `alg` column that can hold `none` or `HS256` is a token-forgery primitive |
+| `status` | `ess_jwks_status` | no | `'NEXT'` | `NEXT` (verify only) → `CURRENT` (sign) → `RETIRED` (verify for `ACCESS_TOKEN_TTL + 60 s`) |
+| `not_before` / `not_after` | `timestamptz` | no / yes | — | |
+| `rotated_by_user_id` | `uuid` | yes | — | FK → `app_user(id)` `ON DELETE SET NULL` |
+
+```sql
+CONSTRAINT ck_jwks__kid CHECK (kid ~ '^wd-ess-[0-9]{6}-[0-9a-f]{4}$'),
+CONSTRAINT ck_jwks__window CHECK (not_after IS NULL OR not_after > not_before)
+```
+```sql
+CREATE UNIQUE INDEX ux_jwks__one_current ON ess.jwks (status) WHERE status = 'CURRENT';
+```
+Not tenant-scoped. `ess_app` holds `SELECT` only; rotation runs as `ess_migrator`.
+Every status change writes a `CONFIG_CHANGE` audit event.
+
+### 6.6 Session state machine (`machine = 'session'`)
+
+| from | to | permission | guard |
+|---|---|---|---|
+| `NULL` | `ACTIVE` | `auth:login` | `auth.credentials_valid`, `auth.mfa_satisfied_or_not_required`, `auth.user_status_permits_login` |
+| `ACTIVE` | `EXPIRED` | *(system)* | `session.idle_or_absolute_elapsed` |
+| `ACTIVE` | `REVOKED` | *(self, or `security:session:revoke`)* | — |
+
+`auth.user_status_permits_login` admits only `ACTIVE` and `PENDING_MFA`; `INVITED`,
+`LOCKED`, `SUSPENDED`, `DISABLED` and `OFFBOARDED` are refused with the **same** generic
+body and the same timing as bad credentials, and the real reason is recorded only in
+`login_attempt.outcome`. A `PENDING_MFA` session is created but carries
+`amr = '{pwd}'` and is admitted to the enrolment routes only.
 
 ---
 
