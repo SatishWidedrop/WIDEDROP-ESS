@@ -2015,3 +2015,675 @@ component on the latest **published** payslip, and is `—` with an explanation 
 exists yet; `DEPENDENTS` (names, ages, cover) → `GET /me/dependents` with server-computed
 `ageYears`; `addDependent`'s toast "enrolment window · 1 – 15 Apr" → the persisted window dates.
 
+### 6.8 Expenses (`isExpenses`, line 460)
+
+**Layout** Column, gap 22px:
+1. Header row: `h1` + "Claims approved by the {N}th are paid with that month's salary"; right a
+   `Button primary` toggling the claim form ("New claim" / "Close").
+2. `auto-fit minmax(var(--autofit-stat),1fr)` — three `MetricTile`s.
+3. The **New claim** `FormCard tone="accent"` (rendered only while open, `animation: fade`):
+   a `auto-fit minmax(180px,1fr)` row of Category / Amount (₹) / Date of spend, then a
+   full-width Description, the error banner, and a footer of "Submit claim" + "Attach bill" +
+   the routing note.
+4. **My claims** card: rows of mono claim no. (76px) · title + "{category} · {date}{note}" ·
+   amount · `StatusChip` (min-width 96px).
+
+**Fields** `GET /me/expense-claims` → `stats[]` (three `MetricDto`), `data[]`
+(`claimNo`, `title`, `category.name`, `spendDate`, `totalAmount`, `status`, `note`).
+`GET /expenses/categories` → the `Select` options plus `requiresReceipt`,
+`receiptRequiredAbove` and `limits[]` (used for an inline hint, e.g. "Cap ₹1,500 per month —
+set by Travel & Expense Policy v3.0", with the cap and the policy label both from the API).
+
+**Interactions** "Attach bill" → `FileField` → `POST /api/v1/files` with
+`purpose=EXPENSE_BILL`; the returned `fileId` goes into `attachmentFileIds`. Upload shows the
+scan status; a file that is not `CLEAN` blocks submit with the server's reason. Submit **[I]** →
+`POST /me/expense-claims` with `lines[]` (the single-line form posts one line) and **no total**.
+The toast reads `res.claimNo`. Inline 422s: `EXPENSE_LIMIT_EXCEEDED` (shows the cap and basis),
+`ATTACHMENT_REQUIRED`, `CLAIM_WINDOW_CLOSED`, `MANAGER_NOT_RESOLVED`.
+"Withdraw" appears on a row only when `canWithdraw` **[I][V]**.
+
+**Loading** Three tile skeletons + six row skeletons. **Empty** §4.9. **Error** Per-card.
+
+**Permission gate** route `expense:read`; create `expense:submit`; withdraw `expense:withdraw`.
+
+**Prototype hardcodes replaced** — `EXP0` → `GET /me/expense-claims`; `expStats` summed in the
+browser → the `expense_fy_rollup` metrics (including "4 claims since April", which is now
+`reimbursed_count` + the fiscal year's start month); `"…with Arjun Malhotra"` →
+`stats[0].subLabel`; `"Approved · paying 30 Sep"` / `"With September salary"` → the next
+payroll cycle's label, or the honest fallback "Awaiting the next payroll cycle" when no cycle is
+open; `'EXP-'+(2291+…)` → `claimNo` from `expense_claim_seq`; the six hardcoded category
+options → `GET /expenses/categories`; `"Goes to Arjun Malhotra, then Finance"` → the manager
+name from `stats[0].subLabel` plus the category's `requiresFinanceApproval`; "Claims approved by
+the 25th" → `organization.expenseCutoffDayOfMonth`; `attachBill`'s "opens your files" toast →
+a real upload.
+
+### 6.9 Documents (`isDocuments`, line 503)
+
+**Layout** Column, gap 22px: header; `ListDetailSplit grid="form"` with the **Request a letter**
+`FormCard` on the left (Letter type `Select`, "Addressed to" optional `TextInput`, submit, and a
+muted SLA paragraph) and the **Letter requests** card on the right (rows of type · "Requested
+{date} · {purposeLabel}" · `StatusChip` · a download `IconButton` when downloadable); then the
+**My documents** card (rows of a document glyph tile, name, "{category} · {date}", download
+`IconButton`).
+
+**Fields** `GET /documents/letter-templates` → options + `requiresAddressee` +
+`slaWorkingDays` (the SLA paragraph is rebuilt from the **selected** template).
+`GET /me/document-requests` → `templateName`, `requestedAt`, `purposeLabel`, `status`,
+`isDownloadable`. `GET /me/documents` → `title`, `categoryLabel`, `documentDate`.
+
+**Interactions** Submit **[I]** → `POST /me/document-requests`; "Addressed to" becomes required
+(client + server) when the selected template's `requiresAddressee` is true. The toast reads
+`res.requestNo` and the template's `slaWorkingDays`. Download → `GET /me/documents/:id/download`
+or `GET /me/document-requests/:id/download`; the icon is rendered only when `isDownloadable`.
+
+**Loading / Empty / Error** §1.6, §4.10.
+
+**Permission gate** route `document:read`; request `document:request`.
+
+**Prototype hardcodes replaced** — the five hardcoded letter `<option>`s →
+`GET /documents/letter-templates`; `LET0` → `GET /me/document-requests`; `DOCS` →
+`GET /me/documents`; `"Requested 29 Sep 2026"` hardcoded in `requestLetter()` → the persisted
+`requestedAt`; `"General purpose"` / `"Addressed to X"` → the server's `purposeLabel`;
+`"issued within 1 working day on company letterhead, digitally signed by People Ops"` → the
+selected template's `slaWorkingDays` (the letterhead/signature clause stays as static product
+copy because it describes the process, not a datum).
+
+### 6.10 Directory (`isDirectory`, line 539)
+
+**Layout** Column, gap 22px:
+1. Header row: `h1` + "Find colleagues across Widedrop · {N} people shown"; right a 360px search
+   `TextInput` with a leading search icon.
+2. **Selected person** card (`tone="accent"`, `animation: fade`) when a person is selected:
+   56px `Avatar`, name, "{title} · {dept} · {location}", a row of email / phone / "Reports to
+   {name}", then "Copy email" and a close `IconButton`.
+3. **Your reporting line** card, shown only when the search box is empty: a wrapped row of
+   person buttons separated by chevrons.
+4. `auto-fill minmax(var(--autofit-person),1fr)` grid of person cards (40px avatar, name, title,
+   "{dept} · {location}").
+
+**Fields** `GET /directory/people?q=&page=` → `data[]` (`fullName`, `initials`,
+`accentColourHex` → `deptSlug`, `title`, `department`, `location`, `workEmail`, `workPhone`)
+and `page.total` (the header count). `GET /directory/people/:id` adds `reportsTo`.
+`GET /me/reporting-line` → `ancestors[]`, `self`, `reports[]` with server-supplied
+`relationLabel` strings.
+
+**Interactions** Search → 250 ms debounce → `?q=` + `page=1`. Card click → `?person=`.
+"Copy email" → `navigator.clipboard.writeText(person.workEmail)` inside try/catch; the toast is
+`` `${workEmail} copied` `` and appears only on success (a clipboard failure shows the address
+in a selectable inline field instead). `workPhone` is rendered only when the field is present —
+it is omitted by the API unless the actor holds `directory:read_contact`.
+
+**Loading** Twelve card skeletons. **Empty** §4.11. **Error** Per-region.
+
+**Permission gate** route `directory:read`.
+
+**Prototype hardcodes replaced** — the twelve-person `PEOPLE` array, the derived `email`
+(`name.toLowerCase().replace(' ','.')+'@widedrop.com'`) and `initials` → the API's
+`workEmail` and `initials` (generated columns); `DEPT_COLOR` → `accentColourHex` mapped to a
+`data-dept` slug; `"12 people shown"` → `page.total`; the reporting line assembled from
+`PEOPLE[0]`, `PEOPLE[1]` and `rel==='report'` → `GET /me/reporting-line`; `person.phone`
+(personal-looking mobile numbers) → `workPhone` only, permission-gated; the `mgr` string →
+`reportsTo: PersonRefDto`.
+
+### 6.11 Announcements (`isAnnouncements`, line 587)
+
+**Layout** Column, gap 22px: header; `ListDetailSplit grid="split" align="start"` — left a
+`Card padding="none"` of rows (a "Pinned" eyebrow when pinned, "{category} · {date}", title);
+right the reading `Card padding="roomy"` — eyebrow, `h2`, body paragraphs (14px/1.65,
+`--text-bright`), and a "Posted by {byline}" footer above a rule.
+
+**Fields** `GET /me/announcements` → `title`, `categoryLabel`, `publishedAt`, `isPinned`,
+`isRead`, `excerpt`. `GET /me/announcements/:id` adds `bodyMarkdown` and `attachment`.
+Unread rows carry a small accent dot; read state comes from `isRead`, never from local storage.
+
+**Interactions** Row click → `?id=`. Opening the detail fires
+`POST /me/announcements/:id/read` (optimistic, rollback on error) — reading does **not**
+implicitly mark read server-side, so the client must call it. Body markdown is rendered through
+`lib/sanitize.ts` (§8.4). Attachment → signed-URL download.
+
+**Loading** Six row skeletons + a detail skeleton of three paragraph blocks.
+**Empty** §4.12. **Error** Per-pane.
+
+**Permission gate** route `announcement:read`. Audience filtering is a server-side query
+predicate — a non-targeted announcement is not in the response at all, not merely hidden.
+
+**Prototype hardcodes replaced** — the six-element `ANN` array with its `body` paragraph arrays
+and `by` bylines → the two endpoints; `pinned: true` on the first item → `isPinned`;
+the client's `ANN.slice(0,3)` for Home → `home.announcements`.
+
+### 6.12 Help desk (`isHelp`, line 611)
+
+**Layout** Column, gap 22px: header (`h1` + "Raise a request to People Ops, Payroll or IT ·
+Typical first response {slaLabel}"); `ListDetailSplit grid="form" align="start"` — left the
+**Raise a ticket** `FormCard` (Category `Select`, Subject, Details `TextArea`, error banner,
+submit); right a column of **My tickets** and **Common questions**.
+
+**Fields** `GET /help-desk/categories` → options + `firstResponseSlaLabel` (the header clause).
+`GET /me/tickets` → `ticketNo`, `subject`, `category.name`, `metaLabel`, `status`.
+`GET /help-desk/faq` → `question`, `answerMarkdown` (sanitised).
+
+**Interactions** Submit **[I]** → `POST /me/tickets`. This is Directive 8's screen: the
+transaction persists the ticket **and** enqueues the `email_outbox` row addressed to
+`organization.helpdeskEmail` (`helpdesk@widedroptech.com`). The response carries
+`notification.queuedTo`, and the toast reads:
+`` `${res.ticket.ticketNo} raised · notified ${res.notification.queuedTo}` ``.
+Email delivery is asynchronous and is **never** a precondition for the ticket — the employee-facing
+screen therefore never shows a delivery status, and a later delivery failure is an HR/ops concern
+(§4.15). Attachments via `POST /files` (`purpose=TICKET_ATTACHMENT`, max 3).
+FAQ rows use `Accordion` with single-open semantics.
+
+**Loading** Form skeleton + three ticket rows + four FAQ rows. **Empty** §4.13 — note the FAQ
+card is **not rendered at all** with zero rows. **Error** Per-card.
+
+**Permission gate** route `ticket:read`; create `ticket:create`; comment `ticket:comment`.
+
+**Prototype hardcodes replaced** — the seven hardcoded category `<option>`s →
+`GET /help-desk/categories`; `'HD-'+(4830+len)` → `ticketNo` from `helpdesk_ticket_seq`;
+`"Opened just now · unassigned"` → `metaLabel` (computed server-side from `assignee` and
+`created_at`); `TK0` → `GET /me/tickets`; the four-item `FAQ` array → `GET /help-desk/faq`;
+`"first response within 1 working day"` → `firstResponseSlaLabel`, derived from
+`min(first_response_sla_hours)` against working hours.
+
+### 6.13 Approvals (`isApprovals`, line 649, Manager)
+
+**Layout** Column, gap 22px:
+1. Header row: `h1` "Approvals" + "Leave and expense requests from your team · {N} reports";
+   right `SegmentedTabs variant="pill"` — "Pending · {total}" / "History".
+2. `ListDetailSplit grid="approvals" align="start"`: left the queue, right the **Team today**
+   aside.
+   - Pending: a column of `Card`s — 40px `Avatar`, a header line of name + kind `StatusChip`,
+     the title line, a muted "{subtitle} · {requestedLabel}" line, and a right-aligned
+     Reject / Approve pair.
+   - History: one `Card padding="none"` with rows (32px avatar, "{name} · {title}",
+     "{kind} · {decidedLabel}", outcome `StatusChip`).
+   - Aside: Team today rows plus, beneath a rule, the upcoming-leave note.
+
+**Fields** `GET /manager/approvals` → `data[]` (`ApprovalTaskDto`: `subject`, `kind`, `title`,
+`subtitle`, `amount`, `requestedLabel`, `dueAt`, `isOverdue`, `entity`, `version`),
+`page.total` (the tab count **and** the sidebar badge — one query), `directReportCount`.
+`GET /manager/approvals/history` → the same DTO with `decision`.
+Aside: `GET /me/home` → `team`; `GET /manager/leave/team-calendar` → the note (omitted when
+the response has no rows).
+
+**Interactions** Approve / Reject **[I][V]** → `POST /manager/approvals/:id/decide`
+`{outcome, note?}`. Reject opens a `Modal` requiring a note of at least 10 characters
+(`approval.note_required`), because a rejection without a reason is not actionable for the
+employee. The row is removed on success and the badge is set from the response's `pendingCount`
+— never decremented locally. `409 STATE_TRANSITION_NOT_ALLOWED` (someone else decided, or the
+employee withdrew) shows "This request was already decided" and refetches.
+`403 SELF_APPROVAL_FORBIDDEN` shows the server message and refetches. Expense tasks additionally
+allow a partial `approvedAmountMinor` in the modal, bounded by the claim total.
+Attendance tasks link to `/hr/attendance/:periodId` — the manager's slice view (§6.15).
+
+**Loading** Four card skeletons + an aside skeleton. **Empty** §4.14 — the "All caught up"
+block is `EmptyState tone="positive"`, matching the prototype's green check.
+**Error** Per-pane.
+
+**Permission gate** route `leave:decide || expense:decide || attendance:approve`; each card's
+buttons additionally check the kind-specific permission, so a manager who can approve leave but
+not expenses sees the expense card read-only with the reason.
+
+**Prototype hardcodes replaced** — `APR0` and `HIS0` → the two endpoints; `"· 3 reports"` →
+`directReportCount`; `"Balance after: 9.5 days"` inside a hardcoded subtitle → the persisted
+`leave_request.balance_after_days`, composed into `subtitle` server-side at task creation;
+`"Requested 27 Sep"` → `requestedLabel`; the decision toast `"Approved · Neha Kulkarni has been
+notified"` → the response plus the fact that a `notification` row was actually written
+(the toast says "Approved · {subject.fullName} has been notified" only because the transaction
+guarantees the notification); the aside note "Upcoming: Neha requested 5 – 9 Oct. Dussehra week
+(20 Oct) has 1 approved leave." → `GET /manager/leave/team-calendar`, **omitted entirely** when
+there are no rows.
+
+### 6.14 HR · Attendance periods (`/hr/attendance`)
+
+**Layout** `ListDetailSplit grid="split"`. Left: period rows (label, "{startDate} – {endDate}",
+`StatusChip`). Right: a `Card` with a 3-up `MetricTile` row (Records captured / Expected
+employees / Total payable days), a **Slices** `DataTable` (manager · record count · status ·
+decided), then a **Submit** panel: the control-total inputs (`declaredRecordCount`,
+`declaredTotalPayableDays`), the blocker list, and the Submit button.
+
+**Fields** `GET /hr/attendance/periods` → `AttendancePeriodDto` (`label`, `status`,
+`recordCount`, `expectedEmployeeCount`, `sliceSummary[]`, `payrollCycle`, `canSubmit`,
+`submitBlockers[]`, `hrSubmittedAt`, `version`).
+
+**Interactions** "Capture records" → `/hr/attendance/:periodId`. **Submit** **[I][V]** →
+`POST /hr/attendance/periods/:id/submit`. The button is enabled only when `canSubmit`; when it
+is false the `submitBlockers[]` messages render verbatim above it — most importantly
+*"Accounts has not locked payroll inputs for {period} yet."* This is the UI face of workflow
+step 2 waiting on step 1. `422 CONTROL_TOTAL_MISMATCH` renders inline with the server's actual
+figures. "Reopen" **[I][V]** (`attendance:submit` + the guard) requires a reason ≥ 10 chars.
+
+**Empty / Error** §4.15. **Permission gate** route `attendance:submit`; the capture link needs
+`attendance:record`.
+
+### 6.15 HR · Attendance records (`/hr/attendance/:periodId`)
+
+**Layout** Header with the period label and `StatusChip`; a filter row (search by name/number,
+manager, department, status); a sticky-header `DataTable` of `AttendanceRecordDto` columns —
+Employee (avatar + name + number) · Eligible · Present · Paid leave · Holiday · Week off ·
+Absent · LOP · **Payable** (read-only, generated) · Status · Source; a footer row with
+`controlTotals`. Editable cells are `TextInput type="number" step="0.5"`.
+
+**Interactions** Cell edit **[V]** → `PUT /hr/attendance/periods/:id/records/:employeeId` on
+blur, one row per call. `payableDays` is **never** an input — it is the server's generated
+column and renders as text. `422 DAY_IDENTITY_VIOLATED` marks the row red with the server's
+expected/supplied figures and blocks Submit; `dayIdentityHolds: false` flags a row before any
+save is attempted. Bulk upload **[I]** → `POST /files` (`ATTENDANCE_UPLOAD`) →
+`POST …/records:bulk`, whose row-level report renders as a rejection `DataTable`: valid rows
+committed, rejected rows listed with `rowNo`, `employeeNumber`, `reason`, `message`. Nothing is
+silently coerced, and the report is not dismissible until acknowledged.
+
+**Permission gate** `attendance:record`. The same screen serves a **Manager** at
+`/approvals` → attendance task → their slice, where every cell is read-only and the actions are
+Approve / Return with a mandatory note (`POST /manager/attendance/approvals/:id/decide`).
+
+### 6.16 HR · Employees, Policy admin, Announcement admin, Letters, Tickets
+
+| Screen | Layout | Key endpoints | Notable rules |
+|---|---|---|---|
+| **Employees** `/hr/employees` | Directory grid + filters (department, location, status, q); `Pagination` | `GET /hr/employees`, `POST /hr/employees` **[I]**, `PATCH /hr/employees/:id` **[V][S]**, `POST …/invite` **[I]**, `POST …/deactivate` **[I][S]** | Bank and statutory sections are **not** on the HR screen (`SECURITY.md` §4.4: HR cannot see full bank numbers). Deactivate requires a reason and step-up |
+| **Employee detail** `/hr/employees/:id` | My profile layout | `GET /hr/employees/:id` | Masked values only; no unmask control for HR on bank/statutory |
+| **Policy admin** `/hr/policies` | Policies split; right pane = version list + draft editor | `GET/POST /hr/policies`, `POST /hr/policies/:id/versions` **[I]**, `PATCH …/versions/:id` **[V]** (DRAFT only), `POST …/publish` **[I]** | The editor writes `bodyMarkdown`, `points[]`, `applicabilityRules[]`, and one of `acknowledgementDueDays`/`acknowledgementDueOn`. Publish shows the real `assignmentsCreated` / `assignmentsSuperseded` / `notificationsQueued` from the transaction. `409 SEGREGATION_REQUIRED` renders "You authored this version — a second HR approver must publish it." |
+| **Policy compliance** | Tile row (assigned / acknowledged / pending / overdue) + table | `GET /hr/policies/versions/:id/compliance` | Summary is the server's `GROUP BY`; the client computes no percentages other than `round(ack/assigned*100)` for the bar, which is hidden when `assigned = 0` |
+| **Announcement admin** `/hr/announcements` | Announcements split; composer replaces the reader | `POST /hr/announcements`, `PATCH` **[V]** (DRAFT only), `POST …/publish` **[I]**, `/pin`, `/unpin`, `/archive` | Audience builder writes `announcement_audience` rows; publish reports the real `notificationsQueued`. A future `publishAt` shows the persisted `SCHEDULED` state, not a client timer |
+| **Letters & records** `/hr/documents` | Queue table (left, `formCols`) + issue form (right) | `GET /hr/document-requests`, `POST …/:id/issue` **[I][S when the template includes salary]**, `POST …/:id/reject`, `POST /hr/employees/:id/documents` **[I]** | Overdue rows are flagged from `dueAt`, which was computed against the holiday calendar server-side |
+| **Ticket queue** `/hr/tickets` | Help-desk list as a `DataTable` + a thread pane | `GET /hr/tickets`, `POST …/assign` **[I]**, `POST …/comments`, `POST …/resolve` **[I]** | The thread shows `INTERNAL` comments to HR only — they are excluded by the employee query and by RLS, never hidden client-side. A `notificationEmailStatus = 'FAILED'` renders the §4.15 banner |
+
+### 6.17 Accounts · Payroll cycles (`/accounts/payroll`, `/accounts/payroll/:cycleId`)
+
+**Layout** `ListDetailSplit grid="split"`. Left: cycle rows (label, period, `StatusChip`).
+Right, in order:
+1. **Step tracker** — seven rows from `stepTracker[]`, each a check/current/blocked/pending
+   glyph, the label, the owner, and `blockedReason` when blocked. This is the mandated workflow
+   made visible: *Accounts uploads → HR submits attendance → Managers approve → system validates
+   → payroll generated → second Accounts approver → published*.
+2. **Control totals** — three `MetricTile`s (Gross / Deductions / Net), `—` until `CALCULATED`.
+3. **Counts** — `employeeCount`, `payslipCount`, `attendancePeriod.status`.
+4. **Actions** — one `Button` per entry in `availableTransitions[]`, labelled by the server,
+   disabled when `guardsSatisfied` is false with `blockingReason` as the disabled reason.
+   The client never decides which transition is legal.
+
+**Interactions** Every action is `POST /payroll/cycles/:id/<verb>` **[I][V]**, with **[S]** on
+`approve` and `publish`. `publish` additionally opens a confirmation `Modal` that restates
+`publishedPayslipCount` **after** the call from the response, and the success toast reads
+"{n} payslips published" from that number. `409 SEGREGATION_REQUIRED` renders the server's
+`requires` text. While `status ∈ {VALIDATING, CALCULATING}` the cycle query polls every 5 s and
+the actions are disabled with "Running…".
+
+**Empty / Error** §4.16. **Permission gate** route `payroll-cycle:read`; each action's own
+permission (`payroll-cycle:create|validate|generate|publish|cancel`, `payroll-input:upload`).
+HR holds only `payroll-cycle:read`, so HR sees the tracker and **no** action buttons.
+
+### 6.18 Accounts · Payroll inputs (`/accounts/payroll/:cycleId/inputs`)
+
+**Layout** Header with the cycle label + `StatusChip`; an **Upload** `FormCard` (`FileField`
+accepting CSV/XLSX, an optional declared control total, a note); a **Batches** `DataTable`
+(batch no · filename · rows total/valid/rejected · declared vs parsed total · status · actions);
+a **Rejections** table for the selected batch; and a **Lock inputs** panel.
+
+**Interactions** `POST /files` (`PAYROLL_INPUT_UPLOAD`) → `POST …/input-batches` **[I]**. The
+response's `rejections[]` and `parseErrors[]` render immediately, with `rowNo` and the exact
+message — the traceability link back to the uploaded line. `commit` **[I][V]** requires
+declared = parsed (`422 CONTROL_TOTAL_MISMATCH` renders both figures). `DELETE` marks the batch
+`DISCARDED`, never a hard delete, and the UI says so. **Lock inputs** **[I][V]** →
+`POST …/lock-inputs`; the success toast states that HR can now submit attendance, because that
+is exactly what the transition does. Item amounts are visible only to `payroll-input:upload`
+holders and every such read is a `READ_SENSITIVE` audit event — the screen shows a one-line
+notice to that effect.
+
+### 6.19 Accounts · Validation report (`/accounts/payroll/:cycleId/validation`)
+
+**Layout** Header + a "Run validation" `Button primary` **[I][V]**; a severity summary row
+(three `MetricTile`s: Errors / Warnings / Info, from the `summary` object); a filter row
+(severity, unresolved only, pass no.); a results `DataTable` (rule code · severity chip ·
+employee · message · resolved). Selecting a row opens a detail panel with `detail` and a
+resolve form.
+
+**Interactions** `POST /payroll/cycles/:id/validate` **[I][V]** — refused with
+`409 GUARD_FAILED` while attendance is not `APPROVED`/`LOCKED`, and the screen renders that
+message rather than a generic error, so the operator sees *which* upstream step is incomplete.
+Resolve **[P]** `payroll-cycle:validate` → `POST …/validation-results/:id/resolve` with a note
+of at least 10 characters; the note is audited. Messages are already redacted server-side —
+the client does not attempt to enrich them with amounts.
+
+### 6.20 Accounts · Payslip register and Reimbursements
+
+**Register** (`/accounts/payroll/:cycleId/register`) — a `DataTable` of employee · number ·
+payable/total days · gross · deductions · net · reference · status, with the cycle's
+`controlTotals` in the footer. Cursor-paginated, sorted by `employee_number` server-side. Every
+read is `READ_SENSITIVE`; the screen shows the notice and offers no client-side export (exports
+go through `POST /admin/audit/export`-style audited endpoints only).
+
+**Reimbursements** (`/accounts/reimbursements`) — the Expenses screen recomposed: three
+`MetricTile`s (Finance-approved unpaid / In draft batches / Paid this FY), a batch
+`DataTable`, and a batch detail with a claim picker. Create **[I]**
+`POST /accounts/reimbursement-batches {cutoffDate}`; add items
+`POST …/items {expenseClaimIds}` (a `409 GUARD_FAILED` lists the offending `claimNos`
+verbatim); `lock`; then `send-to-payroll {payrollCycleId}` **[I]**, guarded on the cycle being
+`INPUTS_OPEN`. The screen states that claims become `REIMBURSED` when that cycle publishes —
+which is a join, not a caption.
+
+### 6.21 Compliance · Audit log (`/audit`)
+
+**Layout** `ListDetailSplit grid="split" align="start"`: a filter bar (date range, actor,
+action, entity type, request id), an event list, and a detail pane showing the redacted
+`beforeData`/`afterData`, the `requestId`, and the chain position. A "Verify chain" button
+(`audit:verify`) calls `GET /admin/audit/chain/verify` and renders the result as a
+`tone="positive"` or `tone="danger"` banner with the checkpoint details. Export **[I][S]** →
+`POST /admin/audit/export`, rate-limited to 3/h with one concurrent job; the UI disables the
+button and shows the server's `Retry-After` countdown rather than letting the user hammer it.
+
+---
+
+## 7. Accessibility
+
+Target: WCAG 2.2 AA. The checks below are enforced by `vitest-axe` on every screen test and by
+a Playwright + `@axe-core/playwright` pass per route in CI; a violation fails the build.
+
+### 7.1 Landmarks and headings
+
+- One `<header>` (the top bar or mobile header), one `<nav aria-label="Main">` (sidebar), one
+  `<main id="main">`, one `<nav aria-label="Sections">` for the compact `TabBar`.
+- A "Skip to content" link is the first focusable element, visually hidden until focused,
+  targeting `#main`.
+- Exactly one `<h1>` per screen — the page title. Card titles are `<h2>`; sub-sections `<h3>`.
+  `SectionHeader` takes `as` so a card inside a section does not skip a level.
+- Route changes move focus to the `<h1>` (`tabIndex={-1}`, focus on mount) and announce the new
+  title through a visually hidden `aria-live="polite"` "Navigated to {title}" region. Without
+  this an SPA navigation is silent for a screen-reader user.
+
+### 7.2 Keyboard navigation
+
+| Surface | Behaviour |
+|---|---|
+| **Sidebar** | A single tab stop per nav group is wrong here — the prototype's items are buttons in a list, so each is tabbable, in DOM order, and `aria-current="page"` marks the active one. Groups are `<ul role="list">` with an `aria-labelledby` pointing at the group label |
+| **TabBar** | Roving tabindex: one tab stop; Left/Right move, Home/End jump, Enter/Space activate |
+| **SegmentedTabs** | `role="tablist"` + `role="tab"`/`aria-selected` + `role="tabpanel"` with `aria-labelledby`; Left/Right/Home/End with automatic activation (the panels are cheap) |
+| **MoreSheet / Modal / Sheet** | Focus is trapped (`useFocusTrap`), `aria-modal="true"`, `role="dialog"`, `aria-labelledby` the title. Escape closes (except the non-dismissible step-up dialog). Focus returns to the invoking control. Background content gets `inert` where supported, `aria-hidden` otherwise |
+| **GlobalSearch** | `role="combobox"` on the input with `aria-expanded`, `aria-controls`, `aria-autocomplete="list"`; the dropdown is `role="listbox"` with `role="option"` children and `aria-activedescendant`. Down/Up move, Enter selects, Escape closes and restores the query, Tab closes without selecting |
+| **NotificationPopover** | `role="dialog"` anchored to the bell, focus moved to the heading on open, Escape closes, Tab cycles within, focus returns to the bell |
+| **DataTable** | Native table semantics; when `onRowActivate` is set the first cell contains a real `<button>` so the row is reachable and announced — the whole row is never a click target without a focusable element |
+| **Accordion** | Each question is a `<button aria-expanded aria-controls>`; the panel is a region labelled by it. Up/Down move between headers, Home/End jump |
+| **ListDetailSplit** | The list is `role="listbox"`-free: rows are buttons with `aria-current="true"` on the selected one, and the detail pane has `aria-live="polite"` on its heading so a selection change is announced |
+
+Every interactive element is a real `<button>`, `<a>`, `<input>` or `<select>`. There is no
+`onClick` on a `<div>` anywhere; ESLint `jsx-a11y` enforces this with no disables permitted.
+
+### 7.3 Focus visibility
+
+`:focus-visible { box-shadow: var(--focus-ring) }` — a 2px `--surface-shell` spacer plus a 4px
+`--accent` ring, which clears 3:1 against every surface token. `outline: none` without a
+replacement ring is banned by a CSS lint rule. Focus is never removed on mouse users via
+`:focus { outline: none }`.
+
+### 7.4 Live regions
+
+| Region | Politeness | Content |
+|---|---|---|
+| Toast viewport | `polite`, `aria-atomic` | The toast message. A toast is never the only notice of an error |
+| Form error banner | `role="alert"` (assertive) | The `FormCard` error banner, announced on appearance |
+| Route announcer | `polite` | "Navigated to {title}" |
+| Pagination summary | `polite` | "Showing 1–25 of 214 people" |
+| Async action status | `polite` | "Validation running", "Payroll calculating" on the Accounts screens |
+
+Only one assertive region exists (the form banner). Nothing polls into a live region.
+
+### 7.5 Tables
+
+`<caption>` on every `DataTable`, visually hidden, stating what the table contains and its
+sort. `<th scope="col">`; row headers `<th scope="row">` for the employee column of the
+attendance grid. `aria-sort` on sortable headers. Numeric columns use
+`font-variant-numeric: tabular-nums` and are right-aligned, matching the prototype's money
+columns. The stacked (mobile) presentation keeps `<table>` markup and uses CSS to reflow, so
+semantics survive.
+
+### 7.6 Status is never colour alone
+
+`StatusChip` always renders the text label beside the tone; the tone is decoration. The Home
+to-do dots, the notification dots and the payroll step glyphs each pair colour with a shape:
+a filled dot plus the text ("Due 15 Oct"), a check for done, a slash for blocked, an outline
+for pending. The Directory avatar colour is decorative (`aria-hidden` when a name is adjacent)
+and carries no meaning.
+
+### 7.7 Contrast, verified against the dark palette
+
+Verified pairs (WCAG AA needs 4.5:1 for body text, 3:1 for large text and UI boundaries):
+
+| Pair | Ratio | Use |
+|---|---|---|
+| `--text` #F2F5FA on `--surface-shell` #0F1622 | ≈ 15.9:1 | Body |
+| `--text` on `--surface-raised` #172236 | ≈ 14.2:1 | Card body |
+| `--text-secondary` #A9B4C7 on `--surface-raised` | ≈ 7.7:1 | Secondary text |
+| `--text-muted` #7C8AA3 on `--surface-raised` | ≈ 4.6:1 | Meta text — passes, and is therefore permitted at 12px |
+| `--text-dim` #5F6D86 on `--surface-raised` | ≈ 2.9:1 | **Fails body contrast.** Permitted only for uppercase eyebrow labels ≥ 11px/500 that duplicate adjacent information, and for decorative glyphs. Never for a value, a status, or an only-copy |
+| `--accent` #6EA8FF on `--surface-shell` | ≈ 7.6:1 | Links, focus ring |
+| `--surface-on-accent` #0B1729 on `--accent` | ≈ 9.2:1 | Primary button label |
+| `--tone-green-fg` on `--tone-green-bg` | ≈ 7.4:1 | Chip |
+| `--tone-amber-fg` on `--tone-amber-bg` | ≈ 8.3:1 | Chip |
+| `--tone-red-fg` on `--tone-red-bg` | ≈ 6.6:1 | Chip |
+| `--tone-blue-fg` on `--tone-blue-bg` | ≈ 5.6:1 | Chip |
+| `--tone-gray-fg` on `--tone-gray-bg` | ≈ 7.0:1 | Chip |
+| `--text-invert` on `--surface-selected` #1B365D | ≈ 12.3:1 | Selected nav item |
+| `--border` #263247 on `--surface-raised` | ≈ 1.3:1 | Decorative divider only — never the sole indicator of a control's boundary; every input also has a distinct background (`--surface-panel`) against its container |
+
+A Vitest contract test recomputes every pair from `@widedrop/shared` tokens and fails if a ratio
+drops below its documented floor, so a future token tweak cannot silently break contrast. The
+`--text-dim` restriction is enforced by a stylelint rule limiting that variable to a named
+allowlist of classes.
+
+### 7.8 Reduced motion
+
+The three prototype keyframes (`rise`, `fade`, `sheet`) are driven by `--duration-*`, which
+`@media (prefers-reduced-motion: reduce)` collapses to `1ms` (§2.2). In addition:
+
+- `usePrefersReducedMotion()` makes the toast appear without translation and the sheet without
+  slide (opacity only, at 1 ms), rather than snapping mid-transform.
+- Skeleton shimmer is replaced by a static `--surface-hover` block.
+- `scroll-behavior: smooth` on `<main>` is wrapped in `@media (prefers-reduced-motion: no-preference)`.
+- No parallax, no auto-advancing content, no animation longer than 5 s anywhere in the app.
+
+### 7.9 Other
+
+- Zoom to 200% and 320px width are both supported: no horizontal page scroll, because every grid
+  has `minmax(0, 1fr)` and the shell's breakpoints are container-driven.
+- Touch targets are ≥ 44×44 CSS px on the `TabBar`, the More sheet and every `IconButton`
+  (the prototype's `min-height:48px` / `40×40` plus padding).
+- `lang="en-IN"` on `<html>`; currency and dates are formatted with `Intl` in that locale, which
+  also gives correct Indian digit grouping (`₹1,27,560`).
+- Every icon-only control has an `aria-label`; every `Avatar` standing alone has a `label`.
+- Error messages are text, never an icon or a colour alone, and are programmatically associated
+  with their field via `aria-describedby` + `aria-invalid`.
+
+---
+
+## 8. Client security
+
+The server is the security boundary. Everything here is defence in depth and, where noted,
+a hard requirement of the deployed CSP.
+
+### 8.1 Credentials
+
+- The access token lives in a module closure (§1.3). It is **never** written to `localStorage`,
+  `sessionStorage`, IndexedDB, a cookie, the URL, React state, the query cache, or a log line.
+  A unit test asserts `localStorage.length === 0` after a full login + navigation flow, and an
+  ESLint rule bans `localStorage`/`sessionStorage` outside `lib/` (where there are no callers).
+- The refresh token is `HttpOnly`; no code reads `document.cookie` except the CSRF helper, which
+  reads only `__Host-wd_csrf`.
+- A full page reload deliberately loses the access token and re-derives it from the cookie. This
+  is the point: an XSS payload that runs after load finds nothing durable to steal, and the
+  refresh cookie it cannot read.
+- `queryClient.clear()` on logout, on `SESSION_REVOKED`, and on `visibilitychange` after 12 h of
+  background time, so payslip and profile data do not linger in memory indefinitely.
+- No "remember me", no persisted query cache, no service worker caching API responses. The
+  service worker, if added later, must exclude `/api/v1/**` by origin.
+
+### 8.2 Nothing secret in the bundle
+
+- Configuration reaches the app through build-time `import.meta.env.VITE_*` (API origin, app
+  version, Sentry DSN) — public values only. There is **no** inline
+  `<script>window.__ENV=…</script>`; that would need `script-src 'unsafe-inline'`.
+- `.env` files are not committed; `VITE_` variables are set in the Netlify build environment.
+  A CI grep fails the build if a bundle contains a string matching the API-key or private-key
+  patterns, or the literal `widedrop` service credentials names.
+- Source maps are uploaded to the error tracker and **not** served publicly
+  (`build.sourcemap: 'hidden'`).
+- The bundle contains no seeded operational data: no employee list, no salary figure, no policy
+  text. A CI grep asserts the prototype's fixture identifiers (`WDT-01847`, `EXP-2291`,
+  `HD-4821`, `Priya Raghavan`) appear nowhere in `dist/`.
+
+### 8.3 The CSP the app must satisfy
+
+Served by Netlify for `ess.widedrop.com` (`SECURITY.md` §6.3), enforced, not report-only, after
+one release in report-only:
+
+```
+default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'none';
+style-src-elem 'self'; img-src 'self' blob:; font-src 'self';
+connect-src 'self' https://api-ess.widedrop.com; manifest-src 'self'; worker-src 'self';
+form-action 'none'; frame-ancestors 'none'; frame-src 'none'; base-uri 'none';
+object-src 'none'; media-src 'none'; upgrade-insecure-requests;
+require-trusted-types-for 'script'; trusted-types default;
+report-uri https://api-ess.widedrop.com/csp-report; report-to csp
+```
+
+What the frontend must do to live inside it:
+
+| Directive | Frontend obligation |
+|---|---|
+| `style-src-attr 'none'` | Zero `style` attributes (§2.1), verified in CI |
+| `style-src 'self'` | CSS Modules only; no runtime `<style>` injection; no CSS-in-JS |
+| `script-src 'self'` | No inline script, no `eval`, no `new Function`. Vite: `build.modulePreload.polyfill = false`, no `@vitejs/plugin-legacy` |
+| `font-src 'self'` | IBM Plex is self-hosted in `public/fonts` (already present). **No Google Fonts link at runtime** |
+| `img-src 'self' blob:` | Logos and avatars are same-origin or initials; `blob:` exists only for previewing a just-selected upload. No external image host, no gravatar |
+| `connect-src` | Exactly one API origin. Any analytics or error endpoint must be added here explicitly and justified |
+| `form-action 'none'` | Every submission is `fetch`; no `<form action>` navigation |
+| `frame-ancestors 'none'` | Plus `X-Frame-Options: DENY` for old clients |
+| `base-uri 'none'` | No `<base>` tag; relative URLs resolve against the document only |
+| `require-trusted-types-for 'script'` | No `innerHTML`, no `outerHTML`, no `insertAdjacentHTML`, no `document.write`. If a Trusted Types policy is ever needed it is a single named policy in `lib/sanitize.ts`, not `default` with a permissive transform |
+
+`apps/web/public/_headers` and `infra/netlify/netlify.toml` both carry the header, and a
+Playwright test asserts the deployed header string matches the one in this document character
+for character.
+
+### 8.4 Server-supplied rich text
+
+Two fields are author-controlled Markdown: `policy_version.body_markdown` and
+`announcement.body_markdown` (plus `faq.answer_markdown`). The API deliberately never sends
+HTML.
+
+The rendering policy in `lib/sanitize.ts`:
+
+1. Parse Markdown with `marked` configured `{ gfm: true, breaks: false }` and **no HTML
+   passthrough** (`marked` option to escape raw HTML, so `<script>` in the source becomes text).
+2. Render to a **React element tree**, not to an HTML string. `dangerouslySetInnerHTML` does not
+   appear anywhere in the codebase; an ESLint rule bans it with no permitted disables. This makes
+   the Trusted Types requirement trivially satisfied — there is no HTML sink.
+3. An allowlist of node types: paragraph, heading (h3–h5 only, demoted so the page's heading
+   order survives), strong, em, ul/ol/li, blockquote, code, pre, hr, table, and link. Everything
+   else renders as its text content.
+4. Links: only `https:` and `mailto:` schemes survive; every other scheme (notably
+   `javascript:`, `data:`, `vbscript:`) is rendered as inert text. External links get
+   `target="_blank" rel="noopener noreferrer nofollow"` and a visually hidden "(opens in a new
+   tab)".
+5. Images inside policy or announcement bodies are **not rendered** — `img-src` forbids external
+   images, and an inline `data:` image is a fingerprinting and exfiltration vector. The API's
+   `attachment` field is the supported way to ship a file.
+6. A snapshot test feeds the renderer a corpus of hostile Markdown (HTML injection, protocol
+   tricks, nested entities, oversized nesting) and asserts no element outside the allowlist and
+   no non-allowlisted URL scheme is produced.
+7. Length is bounded: a body over 200 000 characters (the server's own cap) is truncated with a
+   "Download the PDF to read the full policy" notice rather than freezing the tab.
+
+`policy.bodySha256` is echoed back on acknowledge, so an acknowledgement provably refers to the
+bytes the client rendered — and a mid-read republish is caught as `BODY_HASH_MISMATCH` rather
+than silently acknowledging the wrong text (§6.5).
+
+### 8.5 File downloads
+
+Every download goes through `lib/download.ts`:
+
+1. `fetch(downloadUrl, {headers: auth})` → the API replies `302` to a short-lived signed URL, or
+   `409` when the object is not ready.
+2. The SPA follows the redirect **as a navigation of a hidden anchor**, not by reading the body
+   into memory: `a.href = signedUrl; a.rel = 'noopener'; a.download = ''; a.click()`. The
+   filename comes from the server's `Content-Disposition`; the client never invents one (the
+   prototype's "Downloading Payslip_Aug-2026.pdf" toast is gone).
+3. The signed URL is never logged, never put in the query cache, never added to browser history
+   (`window.open` is not used; the anchor is removed immediately after the click).
+4. `409 PDF_NOT_READY` / `ECARD_NOT_ISSUED` disables the control with the server's reason instead
+   of failing silently.
+5. Uploads: `FileField` checks the extension and size against `@widedrop/shared` `FILE_LIMITS`
+   and `ACCEPTED_UPLOAD_TYPES` for immediate feedback, then posts multipart to
+   `POST /api/v1/files`. **The client's check is convenience only** — the server sniffs the
+   content type, scans the file, and can reject anything. A file whose `scanStatus` is not
+   `CLEAN` cannot be attached, and the UI states that rather than queueing it.
+6. Filenames rendered in the UI pass through `safeDisplayFilename()` from
+   `@widedrop/shared`, which strips directory separators and control characters, so a hostile
+   filename cannot spoof a path or inject bidi characters.
+
+### 8.6 Other client-side controls
+
+| Concern | Control |
+|---|---|
+| **Clickjacking** | `frame-ancestors 'none'`; no framebusting script is needed or shipped |
+| **Open redirect** | The `?next=` parameter on `/login` is accepted only when it starts with a single `/` and is not `//` or `/\`; otherwise the user lands on `/` |
+| **Deep-link injection** | `toPath()` whitelists the screen id and encodes params (§1.8); a `deepLink` never becomes an `href` unvalidated |
+| **Clipboard** | `navigator.clipboard.writeText` is used only for a work email, inside try/catch, and never for a token or a masked value |
+| **`postMessage`** | Not used. No `window.opener` is ever created (`rel="noopener"` everywhere) |
+| **Third-party scripts** | None. No analytics, no tag manager, no chat widget. Adding one requires a `script-src`/`connect-src` change and a review recorded in `SECURITY.md` |
+| **Dependency surface** | Direct deps are the ten in `apps/web/package.json` plus `marked`. `npm audit --omit=dev` runs in CI; a high or critical finding fails the build. Lockfile is committed and `npm ci` is used |
+| **Error reporting** | If enabled, the client scrubs `Authorization`, `Cookie`, `X-WD-CSRF`, every request/response body, and any field whose key matches the shared redaction denylist, before sending. Only `requestId`, route, and the error code leave the browser |
+| **Masked values** | A masked string is display-only and is never submitted back as an input; `POST /me/profile/change-request` rejects a value matching the mask pattern, and the client pre-empts that with a field error |
+| **Autocomplete** | `autoComplete="off"` on amount, date-of-spend and any field carrying another person's data; `autoComplete="current-password"`/`"one-time-code"` used correctly on the auth screens |
+| **Session end** | On `hardLogout` the cache is cleared and the URL is replaced (not pushed), so the back button cannot re-render a cached authenticated screen |
+
+---
+
+## 9. Testing obligations for this spec
+
+| Test | Asserts |
+|---|---|
+| `tokens.contract.test.ts` | Every token in `tokens.ts` exists in `tokens.css` and vice versa |
+| `contrast.test.ts` | Every pair in §7.7 meets its floor |
+| `no-inline-styles.spec.ts` (Playwright, all routes) | `[style]` count is 0 |
+| `csp.spec.ts` | The served header equals §8.3 verbatim |
+| `useContainerBreakpoints.test.ts` | 880/820 thresholds, no redundant setState, `matchMedia` fallback |
+| `nav.persona.test.ts` | The five nav trees of §5.2 and the tab-bar slots |
+| `emptyState.<screen>.test.tsx` | Each screen renders §4's copy with a zero-data fixture, and renders **no** number |
+| `authSession.test.ts` | Single-flight refresh, one replay, `hardLogout` on second 401, cache cleared |
+| `sanitize.test.ts` | The hostile-Markdown corpus produces no disallowed node or scheme |
+| `invalidation.test.ts` | Every mutation in §1.4.4 invalidates exactly its listed keys |
+| `a11y.<screen>.test.tsx` | `vitest-axe` clean, focus order, live-region announcements |
+| `bundle.test.ts` | No fixture identifier and no secret pattern in `dist/` |
+
+---
+
+## 10. Open risks
+
+1. **Three permission vocabularies exist in the repository.** `packages/shared/src/rbac/roles.ts`
+   uses `resource:action` (`policy:acknowledge`), `docs/SECURITY.md` §4.4 uses
+   `verb:resource[:qualifier]` (`acknowledge:policy:self`), and `docs/API.md` §13 uses
+   `resource:verb:qualifier` (`policy:acknowledge:self`). **This document uses the
+   `packages/shared` spelling**, because that is the union the SPA actually imports and the one a
+   compile error can protect. Before implementation one spelling must win and the other two
+   documents must be updated; the mapping is otherwise one-to-one and mechanical.
+2. **`GET /me/bootstrap`'s nav manifest must stay in step with `NAV_MANIFEST`.** The server
+   filters and the client renders; if the server emits a screen id the client does not know, the
+   item is dropped (the client must not crash). A shared-package contract test should assert both
+   sides enumerate the same ids.
+3. **"Compare regimes" is dropped** for want of a persisted source (§6.3). If the business wants
+   it, it needs an `employee_tax_projection` row per regime and a new endpoint; it must not be
+   computed in the browser.
+4. **The Home screen depends on one endpoint.** `GET /me/home` failing takes the whole screen to
+   an error state. If block-level resilience matters more than the single round trip, the
+   endpoint should return per-block errors rather than failing whole — a server-side decision.
+5. **Attendance grid scale.** A 5 000-employee period in one cursor-paginated grid with per-row
+   `PUT` on blur will be slow for bulk edits. The bulk-upload path is the intended mechanism; if
+   inline editing at that scale becomes the norm, a batched `PATCH` endpoint is needed.
+6. **`--text-dim` fails body contrast** (2.9:1) and is used by the prototype for uppercase
+   eyebrow labels. The allowlist in §7.7 keeps it legal, but an auditor may still flag it; the
+   fallback is to promote eyebrow labels to `--text-muted` (4.6:1), which is a one-token change
+   and does not alter the layout.
+7. **Container queries would be cleaner than the `ResizeObserver`.** They are now broadly
+   supported, but the prototype's behaviour is specified in JS and two thresholds observe two
+   different elements, one of which is an ancestor of the other. The observer is kept for exact
+   fidelity; migrating to `@container` later is a mechanical change confined to §3.
