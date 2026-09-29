@@ -117,17 +117,28 @@ export async function recordAudit(
   const actorEmployeeId = input.actor?.employeeId ?? context?.employeeId;
   const actorPersona = input.actor?.persona ?? context?.personas[0];
 
-  // Serialise chain appends per organisation. Without this, two transactions
-  // could read the same tail and produce two rows claiming the same predecessor.
-  const [{ sequence }] = await tx.$queryRaw<[{ sequence: bigint }]>`
-    SELECT nextval('ess.audit_event_sequence') AS sequence
+  // Serialise chain appends for this organisation for the rest of the
+  // transaction. Without it, two transactions could read the same tail and
+  // produce two rows claiming the same predecessor — forking the chain.
+  //
+  // The lock is transaction-scoped, so it is released on commit or rollback
+  // without any cleanup path to forget.
+  await tx.$executeRaw`
+    SELECT pg_advisory_xact_lock(hashtext(${'audit:' + input.organizationId}))
   `;
 
   const previous = await tx.auditEvent.findFirst({
     where: { organizationId: input.organizationId },
     orderBy: { sequence: 'desc' },
-    select: { rowHash: true },
+    select: { sequence: true, rowHash: true },
   });
+
+  // The sequence is per organisation and contiguous, computed from the row
+  // before it rather than from a database sequence. A database sequence would
+  // leave a gap whenever a transaction rolled back or another tenant wrote a
+  // row, and a gap has to mean something: it is how the deletion of the tail of
+  // a chain is detected, which the hash links alone cannot catch.
+  const sequence = (previous?.sequence ?? 0n) + 1n;
 
   const previousHash = previous?.rowHash ?? GENESIS_HASH;
   const occurredAt = new Date();

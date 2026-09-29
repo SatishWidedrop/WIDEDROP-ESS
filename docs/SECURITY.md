@@ -18,6 +18,39 @@
 `ess.widedrop.com` and `api-ess.widedrop.com` are **cross-origin but same-site** (registrable domain
 `widedrop.com`). Every cookie and CSRF decision below is justified against that fact.
 
+---
+
+## 0. Cross-document reconciliation (normative)
+
+This document was written before `docs/DATA-MODEL.md`, `docs/API.md` and `docs/WORKFLOWS.md` were
+finalised, and drifted from them. The following resolutions are **binding**; where any older sentence
+in this file still uses a superseded name, the name in this table wins and the sentence is read with
+the substitution applied. Nothing here weakens a control — every resolution keeps the stronger of the
+two positions.
+
+| # | Conflict | Resolution (binding) |
+|---|---|---|
+| R1 | Permission grammar: this doc used `verb:resource[:qualifier]`; `API.md` and `WORKFLOWS.md` use `resource:action[:scope]` | **`resource:action[:scope]` wins** (§4.3 rewritten). §4.4 is re-keyed to the canonical strings. A permission that appears in only one document is still real; the union is the vocabulary, and `packages/shared/src/permissions.ts` is generated from §4.4 so the compiler is the arbiter |
+| R2 | Payroll entity: this doc said `payroll_run.status IN ('PUBLISHED','LOCKED')`; `DATA-MODEL.md` defines `ess_payroll_run_status = QUEUED/RUNNING/SUCCEEDED/FAILED/SUPERSEDED` and puts the lifecycle on **`payroll_cycle`** | **`payroll_cycle` carries the D3 lifecycle**; `payroll_run` is one calculation attempt. Every guard in this document that named `payroll_run.status` means `payroll_cycle.status`. The old predicate was an **impossible query** and is corrected in §4.4 and §4.12 |
+| R3 | Payslip status: this doc said payslips are created in `DRAFT`; `DATA-MODEL.md` defines `ess_payslip_status = GENERATED/PUBLISHED/SUPERSEDED/REVOKED` | **`GENERATED`** is the pre-publication state. "Invisible until published" is unchanged; only the label changes |
+| R4 | Audit chain: `DATA-MODEL.md` computes `row_hash` with **plain `sha256()` inside a `BEFORE INSERT` trigger**; this document requires a **keyed HMAC** | **Keyed HMAC in the application wins** (§8.3). A database trigger cannot do it, because the key must never be inside Postgres (A10) — a bare SHA-256 chain is forgeable by exactly the insider (T-HR/T-ACC/T-PLAT) the chain exists to catch. The DB trigger is retained **only** to enforce append-only and to reject a row whose `row_hash` is NULL |
+| R5 | `audit_event.ip_address inet` / `user_agent text` in `DATA-MODEL.md` vs `ip_hash` / `user_agent_hash` here | **Hashed columns win** (§14.3). The audit trail must not become a location-tracking database; the raw values are never persisted anywhere |
+| R6 | `audit_event.on_behalf_of_user_id` ("impersonation support") in `DATA-MODEL.md` vs §4.1 "no impersonation capability anywhere" | **No impersonation.** The column MUST NOT exist; if it exists for migration reasons it carries `CHECK (on_behalf_of_user_id IS NULL)` and no code path may set it. An impersonation feature would silently defeat every `§`, `‡` and step-up rule in §4 |
+| R7 | Compensation columns: §7.1 previously listed `payslip.*`, `payslip_line.*`, `salary_structure.*` as *deliberately not* application-encrypted; `DATA-MODEL.md` class **M1** envelope-encrypts all of them | **M1 wins — they ARE envelope-encrypted** (§7.1 corrected, ADR 0004 is superseded by `docs/adr/0009-payroll-columns-encrypted.md`). The aggregate-performance objection is answered by the persisted `payslip_fy_rollup` / `tds_quarter` rows (one row per employee per FY / quarter), which are themselves encrypted and decrypted in-app — one AES-GCM operation per tile, not a table scan |
+| R8 | Envelope column naming | `DATA-MODEL.md` wins: `<field>_ct`, `<field>_iv`, `<field>_tag`, `<field>_dek_id` (uuid FK → `data_encryption_key`), `<field>_mask`. Read `…_ciphertext` in this document as `…_ct` + its sibling columns. The key table is **`data_encryption_key`**, not `data_key` |
+| R9 | Blind indexes | `DATA-MODEL.md` currently has **none**. They are required by §7.2 and MUST be added as `<field>_bidx bytea` on `statutory_identity.pan`, `statutory_identity.aadhaar`, `bank_account.account_number`, `employee.personal_email`, `employee.personal_phone`. Without them, "is this PAN already registered?" degrades to a full-table decrypt, which is both slow and a mass-decrypt event |
+| R10 | Table names | `file_object` (not `file`), `email_outbox` (not `notification_outbox`), `helpdesk_ticket` (not `ticket`), `employee_reporting_closure` (not `reporting_closure`), `app_user` (not `user`), `session` as defined in `DATA-MODEL.md` §6.0 |
+| R11 | Rate-limit store: §9.3 said Postgres-primary; `DATA-MODEL.md` says Redis token buckets with `ess_ops.rate_limit_counter` as durable fallback | **Redis primary, Postgres fallback** (§9.3 corrected). The fail-closed-on-auth-routes rule is unchanged and now applies when *both* stores are unavailable |
+| R12 | Rate-limit bucket keys: `DATA-MODEL.md` shows raw `user:<id>` / `ip:<cidr>` | **Hashed keys win** (§9.2): every bucket key is `sha256(scope ‖ ':' ‖ route ‖ ':' ‖ HMAC(LOG_HASH_KEY, value))`. A limiter table is not a place to accumulate raw identifiers |
+| R13 | `audit_event.sequence_no` is monotonic **per organization** | Accepted. The chain in §8.3 is **per-organisation**; `prev_hash` links the previous row *of the same `organization_id`*, and verification runs per organisation |
+| R14 | `audit_event.actor_email_snapshot citext` | Accepted and justified: it freezes *who acted* against a later email change. It is a **work** address (ORG-visible by design, §4.4 `directory:read`) and is therefore not a §8.5 redaction violation. Personal addresses are never written to `audit_event` |
+
+Where this document and `docs/DATA-MODEL.md` disagree on a **control** (R4, R5, R6, R7, R9, R12),
+this document is normative and `DATA-MODEL.md` is to be corrected. Where they disagree on a **name**
+(R1, R2, R3, R8, R10, R13), `DATA-MODEL.md` is normative and this document has been corrected above.
+
+---
+
 **Prime directives inherited from the product brief (restated so they are testable here):**
 
 - D1 — Every displayed value comes from persisted data or a deterministic computation over it. Security
@@ -118,7 +151,7 @@ header or JWT claim that was not cryptographically issued by this API.
 | I | IDOR: `GET /payslips/9f3…` belonging to another employee (T-EMP) | Scope compiled into the Prisma `WHERE`, never a post-fetch check; out-of-scope ⇒ **404** (§4.6) |
 | I | Enumeration of employees / emails via login, reset, search | Uniform generic responses + constant-ish timing (§2.4), directory search returns only the ORG-safe DTO (§4.4) |
 | D | Expensive queries, upload floods, export abuse | Per-route rate limits (§9), pagination caps, upload size caps, exports queued and serialised per actor |
-| E | Client sets `X-Roles: HR` or edits the JWT payload | Signature verified; roles are re-read from `user_role` when `ver` mismatches; **no** header, query param or body field ever influences authorization (B2-1) |
+| E | Client sets `X-Roles: HR` or edits the JWT payload | Signature verified; a `ver` mismatch is a hard `401 TOKEN_STALE` (§2.9) — it is never "repaired" mid-request; the `roles` claim is **never** consulted for an authorization decision, which is always resolved from `user_role` (§4.7); **no** header, query param or body field ever influences authorization (B2-1) |
 
 #### B3 — API ↔ PostgreSQL
 
@@ -237,12 +270,25 @@ recent per user are deleted in the same transaction.
   and never block the user.
 - Emit `audit_event(action='AUTH.BREACH_CHECK_DEGRADED', severity='WARN')` at most once per minute
   (deduplicated) and increment the `hibp_degraded_total` metric, which alerts after 15 minutes (§11.4).
-- Set `user.breach_check_pending = true` on the credential written while degraded. A nightly job
-  re-checks those passwords' stored *SHA-1 prefix*… which is not recoverable from the Argon2 hash, so
-  instead the job simply flags the user to be re-prompted at next login when the service recovers:
-  the login flow, on seeing `breach_check_pending`, performs the HIBP check against the plaintext the
-  user has just supplied, clears the flag, and if breached forces a password change before issuing a
-  session. This is the only correct way to close the gap without storing weaker hashes.
+- Set `app_user.breach_check_pending = true` on any credential **written** while degraded.
+  There is **no** nightly re-check job, and there must not be one: the HIBP protocol needs the
+  password's SHA-1 prefix, which is by construction unrecoverable from an Argon2id hash, and storing
+  anything from which it *could* be recovered would be a deliberate weakening of A9. The flag is
+  instead consumed **at the next successful password verification**, which is the only moment the
+  plaintext legitimately exists in memory:
+
+  1. Password verified, MFA not yet challenged.
+  2. If `breach_check_pending` and the breaker is closed, run the §2.3 check on that plaintext.
+  3. Not breached ⇒ clear the flag inside the login transaction, continue normally.
+  4. Breached ⇒ clear the flag, complete MFA, then issue a **change-password-only session**: an
+     access token with `amr` unchanged and a single-purpose claim `pwd_reset_required: true`. The
+     authorize plugin denies every route except `POST /auth/password/change`, `POST /auth/logout` and
+     `GET /me/minimal`, regardless of the permission matrix. Audited as
+     `AUTH.PASSWORD_CHANGE_FORCED` with `reason='BREACHED_AT_LOGIN'`.
+  5. If the breaker is still open at step 2, the flag is left set and login proceeds normally — the
+     user is never blocked by an unavailable third party.
+
+  `app_user.breach_check_pending boolean NOT NULL DEFAULT false` is required in `DATA-MODEL.md`.
 
 ### 2.4 Generic responses and enumeration resistance
 
@@ -262,10 +308,40 @@ it verifies against a fixed dummy PHC hash generated at boot from a random passw
 No endpoint anywhere returns "user not found", an email address that was not supplied by the caller,
 or a count that reveals whether an identifier exists.
 
+**The MFA challenge token (previously undefined — an implementer could not have built the login
+flow).** `POST /auth/login` never returns a session. On a correct password for an account that can
+authenticate it returns `200 {"mfa":"required","challenge":"<token>","expiresIn":300}`. The challenge
+is the *only* credential accepted by `POST /auth/mfa/verify`.
+
+| Property | Value |
+|---|---|
+| Format | Opaque, 32 CSPRNG bytes, base64url. **Not** a JWT — it must not be parseable or forgeable offline, and it must be revocable |
+| Storage | `mfa_challenge(id uuid pk, user_id, token_hash bytea UNIQUE, purpose, amr text[], created_at, expires_at, consumed_at, attempt_count int NOT NULL DEFAULT 0, ip_hash, user_agent_hash)`; `token_hash = SHA-256(token)`; plaintext never stored or logged |
+| TTL | **5 minutes**, single-use (`consumed_at` set inside the verification transaction) |
+| Transport | Response body → SPA memory. **Never** a cookie: it is not needed on a later navigation, and a cookie would make the half-authenticated state survive a tab close |
+| Authority | Proves "this password was verified at `created_at`" and **nothing else**. It grants access to exactly `POST /auth/mfa/verify`, `POST /auth/mfa/recovery/use` and `POST /auth/mfa/enrol*` (the `PENDING_MFA` path). Presenting it anywhere else is a `401` |
+| Attempts | `attempt_count` is incremented in its own committed transaction *before* the TOTP comparison, so a crash cannot lose the count; at 5 the challenge is consumed and the user must re-enter the password. This is in addition to the §9.1 per-user limit |
+| Binding | `ip_hash` and `user_agent_hash` are recorded at issue and **compared on verify**; a mismatch consumes the challenge and emits `AUTH.MFA_CHALLENGE_BINDING_MISMATCH` (severity `WARN`) |
+| Revocation | Consumed, expired and superseded challenges are deleted nightly; a new login for the same user consumes any live challenge (one live challenge per user) |
+| Audit | `AUTH.MFA_CHALLENGED` at issue; `AUTH.MFA_SUCCEEDED` / `AUTH.MFA_FAILED` at verify |
+
+Only when `POST /auth/mfa/verify` succeeds are the `session` row, the access token and the refresh
+cookie created — in one transaction, together with `AUTH.LOGIN_SUCCEEDED`. A correct password with no
+MFA step **never** produces a session for any role.
+
+**The same 250 ms floor** (above) applies to every terminal response of `/auth/login` and
+`/auth/mfa/verify` that is a `401` or `423`, so the branch taken is not observable. `429` responses
+are deliberately exempt: they are produced before any credential work and adding a delay there would
+convert the limiter into an amplification lever.
+
 ### 2.5 Account lifecycle
 
-`user.status` enum: `INVITED → PENDING_MFA → ACTIVE → SUSPENDED → OFFBOARDED` (+ `LOCKED` as a
-transient overlay held in `user.locked_until`, not a status).
+`app_user.status` (`ess_user_status`, per `DATA-MODEL.md` §2 as extended):
+`INVITED → PENDING_MFA → ACTIVE → {SUSPENDED | EX_EMPLOYEE} → OFFBOARDED`, plus the administrative
+terminal `DISABLED`. `LOCKED` exists in the enum for compatibility but this system does **not** use it
+as a status: a lock is a transient overlay held in `app_user.locked_until`, because a lock must not
+destroy the state the account was in (an `INVITED` account that is being brute-forced must still be
+`INVITED` when the lock expires).
 
 | State | Meaning | Can authenticate? | Entered by |
 |---|---|---|---|
@@ -273,7 +349,9 @@ transient overlay held in `user.locked_until`, not a status).
 | `PENDING_MFA` | Password set, MFA enrolment not yet completed | Only to `/auth/mfa/enrol*` | activation |
 | `ACTIVE` | Normal | Yes | MFA enrolled (or employee grace period, §2.6) |
 | `SUSPENDED` | Temporarily disabled (investigation, long leave) | No | `suspend:user` |
-| `OFFBOARDED` | Terminal. Sessions revoked, login permanently refused | No | `offboard:user`, or automatically at 23:59 IST on `employment.last_working_day` |
+| `EX_EMPLOYEE` | The post-exit retrieval window. Entered automatically at 23:59 IST on `employment.last_working_day` | **Yes**, password + TOTP, no grace, no "remember this device" | system job at LWD, or `employee:deactivate` early |
+| `OFFBOARDED` | Terminal. Sessions revoked, login permanently refused | No | automatically at `last_working_day + org_setting.ex_employee_window_days`, or `employee:deactivate` with `immediate=true` |
+| `DISABLED` | Administrative terminal for a non-employment reason (duplicate record, test account) | No | `employee:deactivate` |
 
 **Invite / activation.** Invite token: 32 random bytes, base64url, stored **only** as
 `SHA-256` in `activation_token.token_hash`, `expires_at = now() + 7 days`, single-use, bound to
@@ -285,10 +363,40 @@ the previous token.
 and `SUSPENDED`/`OFFBOARDED` immediately revoke all sessions and refresh-token families and bump
 `user.token_version`.
 
-**Offboarding also:** freezes payslip access to read-only for 90 days after the last working day (so
-the employee can retrieve Form 16 and payslips through a time-boxed `EX_EMPLOYEE` grant — an
-attribute on `user_role`, not a fifth persona), then removes it; revokes all role grants; and starts
-the retention clocks in §14.5.
+**Offboarding, precisely.** The previous text said `OFFBOARDED` refuses login *and* that an
+offboarded employee may retrieve Form 16 for 90 days. Those cannot both be true, and "an attribute on
+`user_role`" was not a buildable construct. The corrected design uses the `EX_EMPLOYEE` **status**
+above — still exactly four personas (D2), because it is a status, not a role:
+
+1. At 23:59 IST on `employment.last_working_day` a job moves the user to `EX_EMPLOYEE`, revokes every
+   `user_role` grant **except** the `EMPLOYEE` one, sets that grant's
+   `user_role.expires_at = last_working_day + org_setting.ex_employee_window_days` (seeded to **90**),
+   bumps `token_version`, and deletes every `session` and `refresh_token` row.
+2. While `EX_EMPLOYEE`, the authorize plugin intersects the resolved permission set with a fixed,
+   code-level **read-only allowlist** — no other permission is reachable even if a grant survives:
+
+   ```
+   EX_EMPLOYEE_ALLOWLIST = {
+     'payslip:read:self', 'payslip:download:self',
+     'tax:quarter:read:self', 'document:read:self', 'file:download:self',
+     'profile:read:self',
+     'policy:read', 'policy:ack:read:self',
+     'ticket:create:self', 'ticket:read:self', 'ticket:comment:self',
+     'notification:read:self', 'notification:mark_read:self',
+   }
+   ```
+   Every write outside that set is `403 {"code":"ACCOUNT_READ_ONLY"}` and audited as `AUTHZ.DENIED`.
+   `payslip:email:self` is deliberately absent: after exit the work mailbox is usually closed, and the
+   destination is not client-supplied (§4.4), so the mail would go nowhere and could bounce a payslip
+   notification into an unmonitored inbox.
+3. At the end of the window the user moves to `OFFBOARDED`: the `EMPLOYEE` grant expires, login is
+   refused, and the retention clocks in §14.5 start.
+4. An immediate offboarding (misconduct, security event) skips step 1's window by setting
+   `ex_employee_window_days = 0` for that user, which is an audited
+   `ADMIN.USER_STATUS_CHANGED` with a mandatory reason.
+
+The window length is read from `org_setting.ex_employee_window_days`, never hardcoded, so the number
+shown on the Documents screen ("available until …") is persisted data (D1).
 
 ### 2.6 Login rate limiting and progressive lockout — exact thresholds
 
@@ -320,6 +428,18 @@ MFA even when the password is correct and the device is remembered.
 
 `Retry-After` is always sent on `429` and `423` (§9.4).
 
+**Email normalisation.** Every lookup and every rate-limit key uses
+`normalizeEmail(x) = NFKC(trim(x)).toLowerCase()`. `app_user.work_email` is `citext` with a unique
+index, so `Priya.R@widedrop.com` and `priya.r@widedrop.com` are one account and one bucket. Without
+this, case variation would silently multiply an attacker's per-account budget.
+
+**Unlocking (previously missing — locks could be created but never administratively cleared).**
+A lock clears by itself when `locked_until` passes. `security:account:unlock` (HR, ORG, step-up `†`,
+self-dealing `§`) clears `locked_until` and the consecutive-failure counter early; it writes
+`ADMIN.USER_UNLOCKED` with a mandatory reason and emails the account holder. It does **not** clear the
+`login_attempt` history, and it does **not** reset the per-IP or spray counters — those protect other
+accounts and an HR user must not be able to switch them off for an attacker's source address.
+
 ### 2.7 TOTP MFA
 
 `apps/api/src/auth/totp.ts` — RFC 6238.
@@ -337,8 +457,21 @@ MFA even when the password is correct and the device is remembered.
 | Clock drift | No per-user drift tracking; hosts run NTP. Verification failures at ±2 steps emit `AUTH.MFA_CLOCK_DRIFT_SUSPECTED` for operability |
 | Verification rate limit | 5 attempts per 5 min per `user_id`, then 15 min cooldown; 10 failures ⇒ account lock per §2.6 |
 
-**Enrolment** requires a fresh password re-authentication (≤ 5 min) and is confirmed by submitting a
-valid code; only then is the secret marked `ACTIVE` and recovery codes issued.
+**Enrolment** requires a fresh password re-authentication (≤ 5 min — either a step-up assertion on an
+existing session, or a live `mfa_challenge` on the `PENDING_MFA` path) and is confirmed by submitting
+a valid code; only then is the secret marked `ACTIVE` and recovery codes issued.
+
+Enrolment hygiene, because an abandoned enrolment leaves a usable secret lying about:
+
+- A `PENDING` `mfa_credential` is **unusable for authentication** — the verifier selects
+  `WHERE status='ACTIVE'` only, so a half-enrolled secret can never satisfy a login.
+- `PENDING` rows expire after **15 minutes** and are deleted by the nightly job; starting a new
+  enrolment deletes any existing `PENDING` row for that user first (`ux_mfa_credential__user_method`
+  in `DATA-MODEL.md` already makes this a single row per user per method).
+- Confirming enrolment while an `ACTIVE` credential already exists is a **replacement**, requires
+  step-up against the *existing* credential, revokes all sessions, invalidates all recovery codes, and
+  emits `AUTH.MFA_ENROLLED` plus an email to the work address. This closes the obvious takeover path
+  of silently adding a second authenticator.
 
 **Recovery codes.** 10 codes × 128 bits, rendered as `xxxxx-xxxxx-xxxxx` (Crockford base32).
 Stored as `HMAC-SHA256(RECOVERY_CODE_KEY, code)` in `mfa_recovery_code.code_hmac` — a fast keyed hash
@@ -387,8 +520,16 @@ the step-up dialog.
 
 ### 2.9 Session revocation triggers
 
-`user.token_version int` is embedded in every access token as `ver`. A mismatch ⇒ `401`
+`app_user.token_version int` is embedded in every access token as `ver`. A mismatch ⇒ `401`
 `{"code":"TOKEN_STALE"}`, which the SPA handles by attempting one refresh and then logging out.
+
+**This is the single, authoritative behaviour.** Earlier drafts of §1.4 and §4.6 said the server
+"reloads roles from `user_role` on mismatch" and continues. That is wrong and is withdrawn: a `ver`
+bump means *something security-relevant changed about this principal* (role revoked, password reset,
+account suspended, refresh reuse detected), and the only safe response is to stop the request and make
+the client re-establish. Repairing the request in flight would let a revoked role survive for the
+remainder of a long-running call. Role resolution from `user_role` (§4.7) happens on **every**
+request regardless of `ver`; it is not a repair step.
 
 `token_version` is incremented, and **all** sessions + refresh families revoked, on: password change
 or reset; any role grant or revoke; MFA enrolment, reset or recovery-code use; `SUSPENDED` or

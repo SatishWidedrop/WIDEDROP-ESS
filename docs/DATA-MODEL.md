@@ -1047,8 +1047,7 @@ CONSTRAINT ck_designation__level CHECK (job_level IS NULL OR job_level BETWEEN 1
 | `label` | `text` | no | — | `FY 2026–27` (en-dash, as the prototype renders) |
 | `start_date` | `date` | no | — | `2026-04-01` |
 | `end_date` | `date` | no | — | `2027-03-31` |
-| `standard_deduction_minor` | `money_minor` | yes | — | Statutory; `75000_00` for FY 2026-27. `NULL` until Finance sets it. |
-| `cess_rate` | `numeric(12,6)` | no | `0.040000` | Health & education cess |
+| `declaration_form_reference` | `text` | no | `'12BB'` | The Tax screen's form label |
 | `declaration_window_opens_on` | `date` | yes | — | Tax screen copy |
 | `declaration_window_closes_on` | `date` | yes | — | |
 | `proof_window_opens_on` | `date` | yes | — | `2026-12-01` |
@@ -1058,6 +1057,11 @@ CONSTRAINT ck_designation__level CHECK (job_level IS NULL OR job_level BETWEEN 1
 ```sql
 CONSTRAINT ux_fiscal_year__org_code UNIQUE (organization_id, code),
 CONSTRAINT ck_fiscal_year__range CHECK (end_date > start_date),
+CONSTRAINT ck_fiscal_year__windows CHECK (
+  (declaration_window_closes_on IS NULL OR declaration_window_opens_on IS NULL
+    OR declaration_window_closes_on >= declaration_window_opens_on)
+  AND (proof_window_closes_on IS NULL OR proof_window_opens_on IS NULL
+    OR proof_window_closes_on >= proof_window_opens_on)),
 CONSTRAINT ex_fiscal_year__no_overlap EXCLUDE USING gist (
   organization_id WITH =, daterange(start_date, end_date, '[]') WITH &&
 ),
@@ -1077,11 +1081,100 @@ CONSTRAINT ux_fiscal_year__one_current UNIQUE (organization_id, is_current) WHER
 | `end_date` | `date` | no | — | |
 | `statutory_due_date` | `date` | yes | — | Form 24Q filing due date |
 
+> **Corrected — standard deduction and cess are regime facts, not year facts.**
+> `fiscal_year` previously carried `standard_deduction_minor` and `cess_rate`, and
+> `tax_regime` (§12.1) carries both as well, with no stated precedence. Under the Indian
+> regime split the two differ *by regime within the same year*, so a year-level column is
+> not merely redundant, it is wrong, and two writers of the same number guarantee they
+> will disagree. `tax_regime.standard_deduction_minor` and `tax_regime.cess_rate` are the
+> **only** sources; the year-level columns are removed. `employee_tax_projection` records
+> the resolved values it actually used (§12.4) so a past projection stays reproducible
+> after a regime table is corrected.
+
 ```sql
 CONSTRAINT ux_fiscal_quarter__fy_no UNIQUE (fiscal_year_id, quarter_no),
 CONSTRAINT ck_fiscal_quarter__no CHECK (quarter_no BETWEEN 1 AND 4),
 CONSTRAINT ck_fiscal_quarter__range CHECK (end_date > start_date)
 ```
+
+### 4.6.1 `org_setting` — typed, auditable configuration
+
+SECURITY.md reads `org_setting.mfa_grace_days` and `org_setting.helpdesk_email`;
+DEPLOYMENT and the DPDP notice read the grievance-officer contact from it. It is a typed
+key/value table so that a policy-relevant number (an MFA grace period, an SLA, a claim
+window) is a **row with an audit trail**, not a redeploy.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` | PK |
+| `organization_id` | `uuid` | no | — | FK → `organization(id)` `ON DELETE RESTRICT` |
+| `key` | `citext` | no | — | `mfa_grace_days`, `expense_claim_window_days`, `business_hours_start`, `business_hours_end`, `grievance_officer_name`, `grievance_officer_email`, `payslip_publication_delay_minutes`, … |
+| `value_type` | `text` | no | — | `INTEGER` \| `BOOLEAN` \| `TEXT` \| `EMAIL` \| `TIME` \| `DATE` \| `JSON` |
+| `value` | `text` | no | — | Canonical string form; parsed per `value_type` |
+| `min_value` / `max_value` | `numeric` | yes | — | Enforced for `INTEGER` — an operator cannot set `mfa_grace_days = 3650` |
+| `is_secret` | `boolean` | no | `false` | **Always `false` here.** Secrets live in the platform secret store; this column exists so the constraint below can forbid them. |
+| `description` | `text` | no | — | Shown on the HR settings screen |
+| `updated_by_user_id` | `uuid` | yes | — | FK → `app_user(id)` `ON DELETE SET NULL` |
+
+```sql
+CONSTRAINT ux_org_setting__org_key UNIQUE (organization_id, key),
+CONSTRAINT ck_org_setting__type CHECK (value_type IN ('INTEGER','BOOLEAN','TEXT','EMAIL','TIME','DATE','JSON')),
+CONSTRAINT ck_org_setting__no_secrets CHECK (is_secret = false),
+CONSTRAINT ck_org_setting__bounds CHECK (
+  value_type <> 'INTEGER'
+  OR ((min_value IS NULL OR value::numeric >= min_value)
+      AND (max_value IS NULL OR value::numeric <= max_value)))
+```
+Every write is `org:setting:update` (HR only), step-up-MFA gated, and writes a
+`CONFIG_CHANGE` audit event with before/after. Reads are `org:setting:read`.
+
+> **One source of truth per setting.** `organization` already carries `helpdesk_email`,
+> `expense_cutoff_day_of_month`, `week_off_days`, `fy_start_month`,
+> `leave_year_start_month`, `payroll_pay_day_rule` and `payroll_pay_day_of_month`. Those
+> columns stay **canonical** — they are structural, they are foreign-keyed and
+> `CHECK`-ed, and several are referenced by generated columns. `org_setting` must not
+> shadow them. The rule, enforced by `trg_org_setting_no_shadow` and by §21 rule 15:
+> a `key` that names an `organization` column is **rejected on write**, and the settings
+> resolver exposes those values read-through under the same names so SECURITY.md's
+> `org_setting.helpdesk_email` resolves to `organization.helpdesk_email` and can never
+> diverge from it. Directive 8 names one address; the schema must make it impossible for
+> two rows to disagree about what it is.
+
+**Seeded keys (complete for v1):**
+
+| Key | Type | Seed | Bounds | Read by |
+|---|---|---|---|---|
+| `mfa_grace_days` | INTEGER | `14` | 0–30 | SECURITY §2.7 |
+| `expense_claim_window_days` | INTEGER | `30` | 1–180 | guard `expense.spend_within_claim_window` |
+| `expense_skip_level_threshold_minor` | INTEGER | `2500000` | ≥ 0 | §13.1 escalation |
+| `business_hours_start` / `business_hours_end` | TIME | `09:30` / `18:30` | — | SLA clocks (§16.4, §14.3) |
+| `business_days` | JSON | `[1,2,3,4,5]` | — | SLA clocks |
+| `attendance_approval_sla_hours` | INTEGER | `48` | 1–336 | `attendance_approval.due_at` |
+| `approval_task_sla_hours` | INTEGER | `72` | 1–336 | `approval_task.due_at` |
+| `ticket_auto_close_days` | INTEGER | `7` | 1–90 | §16.4 |
+| `ticket_reopen_window_days` | INTEGER | `14` | 1–90 | guard `ticket.within_reopen_window` |
+| `payroll_validation_max_age_hours` | INTEGER | `24` | 1–168 | guard `payroll.validated_recently` |
+| `grievance_officer_name` / `grievance_officer_email` | TEXT / EMAIL | from config | — | DPDP notice |
+
+**Business-hours clock (the single definition).** Every "within N working hours" figure in
+this schema — `helpdesk_ticket.first_response_due_at` and `.resolution_due_at`,
+`document_request.due_at`, `attendance_approval.due_at`, `approval_task.due_at` — is
+computed by one function and nothing else:
+
+```sql
+CREATE FUNCTION ess.add_business_time(p_org uuid, p_from timestamptz, p_hours integer,
+                                      p_calendar uuid DEFAULT NULL)
+RETURNS timestamptz LANGUAGE plpgsql STABLE SET search_path = ess, pg_catalog AS $$ … $$;
+```
+
+It advances `p_from` in the organisation's timezone, counting only minutes that fall
+inside `business_hours_start … business_hours_end` on a weekday listed in `business_days`
+that is not a `PUBLIC` holiday on `p_calendar` (defaulting to
+`organization.default_holiday_calendar_id`). "1 working day" is therefore
+`add_business_time(org, now(), 8)` and renders as the persisted
+`ticket_category.first_response_sla_hours`, never as a hardcoded caption. Without this
+function the SLA columns are unimplementable: the previous draft said "on the working-hours
+calendar" and no working-hours calendar existed anywhere in the schema.
 
 ### 4.7 `ui_copy` — persisted interface copy (reference data, seeded)
 
@@ -2161,8 +2254,19 @@ CONSTRAINT ck_llg__consumption_sign CHECK (
   OR kind = 'ADJUSTMENT'),
 CONSTRAINT ck_llg__request_link CHECK (
   (kind IN ('CONSUMPTION','CONSUMPTION_REVERSAL')) = (leave_request_id IS NOT NULL)),
-CONSTRAINT ux_llg__one_consumption_per_request UNIQUE (leave_request_id, kind)
+CONSTRAINT ck_llg__adjustment_reason CHECK (kind <> 'ADJUSTMENT' OR (reason IS NOT NULL AND length(btrim(reason)) >= 10)),
+CONSTRAINT ck_llg__reversal_source CHECK (kind <> 'CONSUMPTION_REVERSAL' OR source_ledger_id IS NOT NULL),
+CONSTRAINT ck_llg__actor CHECK (kind <> 'ADJUSTMENT' OR actor_user_id IS NOT NULL)
 ```
+```sql
+CREATE UNIQUE INDEX ux_llg__one_consumption_per_request
+  ON ess.leave_balance_ledger (leave_request_id, kind) WHERE leave_request_id IS NOT NULL;
+```
+`ADJUSTMENT` is the only kind a human can author freely, so it is the only kind that can
+manufacture a balance out of nothing. It therefore requires a named actor, a ≥ 10-character
+reason and the `leave:balance:adjust` permission **in the database**, not only in the API —
+this is directive 2 applied to leave days: an entitlement that appears on a tile must be
+traceable to an accrual rule, a carry-forward, or a signed, reasoned human act.
 Indexes:
 - `ix_llg__balance_fold (organization_id, employee_id, leave_period_id, leave_type_id, effective_on)` — the fold query
 - `ix_llg__request (leave_request_id) WHERE leave_request_id IS NOT NULL`
@@ -2209,6 +2313,46 @@ Indexes:
 > accrual on <accrual_on_day_of_month of next month>". It never renders `0 / 0` as if
 > it were data, and never invents an entitlement.
 
+**Which number the tile renders, exactly.** The tile's numerator is
+`available_days`; the tile's *spendable* figure — used by the request form, the
+`leave.sufficient_balance` guard and the Approvals card's "Balance after" — is
+`available_days - pending_days`. These differ whenever a request is awaiting approval, so
+the API returns **both** (`availableDays`, `pendingDays`, `spendableDays`) and the Leave
+screen renders `available_days / entitlement_days` with the sub-label
+`'<pending_days> day(s) awaiting approval'` when `pending_days > 0` and no sub-label when
+it is zero. A UI that showed only `available_days` would let an employee submit a second
+request they cannot fund; one that showed only the spendable figure would contradict the
+ledger. Both come from persisted columns; neither is computed in the browser.
+
+**`pending_days` is not a fold of the ledger.** A pending request writes no ledger row (it
+is a soft hold), so `fn_refresh_leave_balance` recomputes the other columns from
+`leave_balance_ledger` and recomputes `pending_days` separately as
+`coalesce(SUM(balance_days) FILTER (WHERE status = 'PENDING_APPROVAL'), 0)` over
+`leave_request` for the same (employee, type, period). The nightly
+`leave-balance-verify` job checks both definitions; the previous draft described
+`leave_balance` as "a materialised fold of the ledger" while carrying a column the ledger
+cannot produce, which would have made the verifier fail on every row with a live request.
+
+**Concurrency (this was unspecified and is a real over-draw).** Two requests submitted in
+the same second both read the same `available_days`, both pass
+`leave.sufficient_balance`, and both commit — the employee ends up with a negative
+entitlement and no constraint catches it, because `available_days` is a *generated* column
+over the ledger and pending holds are not in the ledger. Every leave transition therefore
+begins with
+
+```sql
+SELECT * FROM leave_balance
+ WHERE employee_id = :me AND leave_type_id = :t AND leave_period_id = :p
+ FOR UPDATE;
+```
+
+and the ledger insert, the `pending_days` update and the `leave_request` status change are
+one transaction under that lock. `ck_leave_balance__no_overdraw`
+`CHECK (available_days - pending_days >= 0)` is **not** added, because
+`leave_type.allows_negative_balance` legitimately permits a negative balance for some
+types; the invariant is enforced by the guard under the row lock and re-asserted by
+`leave-balance-verify`.
+
 ### 8.5 `leave_request`
 
 | Column | Type | Null | Default | Notes |
@@ -2223,7 +2367,8 @@ Indexes:
 | `end_date` | `date` | no | — | |
 | `start_portion` | `ess_leave_day_portion` | no | `'FULL'` | |
 | `end_portion` | `ess_leave_day_portion` | no | `'FULL'` | |
-| `total_days` | `numeric(5,2)` | no | — | **Server-computed** from `leave_request_day` rows; never client-supplied |
+| `total_days` | `numeric(5,2)` | no | — | **Server-computed** as `SUM(day_fraction) FILTER (WHERE is_working_day)` over `leave_request_day`; never client-supplied. This is the number the UI renders ("5 days") and the number the attendance fold consumes. |
+| `balance_days` | `numeric(5,2)` | no | — | **Server-computed** as `SUM(day_fraction) FILTER (WHERE counts_toward_balance)`. This is the number the ledger moves and the guard tests. For a paid leave type it equals `total_days`; for an **unpaid** type (LOP) it is `0`. |
 | `reason` | `text` | yes | — | The prototype's optional "Reason" textarea; ≤ 2000 chars |
 | `status` | `ess_leave_request_status` | no | `'DRAFT'` | |
 | `submitted_at` | `timestamptz` | yes | — | |
@@ -2241,21 +2386,38 @@ Indexes:
 CONSTRAINT ux_leave_request__org_reference UNIQUE (organization_id, reference_no),
 CONSTRAINT ck_leave_request__range CHECK (end_date >= start_date),
 CONSTRAINT ck_leave_request__days CHECK (total_days > 0 AND (total_days * 2) = trunc(total_days * 2)),
+CONSTRAINT ck_leave_request__balance_days CHECK (
+  balance_days >= 0 AND balance_days <= total_days AND (balance_days * 2) = trunc(balance_days * 2)),
 CONSTRAINT ck_leave_request__submitted CHECK (status = 'DRAFT' OR submitted_at IS NOT NULL),
 CONSTRAINT ck_leave_request__decided CHECK (
   (status IN ('APPROVED','REJECTED')) = (decided_at IS NOT NULL AND decided_by_employee_id IS NOT NULL)),
 CONSTRAINT ck_leave_request__rejection_note CHECK (status <> 'REJECTED' OR decision_note IS NOT NULL),
 CONSTRAINT ck_leave_request__withdrawn CHECK ((status = 'WITHDRAWN') = (withdrawn_at IS NOT NULL)),
 CONSTRAINT ck_leave_request__half_day_single CHECK (
-  (start_portion = 'FULL' AND end_portion = 'FULL') OR start_date = end_date OR
-  (start_portion <> 'FULL' OR end_portion <> 'FULL'))
+  (start_date = end_date AND (start_portion = end_portion OR end_portion = 'FULL'))
+  OR (start_date < end_date AND start_portion IN ('FULL','SECOND_HALF')
+                           AND end_portion   IN ('FULL','FIRST_HALF')))
 ```
+> **Corrected.** The previous predicate was
+> `(a AND b) OR c OR (NOT a OR NOT b)`, whose last disjunct is the negation of the first:
+> it is a tautology and constrained nothing at all. The replacement states the real rule:
+> a single-day request may be a half day; a multi-day request may only be half on its
+> *outer* edges — it starts at the second half of the first day and/or ends at the first
+> half of the last day. Any other portion combination on a span is meaningless and is now
+> rejected.
 Indexes:
 - `ix_leave_request__employee_period (employee_id, leave_period_id, start_date DESC)` — "My requests"
 - `ix_leave_request__approver_pending (approver_employee_id, submitted_at DESC) WHERE status = 'PENDING_APPROVAL'` — the Approvals queue
 - `ix_leave_request__org_dates (organization_id, start_date, end_date)` — team-calendar and "Team today"
 - `ix_leave_request__type_period (leave_type_id, leave_period_id) WHERE status = 'APPROVED'`
-- `ex_leave_request__no_self_overlap EXCLUDE USING gist (employee_id WITH =, daterange(start_date, end_date, '[]') WITH &&) WHERE (status IN ('PENDING_APPROVAL','APPROVED'))` — an employee cannot double-book a day
+- `ex_leave_request__no_self_overlap EXCLUDE USING gist (employee_id WITH =, daterange(start_date, end_date, '[]') WITH &&) WHERE (status IN ('PENDING_APPROVAL','APPROVED'))` — an employee cannot double-book a day.
+  This is a table **constraint**, not an index, and it needs `btree_gist` for the `uuid`
+  equality operator (§1.1). It deliberately also forbids two complementary half-days on
+  the same date (first-half casual + second-half sick). That is a real restriction and it
+  is accepted for v1: the alternative — an exclusion over `(employee_id, leave_date,
+  portion)` on `leave_request_day` — is the correct long-term model and is recorded as the
+  v2 change. The submit path returns `409 {"code":"LEAVE_DATES_OVERLAP"}` naming the
+  conflicting `reference_no`, so the restriction is never silent.
 
 `leave_request_day` — one row per calendar day the request touches. This is what makes
 "Team today · On leave", the LOP day count and the attendance fold exact.
@@ -2281,9 +2443,28 @@ Indexes:
 - `ix_lrd__employee_date (employee_id, leave_date)` — "who is on leave today"
 - `ix_lrd__date (organization_id, leave_date) WHERE counts_toward_balance`
 
-`leave_request.total_days` is maintained by trigger as
-`SUM(day_fraction) FILTER (WHERE counts_toward_balance)`; the trigger raises if an
-application tries to set it directly.
+`leave_request.total_days` and `.balance_days` are maintained by trigger
+`trg_leave_request_day_totals` (`AFTER INSERT OR UPDATE OR DELETE ON leave_request_day`)
+as `SUM(day_fraction) FILTER (WHERE is_working_day)` and
+`SUM(day_fraction) FILTER (WHERE counts_toward_balance)` respectively; the trigger raises
+if an application tries to set either directly.
+
+> **Corrected — the single-column model made unpaid leave impossible.** The previous
+> draft defined `total_days` as the `counts_toward_balance` sum only, while
+> `counts_toward_balance = is_working_day AND leave_type.is_paid`. For the seeded `LOP`
+> type (`is_paid = false`) every day row has `counts_toward_balance = false`, so
+> `total_days` folds to `0` and
+> `ck_leave_request__days CHECK (total_days > 0)` rejects the insert: **no loss-of-pay
+> leave request could ever be created**, which in turn means `attendance_record.lop_days`
+> could never be sourced from approved unpaid leave, which is the only way LOP legitimately
+> reaches payroll. Splitting the two figures fixes the whole chain: the UI and the
+> attendance fold read `total_days`, the ledger and the balance guard read `balance_days`.
+
+`leave_request_day` rows are generated **server-side only**, by expanding
+`[start_date, end_date]` and resolving each day against `working_days()`'s two predicates
+(§7.3). `is_working_day` and `counts_toward_balance` are never client-supplied, and the
+expansion is re-run on approval so that a holiday calendar edited between submission and
+approval cannot leave a stale day set behind.
 
 ### 8.6 Leave request state machine (`machine = 'leave_request'`)
 
@@ -2302,13 +2483,33 @@ application tries to set it directly.
 Terminal: `REJECTED`, `WITHDRAWN`, `CANCELLED`. `APPROVED` becomes effectively terminal
 once `attendance_record_id` is set (guard `leave.not_yet_locked_by_attendance` fails).
 
-Ledger effects, all inside the transition transaction:
-- → `PENDING_APPROVAL`: `leave_balance.pending_days += total_days`; create an
-  `approval_task` (§19).
-- → `APPROVED`: one `CONSUMPTION` ledger row of `-total_days`; `pending_days -= total_days`.
-- → `REJECTED` / `WITHDRAWN` from `PENDING_APPROVAL`: `pending_days -= total_days`; no ledger row.
+Ledger effects, all inside the transition transaction, under the `leave_balance … FOR UPDATE`
+lock of §8.4, and all in `balance_days` (**not** `total_days` — an unpaid day consumes no
+entitlement):
+- → `PENDING_APPROVAL`: `leave_balance.pending_days += balance_days`; create an
+  `approval_task` (§19). Skipped entirely when `balance_days = 0`.
+- → `APPROVED`: one `CONSUMPTION` ledger row of `-balance_days` (omitted when
+  `balance_days = 0`); `pending_days -= balance_days`. For a type with
+  `affects_payroll_lop`, the approved `total_days` are additionally folded into the open
+  `attendance_record.unpaid_leave_days` for each covered period (§9.2).
+- → `REJECTED` / `WITHDRAWN` from `PENDING_APPROVAL`: `pending_days -= balance_days`; no ledger row.
 - → `CANCELLED`/`WITHDRAWN` from `APPROVED`: one `CONSUMPTION_REVERSAL` row of
-  `+total_days` with `source_ledger_id` pointing at the original consumption.
+  `+balance_days` with `source_ledger_id` pointing at the original consumption, and the
+  attendance fold reversed.
+- Every one of these writes an `audit_event` with `action = 'STATE_TRANSITION'` and the
+  ledger row's id in `metadata`, and stamps `leave_balance_ledger.audit_event_id`, so a
+  balance movement and the act that caused it are joined in both directions.
+
+**Approver resolution is snapshotted, not re-derived.** `approver_employee_id` is set at
+submit from the current `PRIMARY` `employee_manager` row; the guard
+`approval.actor_is_assigned_approver` compares against `approval_task.assignee_employee_id`,
+which is set from the same value. A re-org after submission therefore does not silently
+move a pending request to a new manager: the original approver stays accountable, and HR
+moves it explicitly with `PENDING→REASSIGNED` (§19.2), which is audited and notified. An
+employee with no manager resolves to the HR business partner
+(`employee_employment.hr_business_partner_employee_id`); if that is also absent the submit
+is refused with `422 {"code":"NO_APPROVER"}` — a request is never created with nobody able
+to decide it.
 
 ---
 ## 9. Attendance
@@ -2320,6 +2521,17 @@ respective Manager approves.** Nothing here may be written by Accounts.
 
 One row per organisation per calendar month. Created together with the
 `payroll_cycle` for the same month (1:1), so the two state machines stay in lock-step.
+
+> **Creation order (this was circular).** `payroll_cycle.attendance_period_id` is
+> `NOT NULL`, and the `attendance_period` machine's `NULL→OPEN` transition is guarded by
+> `attendance.cycle_exists`. As written, neither row could be inserted first. The
+> resolution is explicit: `POST /payroll/cycles` creates **the `attendance_period` first**
+> in the same transaction, then the `payroll_cycle` referencing it; the guard
+> `attendance.cycle_exists` is replaced by `attendance.created_with_cycle`, which asserts
+> that the enclosing transaction is the cycle-creation command (the service passes the
+> intent explicitly — it is not inferred). The FK is additionally declared
+> `DEFERRABLE INITIALLY IMMEDIATE` so a future bulk backfill can defer it without a
+> schema change. `attendance_period` rows are never created by any other route or job.
 
 | Column | Type | Null | Default | Notes |
 |---|---|---|---|---|
@@ -2375,7 +2587,14 @@ Index: `ix_attendance_period__org_status (organization_id, status, start_date DE
 | `holiday_days` | `numeric(5,2)` | no | `0` | `PUBLIC` holidays in the period on the employee's calendar |
 | `week_off_days` | `numeric(5,2)` | no | `0` | |
 | `absent_days` | `numeric(5,2)` | no | `0` | Unapproved absence |
-| `lop_days` | `numeric(5,2)` | no | `0` | Loss-of-pay days. `absent_days` + approved unpaid leave, unless overridden by a committed `LOP_OVERRIDE` payroll input. |
+| `unpaid_leave_days` | `numeric(5,2)` | no | `0` | **Added.** Approved leave of a type with `is_paid = false` (the seeded `LOP` type) falling in the period. Without this column the day-identity constraint below cannot hold for any employee who took approved unpaid leave: such a day is not `present`, not `paid_leave`, not `holiday`, not `week_off`, and not `absent` (which the schema defines as *unapproved*), so the five buckets could not sum to `eligible_days` and the record was unsavable. |
+| `lop_days` | `numeric(5,2)` | no | *(maintained)* | Loss-of-pay days = `absent_days + unpaid_leave_days`, unless `lop_source <> 'DERIVED'`. Maintained by `trg_attendance_record_lop`; never set directly by a client. |
+| `lop_source` | `ess_attendance_lop_source` | no | `'DERIVED'` | `DERIVED` \| `HR_OVERRIDE` \| `PAYROLL_INPUT_OVERRIDE` — **which act produced the number the manager approved** |
+| `lop_override_days` | `numeric(5,2)` | yes | — | The overriding value; NULL when `lop_source = 'DERIVED'` |
+| `lop_override_reason` | `text` | yes | — | Mandatory (≥ 10 chars) when overridden |
+| `lop_override_input_item_id` | `uuid` | yes | — | FK → `payroll_input_item(id)` `ON DELETE RESTRICT` — the exact uploaded row, when `lop_source = 'PAYROLL_INPUT_OVERRIDE'` |
+| `lop_override_by_user_id` | `uuid` | yes | — | FK → `app_user(id)` `ON DELETE RESTRICT` |
+| `lop_override_at` | `timestamptz` | yes | — | |
 | `payable_days` | `numeric(5,2)` | no | *(generated)* | `GENERATED ALWAYS AS (eligible_days - lop_days) STORED` — the numerator of "Days paid 31 / 31" and the prorating basis for `PRORATED_FIXED` components |
 | `overtime_hours` | `numeric(6,2)` | no | `0` | |
 | `hr_note` | `text` | yes | — | |
@@ -2388,15 +2607,53 @@ Index: `ix_attendance_period__org_status (organization_id, status, start_date DE
 CONSTRAINT ux_attendance_record__period_employee UNIQUE (attendance_period_id, employee_id),
 CONSTRAINT ck_ar__nonneg CHECK (
   eligible_days >= 0 AND present_days >= 0 AND paid_leave_days >= 0 AND holiday_days >= 0
-  AND week_off_days >= 0 AND absent_days >= 0 AND lop_days >= 0 AND overtime_hours >= 0),
+  AND week_off_days >= 0 AND absent_days >= 0 AND unpaid_leave_days >= 0
+  AND lop_days >= 0 AND overtime_hours >= 0),
 CONSTRAINT ck_ar__eligible_bound CHECK (eligible_days <= calendar_days),
 CONSTRAINT ck_ar__lop_bound CHECK (lop_days <= eligible_days),
 CONSTRAINT ck_ar__day_identity CHECK (
-  present_days + paid_leave_days + holiday_days + week_off_days + absent_days = eligible_days),
+  present_days + paid_leave_days + holiday_days + week_off_days
+    + absent_days + unpaid_leave_days = eligible_days),
 CONSTRAINT ck_ar__half_days CHECK (
   (present_days*2)=trunc(present_days*2) AND (paid_leave_days*2)=trunc(paid_leave_days*2)
-  AND (absent_days*2)=trunc(absent_days*2) AND (lop_days*2)=trunc(lop_days*2))
+  AND (absent_days*2)=trunc(absent_days*2) AND (unpaid_leave_days*2)=trunc(unpaid_leave_days*2)
+  AND (lop_days*2)=trunc(lop_days*2) AND (eligible_days*2)=trunc(eligible_days*2)),
+CONSTRAINT ck_ar__lop_override CHECK (
+  (lop_source = 'DERIVED' AND num_nulls(lop_override_days, lop_override_reason,
+                                        lop_override_by_user_id, lop_override_at) = 4)
+  OR (lop_source <> 'DERIVED' AND lop_override_days IS NOT NULL
+      AND length(btrim(lop_override_reason)) >= 10
+      AND lop_override_by_user_id IS NOT NULL AND lop_override_at IS NOT NULL)),
+CONSTRAINT ck_ar__lop_input_link CHECK (
+  (lop_source = 'PAYROLL_INPUT_OVERRIDE') = (lop_override_input_item_id IS NOT NULL)),
+CONSTRAINT ck_ar__lop_value CHECK (
+  lop_days = CASE WHEN lop_source = 'DERIVED' THEN absent_days + unpaid_leave_days
+                  ELSE lop_override_days END)
 ```
+
+> **Why the LOP override had to move (this was a workflow short-circuit).** The previous
+> draft said `lop_days` is "`absent_days` + approved unpaid leave, unless overridden by a
+> committed `LOP_OVERRIDE` payroll input", and left the moment of application unstated.
+> If the override is applied at *calculation* time, Accounts silently changes
+> `payable_days` — the prorating basis for every `PRORATED_FIXED` component — **after** the
+> manager approved the attendance, which defeats directive 6 (the manager must approve the
+> attendance that payroll uses) and the separation of duties that keeps the payroll
+> operator away from attendance inputs. The corrected rule:
+>
+> 1. A `LOP_OVERRIDE` input item may only be committed while the cycle is `INPUTS_OPEN`,
+>    i.e. **before** `INPUTS_LOCKED` and therefore before HR may submit attendance
+>    (guard `attendance.payroll_inputs_locked`).
+> 2. At the `INPUTS_OPEN → INPUTS_LOCKED` transition the system **materialises** every
+>    committed `LOP_OVERRIDE` into the matching `attendance_record`, setting
+>    `lop_source = 'PAYROLL_INPUT_OVERRIDE'`, `lop_override_days`,
+>    `lop_override_input_item_id` and the reason from `payroll_input_item.narration`.
+>    The manager therefore reviews and approves the *final* number.
+> 3. After `HR_SUBMITTED`, `lop_days`, `lop_source` and every day bucket are immutable
+>    until the period is reopened (`trg_attendance_record_locked`), and the calculation
+>    engine reads **only** `attendance_record.payable_days`. It never re-applies an input.
+>    Guard `payroll.no_lop_override_after_lock` and validation rule
+>    `PAY_LOP_OVERRIDE_LATE` both assert this; a late override is an `ERROR` finding that
+>    forces the cycle back through attendance, not a silent adjustment.
 Indexes:
 - `ux_attendance_record__period_employee (attendance_period_id, employee_id)`
 - `ix_attendance_record__manager_slice (attendance_period_id, manager_employee_id, status)` — the Manager approval queue
@@ -2404,8 +2661,39 @@ Indexes:
 - `ix_attendance_record__employee_period (employee_id, attendance_period_id)` — payslip generation lookup
 - `ix_attendance_record__pending (organization_id, status) WHERE status IN ('DRAFT','SUBMITTED')`
 
-> `ck_ar__day_identity` is the integrity spine: the day counts must exactly partition
+> `ck_ar__day_identity` is the integrity spine: the six day buckets must exactly partition
 > the eligible days. HR cannot submit a record where they do not.
+
+**`eligible_days` — the exact definition** (previously only "days the employee was on the
+payroll in this period (joins/exits prorate)", which an implementer could not build):
+
+```
+eligible_days = count of dates d in [attendance_period.start_date, attendance_period.end_date]
+                such that  d >= employee.date_of_joining
+                      and (employee.date_of_exit IS NULL or d <= employee.date_of_exit)
+                      and  employee has an employee_employment row effective on d
+```
+
+It counts **calendar** days, not working days, because `week_off_days` and `holiday_days`
+are separate buckets that must sum back into it. A mid-month joiner on the 15th of a
+31-day month has `eligible_days = 17`; `payable_days = eligible_days - lop_days` therefore
+prorates correctly and `payslip.total_days` still renders the month's
+`total_calendar_days` as the denominator ("17 / 31"). `computed_at` records when this was
+last derived; the HR capture screen recomputes it on open and refuses to submit a record
+whose `computed_at` predates the last change to the employee's joining/exit dates or
+employment rows.
+
+**`manager_employee_id` when there is no manager.** The column is `NOT NULL`, but an
+organisation always has at least one employee at the top of the chain (the prototype's
+CTO reports to "Board"). Resolution order at period creation, applied in this order and
+recorded in `attendance_record.manager_source`
+(`PRIMARY_MANAGER` | `HR_BUSINESS_PARTNER` | `HR_POOL`): the current `PRIMARY`
+`employee_manager` on `attendance_period.end_date`; else
+`employee_employment.hr_business_partner_employee_id`; else the organisation's designated
+HR-pool employee from `org_setting.attendance_fallback_employee_id`. The third case
+produces an `attendance_approval` slice owned by HR, which is the only circumstance in
+which HR approves attendance without an escalation — and it is recorded as such, so it is
+reportable rather than invisible.
 
 ### 9.3 `attendance_submission` — the HR act
 
@@ -2427,9 +2715,22 @@ Indexes:
 
 ```sql
 CONSTRAINT ck_attsub__counts CHECK (record_count >= 0 AND employee_count_expected >= 0),
-CONSTRAINT ck_attsub__sha_len CHECK (octet_length(payload_sha256) = 32),
-CONSTRAINT ux_attsub__period_live UNIQUE (attendance_period_id) WHERE superseded_by_submission_id IS NULL
+CONSTRAINT ck_attsub__sha_len CHECK (octet_length(payload_sha256) = 32)
 ```
+```sql
+CREATE UNIQUE INDEX ux_attsub__period_live ON ess.attendance_submission (attendance_period_id)
+  WHERE superseded_by_submission_id IS NULL;   -- §1.2
+```
+
+**`payload_sha256` — the canonical serialisation (this must be pinned or the hash proves
+nothing).** It is `SHA-256` over the UTF-8 of a JSON array, ordered by
+`employee.employee_number` ascending, each element an object whose keys appear in exactly
+this order with no whitespace:
+`{"employeeNumber","eligibleDays","presentDays","paidLeaveDays","holidayDays","weekOffDays","absentDays","unpaidLeaveDays","lopDays","lopSource","payableDays","overtimeHours"}`,
+every numeric value rendered as a fixed two-decimal string (`"17.50"`). The same
+serialiser is used to re-verify at approval and at `VALIDATING`; a drift raises
+`ATT_TOTALS_DRIFT` as an `ERROR`. Any other ordering or number formatting produces a
+different digest and would make the traceability anchor useless.
 Immutable after insert except `superseded_by_submission_id` (trigger
 `trg_immutable_attendance_submission`).
 
@@ -2467,8 +2768,33 @@ CONSTRAINT ck_attappr__decided CHECK (
 CONSTRAINT ck_attappr__reject_note CHECK (status <> 'REJECTED' OR decision_note IS NOT NULL),
 CONSTRAINT ck_attappr__escalation CHECK (
   num_nulls(escalated_at, escalated_to_user_id, escalation_reason) IN (0, 3)),
-CONSTRAINT ck_attappr__escalated_status CHECK ((escalated_at IS NOT NULL) = (status = 'AUTO_ESCALATED') OR escalated_at IS NULL)
+CONSTRAINT ck_attappr__escalated_status CHECK (
+  (status = 'AUTO_ESCALATED') = (escalated_at IS NOT NULL)),
+CONSTRAINT ck_attappr__escalation_note CHECK (
+  escalation_reason IS NULL OR length(btrim(escalation_reason)) >= 10),
+CONSTRAINT ck_attappr__distinct_from_submitter CHECK (true)  -- see the trigger below
 ```
+> **Corrected.** The previous `ck_attappr__escalated_status` read
+> `((escalated_at IS NOT NULL) = (status = 'AUTO_ESCALATED') OR escalated_at IS NULL)`.
+> When `escalated_at IS NULL` the second disjunct is true and the whole check passes
+> regardless of status, so `status = 'AUTO_ESCALATED'` with no escalation timestamp,
+> no escalating user and no reason was perfectly legal — an escalation that leaves no
+> trace of who escalated or why. The biconditional above is what was meant.
+
+**HR escalation must not be HR marking its own homework.** HR holds both
+`attendance:submit` and `attendance:approve:any`. Nothing in the previous draft stopped
+the same HR user who submitted the period from escalating every overdue slice and
+approving the whole month's attendance alone — which collapses directive 6's "the
+respective Manager reviews/approves" into a single actor. Trigger
+`trg_attendance_approval_escalation_sod` (`BEFORE UPDATE`) therefore raises when
+`status = 'AUTO_ESCALATED'` and
+`escalated_to_user_id = (SELECT submitted_by_user_id FROM attendance_submission WHERE id = NEW.attendance_submission_id)`.
+Guard `attendance.escalation_actor_not_submitter` states the same rule at the service
+layer, and the guard `attendance.approval_overdue` is evaluated as
+`due_at IS NOT NULL AND due_at < now()` — a NULL `due_at` fails closed, so a slice with no
+SLA can never be escalated at all. Every escalation additionally notifies the bypassed
+manager and every ACCOUNTS user, so an escalated month is visible to the people who rely
+on it rather than only to the person who performed it.
 Indexes:
 - `ix_attendance_approval__manager_pending (manager_employee_id, status) WHERE status = 'PENDING'`
 - `ix_attendance_approval__period_status (attendance_period_id, status)`
@@ -2483,7 +2809,7 @@ Indexes:
 | `NULL` | `OPEN` | `payroll:cycle:create` | `attendance.cycle_exists` | — |
 | `OPEN` | `HR_SUBMITTED` | `attendance:submit` | `attendance.all_active_employees_have_records`, `attendance.day_identity_holds`, `attendance.payroll_inputs_locked` | — |
 | `HR_SUBMITTED` | `MANAGER_APPROVAL_PENDING` | *(system)* | `attendance.slices_created` | `ATTENDANCE_APPROVAL_PENDING` (→ each manager) |
-| `MANAGER_APPROVAL_PENDING` | `APPROVED` | *(system)* | `attendance.every_slice_approved` | `PAYROLL_CYCLE_STATE` (→ Accounts) |
+| `MANAGER_APPROVAL_PENDING` | `APPROVED` | *(system)* | `attendance.every_slice_approved`, `attendance.totals_unchanged_since_submission` | `PAYROLL_CYCLE_STATE` (→ Accounts) |
 | `MANAGER_APPROVAL_PENDING` | `OPEN` | `attendance:reopen` | `attendance.any_slice_rejected` | — |
 | `APPROVED` | `LOCKED` | *(system)* | `attendance.cycle_left_attendance_approved` | — |
 | `APPROVED` | `REOPENED` | `attendance:reopen` | `attendance.cycle_not_calculated`, `approval.note_required` | `PAYROLL_CYCLE_STATE` |
@@ -2498,10 +2824,40 @@ guard `approval.actor_is_assigned_approver`) · `SUBMITTED→REJECTED`
 (`attendance:reopen`, guard `attendance.cycle_not_published`).
 
 `machine = 'attendance_approval'`: `NULL→PENDING` (system) ·
-`PENDING→APPROVED` (`attendance:approve:team`) · `PENDING→REJECTED`
-(`attendance:approve:team`) · `PENDING→AUTO_ESCALATED` (`attendance:approve:any`, guard
-`attendance.approval_overdue` — HR may only escalate **after** `due_at` has passed, and
-the escalation is audited with a mandatory reason).
+`PENDING→APPROVED` (`attendance:approve:team`, guard
+`approval.actor_is_assigned_approver`) · `PENDING→REJECTED`
+(`attendance:approve:team`, guards `approval.actor_is_assigned_approver`,
+`approval.note_required`) · `PENDING→AUTO_ESCALATED` (`attendance:approve:any`, guards
+`attendance.approval_overdue`, `attendance.escalation_actor_not_submitter`,
+`approval.note_required` — HR may only escalate **after** `due_at` has passed, never
+before, and the escalation is audited with a mandatory reason and notified to the bypassed
+manager).
+
+`AUTO_ESCALATED` is a **decided, approving** outcome; it is a separate value from
+`APPROVED` only so that escalations are trivially reportable. The guard
+`attendance.every_slice_approved` is therefore exactly:
+
+```sql
+NOT EXISTS (
+  SELECT 1 FROM attendance_approval aa
+  WHERE aa.attendance_period_id = :period
+    AND (aa.status NOT IN ('APPROVED','AUTO_ESCALATED') OR aa.decided_at IS NULL))
+```
+
+A slice that HR escalates and then wishes to *reject* is recorded as `REJECTED` with
+`escalated_to_user_id` set and `escalated_at` left NULL.
+
+`attendance.totals_unchanged_since_submission` re-runs the §9.3 serialiser over the
+slice's records and compares against `attendance_approval.total_payable_days` /
+`total_lop_days`; a mismatch means a record changed between submission and the last
+approval, and the period cannot reach `APPROVED` — it returns to `OPEN` with an
+`ATT_TOTALS_DRIFT` finding. This is what stops "the manager approved a different set of
+numbers from the ones payroll used".
+
+**Reopening is bounded by publication, always.** Every `REOPENED` path is guarded by
+`attendance.cycle_not_published`. Once a `payroll_cycle` is `PUBLISHED` or `CLOSED` its
+attendance is frozen permanently; a genuine error after publication is a
+`payroll_correction` (§10.11), never an edit to an approved past month.
 
 ---
 
@@ -2520,10 +2876,16 @@ the escalation is audited with a mandatory reason).
 |---|---|---|---|---|
 | `id` | `uuid` | no | `gen_random_uuid()` | PK |
 | `organization_id` | `uuid` | no | — | FK → `organization(id)` `ON DELETE RESTRICT` |
-| `period_code` | `text` | no | — | `2026-08`. Unique per org. |
+| `period_code` | `text` | no | — | `2026-08`. Unique per org **per `cycle_kind`**. |
 | `label` | `text` | no | — | `August 2026` — the payslip's month label |
+| `cycle_kind` | `ess_payroll_cycle_kind` | no | `'REGULAR'` | `REGULAR` \| `SUPPLEMENTARY` \| `OFF_CYCLE` \| `CORRECTION`. Required by WORKFLOWS.md A-2; without it the "off-cycle run producing a superseding payslip revision" that §10.2 already promises has nowhere to live. |
+| `parent_payroll_cycle_id` | `uuid` | yes | — | FK → `payroll_cycle(id)` `ON DELETE RESTRICT`. Required for every kind except `REGULAR`. |
 | `fiscal_year_id` | `uuid` | no | — | FK → `fiscal_year(id)` `ON DELETE RESTRICT` |
-| `attendance_period_id` | `uuid` | no | — | FK → `attendance_period(id)` `ON DELETE RESTRICT`; **unique** (1:1) |
+| `attendance_period_id` | `uuid` | no | — | FK → `attendance_period(id)` `ON DELETE RESTRICT`. 1:1 **for `REGULAR` cycles only** (see the partial index below), so a supplementary run reuses the month's already-approved attendance without re-approving it. |
+| `no_inputs_attested_by_user_id` | `uuid` | yes | — | FK → `app_user(id)` `ON DELETE RESTRICT` |
+| `no_inputs_attested_at` | `timestamptz` | yes | — | |
+| `no_inputs_attestation_note` | `text` | yes | — | ≥ 10 chars |
+| `employee_set_sha256` | `bytea` | yes | — | SHA-256 over the ordered `employee_id` list of `payroll_cycle_employee WHERE disposition='INCLUDED'`, frozen at `VALIDATED` |
 | `period_start` | `date` | no | — | |
 | `period_end` | `date` | no | — | |
 | `scheduled_pay_date` | `date` | no | — | Derived from `organization.payroll_pay_day_rule` at creation; persisted |
@@ -2549,13 +2911,20 @@ the escalation is audited with a mandatory reason).
 | `row_version` | `integer` | no | `1` | |
 
 ```sql
-CONSTRAINT ux_payroll_cycle__org_period UNIQUE (organization_id, period_code),
-CONSTRAINT ux_payroll_cycle__attendance_period UNIQUE (attendance_period_id),
+CONSTRAINT ux_payroll_cycle__org_period_kind UNIQUE (organization_id, period_code, cycle_kind),
 CONSTRAINT ck_payroll_cycle__range CHECK (period_end >= period_start),
 CONSTRAINT ck_payroll_cycle__pay_date CHECK (scheduled_pay_date >= period_end),
+CONSTRAINT ck_payroll_cycle__parent CHECK ((cycle_kind = 'REGULAR') = (parent_payroll_cycle_id IS NULL)),
+CONSTRAINT ck_payroll_cycle__no_inputs_attestation CHECK (
+  num_nulls(no_inputs_attested_by_user_id, no_inputs_attested_at, no_inputs_attestation_note) IN (0, 3)),
+CONSTRAINT ck_payroll_cycle__employee_set_sha CHECK (
+  employee_set_sha256 IS NULL OR octet_length(employee_set_sha256) = 32),
 CONSTRAINT ck_payroll_cycle__distinct_approver CHECK (
   approved_by_user_id IS NULL OR calculated_by_user_id IS NULL
   OR approved_by_user_id <> calculated_by_user_id),
+CONSTRAINT ck_payroll_cycle__distinct_publisher CHECK (
+  published_by_user_id IS NULL OR calculated_by_user_id IS NULL
+  OR published_by_user_id <> calculated_by_user_id),
 CONSTRAINT ck_payroll_cycle__published CHECK (
   num_nulls(published_at, published_by_user_id, actual_pay_date) IN (0, 3)),
 CONSTRAINT ck_payroll_cycle__cancel CHECK (num_nulls(cancelled_at, cancel_reason) IN (0, 2)),
@@ -2564,12 +2933,31 @@ CONSTRAINT ck_payroll_cycle__controls_nonneg CHECK (
   AND coalesce(control_deductions_minor,0) >= 0)
 ```
 Indexes:
-- `ux_payroll_cycle__org_period (organization_id, period_code)`
+- `ux_payroll_cycle__org_period_kind (organization_id, period_code, cycle_kind)`
 - `ix_payroll_cycle__org_status (organization_id, status, period_start DESC)`
 - `ix_payroll_cycle__published (organization_id, published_at DESC) WHERE status IN ('PUBLISHED','CLOSED')`
+```sql
+CREATE UNIQUE INDEX ux_payroll_cycle__attendance_period
+  ON ess.payroll_cycle (attendance_period_id) WHERE cycle_kind = 'REGULAR';   -- §1.2, WORKFLOWS R-1
+```
 
-`ck_payroll_cycle__distinct_approver` is the **database-level dual-control guarantee**:
-the user who calculated payroll can never be the user who approved it.
+`ck_payroll_cycle__distinct_approver` and `ck_payroll_cycle__distinct_publisher` together
+are the **database-level dual-control guarantee**: the user who calculated payroll can be
+neither the user who approved it nor the user who published it. The previous draft
+constrained only the approver, which left the act that actually makes money visible to
+employees — publication — performable by the same person who computed it.
+
+**The no-inputs deadlock (this made a quiet month unpayable).** Transition #3
+(`INPUTS_OPEN → INPUTS_LOCKED`) is guarded by
+`payroll.at_least_one_committed_batch`. A month in which no employee has any variable pay,
+arrear, incentive or reimbursement has **no** batch to commit, so the cycle could never
+lock, attendance could never be submitted, and payroll could never run — the schema made
+the ordinary case of a stable payroll month impossible. The corrected guard is
+`payroll.inputs_settled`, which holds when *either* at least one batch is `COMMITTED`
+*or* the three `no_inputs_attested_*` columns are set. Recording "there are no inputs this
+month" is an explicit, permissioned (`payroll:input:commit`), reasoned, audited act by a
+named Accounts user — not an absence the system infers. `payroll.at_least_one_committed_batch`
+is retained as the first half of that disjunction.
 
 ### 10.2 Payroll cycle state machine (`machine = 'payroll_cycle'`)
 
@@ -2577,7 +2965,7 @@ the user who calculated payroll can never be the user who approved it.
 |---|---|---|---|---|---|
 | 1 | `NULL` | `DRAFT` | `payroll:cycle:create` | `payroll.no_open_cycle_for_period`, `payroll.prior_cycle_closed` | — |
 | 2 | `DRAFT` | `INPUTS_OPEN` | `payroll:cycle:transition` | `payroll.attendance_period_open` | `PAYROLL_CYCLE_STATE` → HR |
-| 3 | `INPUTS_OPEN` | `INPUTS_LOCKED` | `payroll:input:commit` | `payroll.at_least_one_committed_batch`, `payroll.no_uncommitted_batches`, `payroll.all_batches_validated` | `PAYROLL_CYCLE_STATE` → HR |
+| 3 | `INPUTS_OPEN` | `INPUTS_LOCKED` | `payroll:input:commit` | `payroll.inputs_settled`, `payroll.no_uncommitted_batches`, `payroll.all_batches_validated`, `payroll.dual_control_available` | `PAYROLL_CYCLE_STATE` → HR |
 | 4 | `INPUTS_LOCKED` | `ATTENDANCE_SUBMITTED` | `attendance:submit` | `attendance.period_is_hr_submitted` | `ATTENDANCE_APPROVAL_PENDING` → managers |
 | 5 | `ATTENDANCE_SUBMITTED` | `ATTENDANCE_APPROVED` | *(system)* | `attendance.every_slice_approved` | `PAYROLL_CYCLE_STATE` → Accounts |
 | 6 | `ATTENDANCE_SUBMITTED` | `INPUTS_LOCKED` | `attendance:reopen` | `attendance.any_slice_rejected`, `approval.note_required` | `PAYROLL_CYCLE_STATE` |
@@ -2586,18 +2974,45 @@ the user who calculated payroll can never be the user who approved it.
 | 9 | `VALIDATING` | `VALIDATION_FAILED` | *(system)* | `payroll.has_error_validations` | `PAYROLL_CYCLE_STATE` |
 | 10 | `VALIDATION_FAILED` | `INPUTS_OPEN` | `payroll:cycle:transition` | `approval.note_required` | `PAYROLL_CYCLE_STATE` |
 | 11 | `VALIDATION_FAILED` | `VALIDATING` | `payroll:validate` | — | — |
-| 12 | `VALIDATED` | `CALCULATING` | `payroll:calculate` | `payroll.validated_recently` (validation ≤ 24 h old and no input/attendance change since) | — |
+| 12 | `VALIDATED` | `CALCULATING` | `payroll:calculate` | `payroll.validated_recently` (validation no older than `org_setting.payroll_validation_max_age_hours`, and no input, attendance record or salary structure in scope changed since), `payroll.employee_set_unchanged` | — |
 | 13 | `CALCULATING` | `CALCULATED` | *(system)* | `payroll.run_succeeded`, `payroll.payslip_count_matches_employee_count`, `payroll.controls_balance` | `PAYROLL_CYCLE_STATE` → Accounts |
 | 14 | `CALCULATING` | `VALIDATION_FAILED` | *(system)* | `payroll.run_failed` | `PAYROLL_CYCLE_STATE` |
 | 15 | `CALCULATED` | `APPROVED` | `payroll:approve` | `payroll.distinct_approver`, `payroll.controls_balance` | `PAYROLL_CYCLE_STATE` |
-| 16 | `CALCULATED` | `VALIDATED` | `payroll:cycle:transition` | `approval.note_required` (discards the run; payslips → `SUPERSEDED`) | `PAYROLL_CYCLE_STATE` |
+| 16 | `CALCULATED` | `VALIDATED` | `payroll:cycle:transition` | `approval.note_required`, `payroll.no_published_payslips` (discards the run; the live `payroll_run` → `SUPERSEDED`, every payslip of that run → `SUPERSEDED`, `payslip_count` and the control totals reset to `NULL`, `payroll_cycle_employee.payslip_id = NULL`) | `PAYROLL_CYCLE_STATE` |
 | 17 | `APPROVED` | `PUBLISHED` | `payroll:publish` | `payroll.distinct_approver`, `payroll.every_payslip_generated`, `payroll.pay_date_set` | `PAYSLIP_PUBLISHED` → every employee in the run |
 | 18 | `PUBLISHED` | `CLOSED` | `payroll:close` | `payroll.pay_date_passed`, `payroll.reimbursements_settled` | — |
 | 19 | `DRAFT`/`INPUTS_OPEN`/`INPUTS_LOCKED`/`VALIDATION_FAILED` | `CANCELLED` | `payroll:cycle:transition` | `payroll.no_payslips_exist`, `approval.note_required` | `PAYROLL_CYCLE_STATE` |
+| 20 | `ATTENDANCE_APPROVED` | `INPUTS_LOCKED` | `attendance:reopen` | `attendance.cycle_not_calculated`, `approval.note_required` | `PAYROLL_CYCLE_STATE` |
+
+**Transition 20** exists because the previous table had no way back from
+`ATTENDANCE_APPROVED`: if a manager approved a slice in error, or an employee's approved
+leave was cancelled after approval, the only recorded paths forward were `VALIDATING` and
+nothing else — the cycle was stuck with attendance it knew to be wrong. The
+`attendance_period` machine already allowed `APPROVED → REOPENED`; the cycle machine must
+mirror it or the two fall out of lock-step, which is precisely the failure the 1:1
+pairing exists to prevent.
 
 Terminal: `CLOSED`, `CANCELLED`. There is **no** transition from `PUBLISHED` back to any
-earlier state — a correction is a new cycle or an off-cycle run producing a superseding
-payslip revision (§10.7).
+earlier state — a correction is a `payroll_correction` (§10.11) driving an `OFF_CYCLE` or
+`CORRECTION` cycle that produces a superseding payslip revision (§10.7).
+
+**The mandated order, and exactly where each link is enforced.** Directive 6 is satisfied
+by the conjunction below; each row names the single artefact that makes the step
+un-skippable, so an implementer can test each one in isolation:
+
+| Mandated step | Enforced by | A route that tried to skip it would |
+|---|---|---|
+| Accounts uploads payroll data | transitions 2–3; `payroll:input:upload`/`:commit` held **only** by ACCOUNTS | fail `assertTransition` and `trg_guard_state_transition` |
+| HR submits attendance | guard `attendance.payroll_inputs_locked` on `attendance_period` `OPEN→HR_SUBMITTED` **and** on cycle transition 4 | find the cycle not yet `INPUTS_LOCKED` and be refused |
+| The **respective** Manager approves | `attendance_record.manager_employee_id` snapshot → one `attendance_approval` slice per manager → guard `approval.actor_is_assigned_approver`; HR's `attendance:approve:any` is admissible only after `due_at` and never by the submitter | be refused as a non-assignee |
+| System validates required inputs | transitions 7–9; guard `payroll.no_error_validations` is a `NOT EXISTS` over unresolved `ERROR` rows | find the cycle in `VALIDATION_FAILED` |
+| Automatic payslip generation | transitions 12–13; `trg_payslip_requires_calculating` refuses any `INSERT INTO payslip` while the cycle is not `CALCULATING` | be refused by the database even with a direct `INSERT` |
+| Payslip becomes visible | transition 17 creates `payslip_publication`; the employee query and the `payslip` RLS policy both require a live publication row | return zero rows |
+
+The last two lines are why a payslip cannot "exist or be visible before the workflow
+completes" in the strong sense the directive asks for: existence is blocked by a database
+trigger keyed on the cycle state, and visibility is blocked by a row that only transition
+17 can create.
 
 ### 10.3 `pay_component` — reference data, seeded
 
@@ -2747,8 +3162,41 @@ CONSTRAINT ux_pii__batch_row UNIQUE (payroll_input_batch_id, source_row_no)
 Indexes:
 - `ix_pii__cycle_employee (payroll_cycle_id, employee_id) WHERE NOT is_rejected` — the generator's hot path
 - `ix_pii__employee_kind (employee_id, kind)`
-- `ux_pii__one_lop_override_per_employee_cycle UNIQUE (payroll_cycle_id, employee_id) WHERE kind = 'LOP_OVERRIDE' AND NOT is_rejected`
-- `ux_pii__one_payout_per_claim UNIQUE (expense_claim_id) WHERE kind = 'REIMBURSEMENT_PAYOUT' AND NOT is_rejected`
+```sql
+CREATE UNIQUE INDEX ux_pii__one_lop_override_per_employee_cycle
+  ON ess.payroll_input_item (payroll_cycle_id, employee_id)
+  WHERE kind = 'LOP_OVERRIDE' AND NOT is_rejected;
+CREATE UNIQUE INDEX ux_pii__one_payout_per_claim
+  ON ess.payroll_input_item (expense_claim_id)
+  WHERE kind = 'REIMBURSEMENT_PAYOUT' AND NOT is_rejected;
+```
+`payroll_input_item` rows belonging to a `SUPERSEDED` or `DISCARDED` batch are excluded
+from every generator read by joining `payroll_input_batch` and requiring
+`status = 'COMMITTED'`; the partial indexes above additionally keep a superseded batch's
+rows from blocking a corrected re-upload, because supersession sets `is_rejected = true`
+on its items in the same transaction.
+
+### 10.5.1 Input batch state machine (`machine = 'payroll_input_batch'`)
+
+`NULL→UPLOADING` (`payroll:input:upload`, guard `payroll.cycle_inputs_open`) ·
+`UPLOADING→PARSED` (*system*, guard `payroll.file_clean` — the `file_object` must be
+`scan_status = 'CLEAN'` before a single byte is parsed) ·
+`UPLOADING→PARSE_FAILED` (*system*) ·
+`PARSED→VALIDATED` (*system*, guards `payroll.batch_totals_match`,
+`payroll.batch_employees_resolve`) ·
+`PARSED→DISCARDED` / `VALIDATED→DISCARDED` (`payroll:input:upload`, guard
+`approval.note_required`) ·
+`VALIDATED→COMMITTED` (`payroll:input:commit`, guards `payroll.cycle_inputs_open`,
+`payroll.committer_not_uploader`) ·
+`COMMITTED→SUPERSEDED` (`payroll:input:commit`, guard `payroll.cycle_inputs_open`;
+sets `superseded_by_batch_id` and `is_rejected = true` on every item).
+Terminal: `SUPERSEDED`, `DISCARDED`, `PARSE_FAILED`.
+
+`payroll.committer_not_uploader` is a **maker-checker control on the money going in**:
+the Accounts user who uploaded a batch of variable pay cannot be the one who commits it.
+It is waived only when `org_setting` records fewer than two eligible Accounts users, and
+that waiver is itself an audited `CONFIG_CHANGE`. Without it, dual control at the
+*approval* end is decorative — one person could still author every amount.
 
 ### 10.6 `payroll_validation_result` and `payroll_run`
 
@@ -2804,8 +3252,35 @@ CONSTRAINT ux_payroll_run__cycle_run_no UNIQUE (payroll_cycle_id, run_no),
 CONSTRAINT ck_payroll_run__sha CHECK (octet_length(ruleset_sha256) = 32 AND octet_length(input_manifest_sha256) = 32),
 CONSTRAINT ck_payroll_run__times CHECK (finished_at IS NULL OR started_at IS NOT NULL),
 CONSTRAINT ck_payroll_run__failure CHECK (status <> 'FAILED' OR error_message IS NOT NULL),
-CONSTRAINT ux_payroll_run__one_live UNIQUE (payroll_cycle_id) WHERE status = 'SUCCEEDED' AND superseded_by_run_id IS NULL
+CONSTRAINT ck_payroll_run__kind CHECK ((run_kind = 'CORRECTION') = (payroll_correction_id IS NOT NULL))
 ```
+```sql
+CREATE UNIQUE INDEX ux_payroll_run__one_live ON ess.payroll_run (payroll_cycle_id)
+  WHERE status = 'SUCCEEDED' AND superseded_by_run_id IS NULL;                 -- §1.2
+CREATE UNIQUE INDEX ux_payroll_run__one_active ON ess.payroll_run (payroll_cycle_id)
+  WHERE status IN ('QUEUED','RUNNING');   -- a cycle can have at most one run in flight
+```
+Two further columns, required by WORKFLOWS.md A-3:
+`run_kind ess_payroll_run_kind NOT NULL DEFAULT 'REGULAR'` and
+`payroll_correction_id uuid NULL` FK → `payroll_correction(id)` `ON DELETE RESTRICT`.
+
+`input_manifest_sha256` covers the ordered ids of every `payroll_input_item`,
+`attendance_record`, `salary_structure` **and `payroll_cycle_employee` row** the run
+consumed, plus `payroll_cycle.employee_set_sha256` and the id of the
+`statutory_rate_set`/`statutory_pt_slab` rows in force. The previous definition omitted
+the employee population and the statutory rates, so two runs over a changed population or
+a corrected PF ceiling would hash identically and the reproducibility claim would be
+false.
+
+### 10.6.1 Run state machine (`machine = 'payroll_run'`)
+
+`NULL→QUEUED` (`payroll:calculate`, guard `payroll.cycle_calculating`) ·
+`QUEUED→RUNNING` (*system*, lease-held by `ess_ops.background_job`) ·
+`RUNNING→SUCCEEDED` / `RUNNING→FAILED` (*system*) ·
+`SUCCEEDED→SUPERSEDED` (*system*, on transition 16 or a correction run).
+A run that holds a lease which expires without a terminal status is swept to `FAILED`
+with `error_message = 'LEASE_EXPIRED'` by the `payroll-run-reaper` job; it never sits in
+`RUNNING` forever, because a cycle stuck in `CALCULATING` blocks the month.
 
 ### 10.7 `payslip` — immutable, versioned, hash-traceable
 
@@ -2817,7 +3292,7 @@ CONSTRAINT ux_payroll_run__one_live UNIQUE (payroll_cycle_id) WHERE status = 'SU
 | `payroll_run_id` | `uuid` | no | — | FK → `payroll_run(id)` `ON DELETE RESTRICT` |
 | `employee_id` | `uuid` | no | — | FK → `employee(id)` `ON DELETE RESTRICT` |
 | `fiscal_year_id` | `uuid` | no | — | FK → `fiscal_year(id)` `ON DELETE RESTRICT` |
-| `reference_no` | `citext` | no | — | `WDT-PS-2608-1847` — exactly the prototype's format: `<org>-PS-<YYMM>-<employee numeric suffix>`. Unique per org. |
+| `reference_no` | `citext` | no | — | `WDT-PS-2608-1847`. **Exact derivation** (the previous "employee numeric suffix" was ambiguous and collision-prone): `organization.code ‖ '-PS-' ‖ to_char(period_end,'YYMM') ‖ '-' ‖ ltrim(regexp_replace(employee.employee_number,'[^0-9]','','g'),'0')`, i.e. every digit of the employee number with leading zeros stripped — `WDT-01847` → `1847`, `WDT-011847` → `11847`. Truncating to a fixed 4 digits, as "suffix" invited, would collide `WDT-01847` with `WDT-11847` and hand one employee another's payslip reference. A `revision > 1` appends `'-R' ‖ revision`. Uniqueness is enforced by `ux_payslip__org_reference`; a collision is a hard error, never a silent retry. |
 | `revision` | `smallint` | no | `1` | |
 | `supersedes_payslip_id` | `uuid` | yes | — | FK → `payslip(id)` `ON DELETE RESTRICT` |
 | `status` | `ess_payslip_status` | no | `'GENERATED'` | |
@@ -2839,8 +3314,9 @@ CONSTRAINT ux_payroll_run__one_live UNIQUE (payroll_cycle_id) WHERE status = 'SU
 | `attendance_record_id` | `uuid` | no | — | FK → `attendance_record(id)` `ON DELETE RESTRICT` — source traceability |
 | `salary_structure_id` | `uuid` | no | — | FK → `salary_structure(id)` `ON DELETE RESTRICT` — source traceability |
 | `salary_structure_sha256` | `bytea` | no | — | Copy of `salary_structure.structure_sha256` at generation |
-| `input_snapshot` | `jsonb` | no | — | **Canonical, redacted** record of every input that produced this payslip: attendance day counts, the ordered list of `payroll_input_item` ids with their kinds, the resolved component set, the tax projection id, the engine + ruleset versions. Money values inside are stored as minor-unit **strings**. |
-| `input_sha256` | `bytea` | no | — | SHA-256 over the canonical serialisation of `input_snapshot`. Recomputing it is the audit test "this payslip still matches its inputs". |
+| `input_snapshot` | `jsonb` | no | — | **Canonical and money-free** record of every input that produced this payslip: the attendance day counts (`eligible/present/paid_leave/holiday/week_off/absent/unpaid_leave/lop/payable`, which are day counts, not money), `lop_source`, the ordered list of `payroll_input_item` ids with their `kind` and `pay_component_id`, the ordered `salary_structure_component` ids, `salary_structure_sha256`, `employee_tax_projection.id`, `statutory_rate_set.id`, `statutory_pt_slab` ids, `engine_version`, `ruleset_sha256`, `payroll_run.id`. **It contains no amount, in any form.** The previous definition stored "money values … as minor-unit strings", which would have written the full earnings and deduction breakdown into an unencrypted `jsonb` column sitting in the same row as the encrypted totals — defeating §1.6 entirely for exactly the records it most needs to protect. Amounts are reconstructed for an audit by decrypting `payslip_line`, which is the point of keeping the line ids here. |
+| `input_sha256` | `bytea` | no | — | SHA-256 over `jsonb_canonical(input_snapshot)` (§17.1). Recomputing it is the audit test "this payslip still references the same inputs". |
+| `amount_sha256` | `bytea` | no | — | SHA-256 over the canonical serialisation of the **decrypted** amounts (`gross‖deductions‖net‖tds‖employer_pf` and every `payslip_line` amount in `display_order`, each as a minor-unit decimal string), computed in the API at generation. It is the audit test "this payslip's *figures* are unaltered" — the half that `input_sha256` deliberately cannot cover now that the snapshot holds no money. A verifier with a KMS grant recomputes it; a verifier without one can still prove the input lineage. |
 | `pdf_file_object_id` | `uuid` | yes | — | FK → `file_object(id)` `ON DELETE SET NULL` — generated at publication |
 | `generated_at` | `timestamptz` | no | `now()` | |
 | `revoked_at` | `timestamptz` | yes | — | |
@@ -2853,7 +3329,7 @@ CONSTRAINT ck_payslip__revision CHECK (revision >= 1),
 CONSTRAINT ck_payslip__supersede CHECK ((revision > 1) = (supersedes_payslip_id IS NOT NULL)),
 CONSTRAINT ck_payslip__days CHECK (payable_days >= 0 AND payable_days <= total_days AND lop_days >= 0),
 CONSTRAINT ck_payslip__period CHECK (period_end >= period_start AND pay_date >= period_end),
-CONSTRAINT ck_payslip__sha CHECK (octet_length(input_sha256) = 32 AND octet_length(salary_structure_sha256) = 32),
+CONSTRAINT ck_payslip__sha CHECK (octet_length(input_sha256) = 32 AND octet_length(amount_sha256) = 32 AND octet_length(salary_structure_sha256) = 32),
 CONSTRAINT ck_payslip__last4 CHECK (bank_account_last4 ~ '^[0-9]{4}$'),
 CONSTRAINT ck_payslip__revoked CHECK (num_nulls(revoked_at, revoked_reason) IN (0, 2)),
 CONSTRAINT ck_payslip__revoked_status CHECK ((status = 'REVOKED') = (revoked_at IS NOT NULL))
@@ -2864,13 +3340,45 @@ Indexes:
 - `ix_payslip__employee_fy (employee_id, fiscal_year_id) WHERE status = 'PUBLISHED'` — the YTD tiles and TDS aggregation
 - `ix_payslip__cycle_status (payroll_cycle_id, status)`
 - `ix_payslip__search (organization_id, period_label)` — the global search "Payslip" result kind
-- `ux_payslip__one_live_per_cycle_employee UNIQUE (payroll_cycle_id, employee_id) WHERE status IN ('GENERATED','PUBLISHED')`
+```sql
+CREATE UNIQUE INDEX ux_payslip__one_live_per_cycle_employee
+  ON ess.payslip (payroll_cycle_id, employee_id) WHERE status IN ('GENERATED','PUBLISHED');
+```
 
 **Immutability.** Trigger `trg_payslip_immutable` (BEFORE UPDATE) rejects any change to
 any column **except** `status`, `pdf_file_object_id`, `supersedes_payslip_id` (on the
 superseded row), `revoked_at`, `revoked_reason`, `updated_at`, `updated_by_user_id`.
 `DELETE` is rejected outright. Corrections create `revision = n+1` and set the old row's
 `status = 'SUPERSEDED'`.
+
+**Existence gate.** Trigger `trg_payslip_requires_calculating` (`BEFORE INSERT`, WORKFLOWS
+R-4) raises unless
+`(SELECT status FROM payroll_cycle WHERE id = NEW.payroll_cycle_id FOR SHARE) = 'CALCULATING'`,
+**or** the insert belongs to a `payroll_run` with `run_kind = 'CORRECTION'` whose
+`payroll_correction.status = 'CALCULATING'`. This is the database half of directive 6: a
+payslip row cannot come into existence outside the calculation window, even from a direct
+`INSERT` by a compromised application, because the trigger consults the cycle state rather
+than trusting the caller.
+
+### 10.7.1 Payslip state machine (`machine = 'payslip'`)
+
+The previous draft left `payslip.status` unguarded: §2.1 declares that
+`trg_guard_state_transition` re-checks `status` updates against `state_transition`, and
+there was no `payslip` machine for it to check against — so `UPDATE payslip SET status =
+'PUBLISHED'` was structurally permitted. The machine:
+
+| from | to | permission | guard |
+|---|---|---|---|
+| `NULL` | `GENERATED` | *(system)* | `payroll.cycle_calculating` (and the `BEFORE INSERT` trigger above) |
+| `GENERATED` | `PUBLISHED` | `payroll:publish` | `payroll.cycle_approved`, `payroll.distinct_approver`, `payslip.publication_row_created` |
+| `GENERATED` | `SUPERSEDED` | *(system)* | `payroll.run_discarded_or_corrected` |
+| `PUBLISHED` | `SUPERSEDED` | *(system)* | `payslip.superseding_revision_published` |
+| `PUBLISHED` | `REVOKED` | `payroll:publish` | `approval.note_required`, `payslip.publication_revoked` |
+
+Terminal: `SUPERSEDED`, `REVOKED`. There is **no** transition back to `GENERATED`.
+`GENERATED → PUBLISHED` and the `payslip_publication` insert are one transaction; the
+guard `payslip.publication_row_created` asserts the row exists before the status flips, so
+the two can never disagree about whether an employee can see the slip.
 
 **Visibility gate (the hard rule).** The employee-facing query is *always*:
 
@@ -2884,11 +3392,26 @@ WHERE p.employee_id = :me
 ORDER BY p.period_end DESC;
 ```
 
-No other path exists in the employee API. Before publication the Payslips screen shows
-its designed empty state ("No payslips yet — your first payslip appears once August
-payroll is published"), driven by
-`payroll_cycle.status` for the employee's earliest in-scope cycle. It never renders a
-draft, a provisional total, or a synthetic figure.
+No other path exists in the employee API. `payslip_line`, `payslip_fy_rollup` and the
+payslip PDF endpoint each re-apply the same join; none of them accepts a `payslip_id` and
+trusts it.
+
+Before publication the Payslips screen shows its designed empty state. **The employee is
+never shown `payroll_cycle.status`** — an employee holds no `payroll:cycle:read` and has
+no business knowing that this month's payroll is in `VALIDATION_FAILED`. The endpoint
+returns a coarse, whitelisted `payslipOutlook` derived from the employee's earliest
+in-scope cycle, and nothing else:
+
+| Derived value | Condition | `ui_copy` key |
+|---|---|---|
+| `NO_CYCLE_YET` | no `payroll_cycle_employee` row for this employee in any cycle | `empty.payslips.no_cycle` |
+| `IN_PROGRESS` | a cycle exists with `status` before `PUBLISHED` and not `CANCELLED` | `empty.payslips.in_progress` |
+| `NOT_IN_SCOPE` | the latest cycle has `disposition <> 'INCLUDED'` for this employee | `empty.payslips.not_in_scope` |
+| `NONE` | no cycle at all covers the employee's tenure | `empty.payslips.none` |
+
+The copy for each is a persisted `ui_copy` row (§4.7) parameterised only by the cycle's
+`label` — "August 2026 payroll is being processed", never "August 2026 payroll failed
+validation". It never renders a draft, a provisional total, or a synthetic figure.
 
 ### 10.8 `payslip_line` and `payslip_publication`
 

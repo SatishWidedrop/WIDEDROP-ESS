@@ -108,6 +108,70 @@ describe('recording', () => {
     expect(result.valid).toBe(false);
   });
 
+  it('numbers the chain contiguously, per organisation', async () => {
+    const other = await db.organization.create({
+      data: {
+        legalName: 'Another Company',
+        displayName: 'Another',
+        domain: `another-${Math.floor(Number(process.hrtime.bigint() % 1000000n))}.test`,
+        helpdeskEmail: 'helpdesk@another.test',
+      },
+    });
+
+    // Interleave writes between two organisations. Each chain must still be
+    // 1, 2, 3 — a shared sequence would leave gaps and make a real deletion
+    // indistinguishable from an unrelated tenant's write.
+    for (let i = 0; i < 3; i += 1) {
+      await recordAudit(db, { organizationId, action: 'UPDATE', entityType: 'employee' }, HMAC_KEY);
+      await recordAudit(
+        db,
+        { organizationId: other.id, action: 'UPDATE', entityType: 'employee' },
+        HMAC_KEY,
+      );
+    }
+
+    const ours = await db.auditEvent.findMany({
+      where: { organizationId },
+      orderBy: { sequence: 'asc' },
+      select: { sequence: true },
+    });
+    expect(ours.map((r) => r.sequence)).toEqual([1n, 2n, 3n]);
+
+    const theirs = await db.auditEvent.findMany({
+      where: { organizationId: other.id },
+      orderBy: { sequence: 'asc' },
+      select: { sequence: true },
+    });
+    expect(theirs.map((r) => r.sequence)).toEqual([1n, 2n, 3n]);
+
+    expect(await verifyChain(db, { organizationId }, HMAC_KEY)).toMatchObject({
+      valid: true,
+      gaps: [],
+    });
+  });
+
+  it('leaves no gap when a transaction rolls back', async () => {
+    await recordAudit(db, { organizationId, action: 'LOGIN', entityType: 'app_user' }, HMAC_KEY);
+
+    await expect(
+      db.$transaction(async (tx) => {
+        await recordAudit(tx, { organizationId, action: 'UPDATE', entityType: 'employee' }, HMAC_KEY);
+        throw new Error('the surrounding work failed');
+      }),
+    ).rejects.toThrow('the surrounding work failed');
+
+    await recordAudit(db, { organizationId, action: 'LOGOUT', entityType: 'app_user' }, HMAC_KEY);
+
+    const rows = await db.auditEvent.findMany({
+      where: { organizationId },
+      orderBy: { sequence: 'asc' },
+      select: { sequence: true },
+    });
+    // The abandoned write consumed no number, so a gap still means a deletion.
+    expect(rows.map((r) => r.sequence)).toEqual([1n, 2n]);
+    expect(await verifyChain(db, { organizationId }, HMAC_KEY)).toMatchObject({ valid: true });
+  });
+
   it('reports an empty chain as valid', async () => {
     expect(await verifyChain(db, { organizationId }, HMAC_KEY)).toEqual({
       valid: true,

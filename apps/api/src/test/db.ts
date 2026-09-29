@@ -64,6 +64,5 @@ export async function resetTestDb(db: PrismaClient = testDb()): Promise<void> {
   await db.$transaction([
     db.$executeRawUnsafe(`SET LOCAL session_replication_role = 'replica'`),
     db.$executeRawUnsafe(`TRUNCATE ${list} RESTART IDENTITY CASCADE`),
-    db.$executeRawUnsafe(`SELECT setval('ess.audit_event_sequence', 1, false)`),
   ]);
 }

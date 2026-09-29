@@ -474,8 +474,16 @@ CREATE TRIGGER trg_login_attempt_append_only
   BEFORE UPDATE OR DELETE ON ess.login_attempt
   FOR EACH ROW EXECUTE FUNCTION ess.forbid_write();
 
--- The audit chain's position. A gap in this sequence is itself evidence.
-CREATE SEQUENCE IF NOT EXISTS ess.audit_event_sequence AS bigint START 1;
+-- The audit chain's position is per organisation and contiguous, computed from
+-- the previous row under an advisory lock rather than from a database sequence:
+-- a sequence would leave a gap whenever a transaction rolled back or another
+-- organisation wrote a row, and a gap has to mean something. It is how the
+-- deletion of the tail of a chain is detected, which the hash links cannot
+-- catch on their own.
+--
+-- The unique constraint on (organization_id, sequence) is what makes the
+-- computation safe: if two writers ever raced past the lock, the second fails
+-- rather than forking the chain.
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- 7. Search and partial indexes
