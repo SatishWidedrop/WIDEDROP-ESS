@@ -432,3 +432,481 @@ curl -s https://api-ess.widedrop.com/api/v1/healthz   # {"status":"ok"}
 
 Capture `dig` output for the whole zone **before** the change into
 `infra/dns/widedrop.com.before.txt` and diff afterwards. The diff must contain only additions.
+
+---
+
+## 3. API hosting
+
+### 3.1 Primary: Render, region `singapore`
+
+Chosen over Fly.io as the primary because it gives, in one account and with no bespoke
+operations work: Docker deploys from an immutable image digest, **background workers as a
+first-class service type** (the outbox worker must be always-on, not a request-triggered
+function), **private services** on a project-private network (PgBouncer and ClamAV are never
+internet-reachable), managed PostgreSQL 16 with PITR on the same private network, zero-downtime
+rolling deploys with health-gated cut-over, one-click rollback to a previous image, and
+per-service environment groups.
+
+Region `singapore` is the closest Render region to India (~50–70 ms RTT from Bengaluru/Mumbai).
+It is the region pinned in `infra/` per `SECURITY.md` §14.7; changing it requires an ADR.
+Under the DPDP Act 2023 there is no general localisation mandate — transfer is permitted except
+to countries the Central Government restricts, and Singapore is not restricted — but the
+residency trade-off is stated explicitly in `docs/PROCESSORS.md` and §3.7 gives the Mumbai
+alternative if a customer contract later demands in-country storage.
+
+### 3.2 `infra/render/render.yaml`
+
+```yaml
+# Render Blueprint for the Widedrop ESS production environment.
+# Apply with: render blueprint launch  (or connect the repo in the Render dashboard).
+# Secrets are NEVER in this file: every `sync: false` value is typed into the
+# Render dashboard or the environment group once, and never read back by CI.
+
+previewsEnabled: false          # no Render preview environments; staging is explicit
+
+databases:
+  - name: ess-postgres
+    databaseName: widedrop_ess
+    user: ess_owner             # the OWNER role; the app never uses it (§4.4)
+    plan: standard              # 4 GB RAM / 4 vCPU / 100 GB SSD, daily backup + PITR
+    region: singapore
+    postgresMajorVersion: "16"
+    ipAllowList: []             # [] == private network only, NO public endpoint
+
+envVarGroups:
+  - name: ess-shared
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      - key: API_PUBLIC_URL
+        value: https://api-ess.widedrop.com
+      - key: WEB_PUBLIC_URL
+        value: https://ess.widedrop.com
+      - key: ALLOWED_ORIGINS
+        value: https://ess.widedrop.com
+      - key: JWT_ISSUER
+        value: https://api-ess.widedrop.com
+      - key: JWT_AUDIENCE
+        value: https://ess.widedrop.com
+      - key: COOKIE_DOMAIN
+        value: ""                       # MUST stay empty — __Host- forbids Domain (§1.4)
+      - key: COOKIE_SAMESITE
+        value: strict
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: RATE_LIMIT_STORE
+        value: postgres
+      - key: STORAGE_DRIVER
+        value: s3
+      - key: STORAGE_ENDPOINT
+        value: https://<r2-account-id>.r2.cloudflarestorage.com
+      - key: STORAGE_REGION
+        value: auto
+      - key: STORAGE_BUCKET
+        value: widedrop-ess-prod
+      - key: STORAGE_FORCE_PATH_STYLE
+        value: "true"
+      - key: SIGNED_URL_TTL_SECONDS
+        value: "120"
+      - key: MAIL_PROVIDER
+        value: ses
+      - key: MAIL_REGION
+        value: ap-south-1
+      - key: MAIL_FROM
+        value: no-reply@widedroptech.com
+      - key: HELPDESK_EMAIL_FALLBACK
+        value: helpdesk@widedroptech.com
+      - key: MAIL_CONFIGURATION_SET
+        value: ess-prod
+      - key: OUTBOUND_ALLOWLIST
+        value: api.pwnedpasswords.com,email.ap-south-1.amazonaws.com,<r2-account-id>.r2.cloudflarestorage.com
+      - key: HIBP_ENABLED
+        value: "true"
+      - key: CLAMAV_HOST
+        value: ess-clamav                      # Render private-service DNS name
+      - key: CLAMAV_PORT
+        value: "3310"
+      - key: TRUSTED_PROXY_CIDRS
+        value: 10.0.0.0/8                      # Render's edge; confirm in the dashboard
+      - key: ACCESS_TOKEN_TTL_SECONDS
+        value: "600"
+      - key: REFRESH_TOKEN_TTL_DAYS
+        value: "7"
+      - key: REFRESH_FAMILY_MAX_DAYS
+        value: "30"
+      - key: JWT_ACTIVE_KID
+        sync: false
+      - key: JWT_SIGNING_KEY_wd-ess-202609-a1b2
+        sync: false
+      - key: JWT_PUBLIC_KEY_wd-ess-202609-a1b2
+        sync: false
+      - key: MASTER_KEK_ACTIVE_VERSION
+        sync: false
+      - key: MASTER_KEK_V1
+        sync: false
+      - key: PASSWORD_PEPPER_V1
+        sync: false
+      - key: BLIND_INDEX_KEY_V1
+        sync: false
+      - key: AUDIT_CHAIN_KEY_V1
+        sync: false
+      - key: CSRF_KEY
+        sync: false
+      - key: LOG_HASH_KEY
+        sync: false
+      - key: RECOVERY_CODE_KEY
+        sync: false
+      - key: CURSOR_HMAC_KEY
+        sync: false
+      - key: MAIL_ACCESS_KEY_ID
+        sync: false
+      - key: MAIL_SECRET_ACCESS_KEY
+        sync: false
+      - key: STORAGE_ACCESS_KEY_ID
+        sync: false
+      - key: STORAGE_SECRET_ACCESS_KEY
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: METRICS_BEARER_TOKEN
+        sync: false
+      - key: LOG_SINK_TOKEN
+        sync: false
+
+services:
+  # ---------------------------------------------------------------- API ----
+  - type: web
+    name: ess-api
+    runtime: image                  # deploy an immutable digest built in CI
+    image:
+      url: ghcr.io/widedrop/ess-api:REPLACED_BY_CI
+      creds:
+        fromRegistryCreds:
+          name: ghcr-widedrop
+    plan: standard                  # 1 vCPU / 2 GB
+    region: singapore
+    numInstances: 2                 # two, so a rolling deploy is genuinely zero-downtime
+    healthCheckPath: /api/v1/healthz
+    autoDeploy: false               # CI deploys explicitly; no deploy-on-push
+    domains:
+      - api-ess.widedrop.com
+    envVars:
+      - fromGroup: ess-shared
+      - key: SERVICE_ROLE
+        value: api
+      - key: PORT
+        value: "4000"
+      - key: DATABASE_URL           # through PgBouncer, transaction pooling
+        value: postgresql://ess_app:__FROM_SECRET__@ess-pgbouncer:6432/widedrop_ess?pgbouncer=true&connection_limit=8&sslmode=disable&application_name=ess-api
+      - key: DIRECT_DATABASE_URL    # straight to Postgres, session scope
+        fromDatabase:
+          name: ess-postgres
+          property: connectionString
+      - key: APP_VERSION
+        fromService:
+          type: web
+          name: ess-api
+          property: commitSha
+
+  # -------------------------------------------------------------- WORKER ---
+  - type: worker
+    name: ess-worker
+    runtime: image
+    image:
+      url: ghcr.io/widedrop/ess-api:REPLACED_BY_CI   # THE SAME image as the API
+      creds:
+        fromRegistryCreds:
+          name: ghcr-widedrop
+    plan: starter                   # 0.5 vCPU / 512 MB
+    region: singapore
+    numInstances: 1                 # exactly one; leases make >1 safe but it is not needed
+    autoDeploy: false
+    envVars:
+      - fromGroup: ess-shared
+      - key: SERVICE_ROLE
+        value: worker
+      - key: WORKER_POLL_INTERVAL_MS
+        value: "15000"
+      - key: WORKER_CONCURRENCY
+        value: "4"
+      # The worker bypasses PgBouncer: pg_advisory_lock() is SESSION-scoped and
+      # does not survive transaction pooling (§4.3).
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ess-postgres
+          property: connectionString
+      - key: DIRECT_DATABASE_URL
+        fromDatabase:
+          name: ess-postgres
+          property: connectionString
+
+  # ------------------------------------------------------------ PGBOUNCER ---
+  - type: pserv                     # private service: no public URL, ever
+    name: ess-pgbouncer
+    runtime: image
+    image:
+      url: docker.io/edoburu/pgbouncer:1.23.1
+    plan: starter
+    region: singapore
+    numInstances: 1
+    envVars:
+      - key: DB_HOST
+        fromDatabase: { name: ess-postgres, property: host }
+      - key: DB_PORT
+        fromDatabase: { name: ess-postgres, property: port }
+      - key: DB_NAME
+        value: widedrop_ess
+      - key: POOL_MODE
+        value: transaction
+      - key: MAX_CLIENT_CONN
+        value: "400"
+      - key: DEFAULT_POOL_SIZE
+        value: "25"
+      - key: RESERVE_POOL_SIZE
+        value: "5"
+      - key: SERVER_TLS_SSLMODE
+        value: verify-full
+      - key: SERVER_TLS_CA_FILE
+        value: /etc/ssl/certs/render-postgres-ca.pem
+      - key: AUTH_TYPE
+        value: scram-sha-256
+      - key: IGNORE_STARTUP_PARAMETERS
+        value: extra_float_digits,options,search_path
+
+  # --------------------------------------------------------------- CLAMAV ---
+  - type: pserv
+    name: ess-clamav
+    runtime: image
+    image:
+      url: docker.io/clamav/clamav:stable
+    plan: standard                  # 2 GB — the signature database needs it
+    region: singapore
+    numInstances: 1
+    envVars:
+      - key: CLAMAV_NO_MILTERD
+        value: "true"
+      - key: FRESHCLAM_CHECKS
+        value: "4"
+```
+
+### 3.3 `apps/api/Dockerfile` — production
+
+```dockerfile
+# syntax=docker/dockerfile:1.7
+# ---------------------------------------------------------------------------
+# Stage 1 — deps: install the FULL dependency tree once, cached on lockfile.
+# --ignore-scripts per SECURITY.md §10.5; the few packages that need a
+# lifecycle script are rebuilt explicitly and reviewably below.
+# ---------------------------------------------------------------------------
+FROM node:22.11-bookworm-slim AS deps
+WORKDIR /repo
+ENV NPM_CONFIG_FUND=false NPM_CONFIG_AUDIT=false
+COPY package.json package-lock.json ./
+COPY packages/shared/package.json  packages/shared/
+COPY apps/api/package.json         apps/api/
+COPY apps/web/package.json         apps/web/
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --ignore-scripts --workspace @widedrop/api --workspace @widedrop/shared \
+           --include-workspace-root
+RUN npm rebuild @node-rs/argon2 sharp
+
+# ---------------------------------------------------------------------------
+# Stage 2 — build: compile shared + api, generate the Prisma client, then
+# prune dev dependencies so only runtime deps are copied forward.
+# ---------------------------------------------------------------------------
+FROM node:22.11-bookworm-slim AS build
+WORKDIR /repo
+ENV NODE_ENV=development
+COPY --from=deps /repo/node_modules ./node_modules
+COPY --from=deps /repo/apps/api/node_modules ./apps/api/node_modules
+COPY . .
+RUN npm run build -w @widedrop/shared \
+ && npm run db:generate -w @widedrop/api \
+ && npm run build -w @widedrop/api
+RUN npm prune --omit=dev --workspace @widedrop/api --workspace @widedrop/shared \
+               --include-workspace-root
+
+# ---------------------------------------------------------------------------
+# Stage 3 — runtime. bookworm-slim rather than distroless because the Prisma
+# query engine links OpenSSL 3 and because tini + a shell make the container
+# debuggable under incident conditions. No compilers, no npm, no source, no
+# dev dependencies, no .env, non-root, read-only root filesystem.
+# ---------------------------------------------------------------------------
+FROM node:22.11-bookworm-slim AS runtime
+ENV NODE_ENV=production \
+    NODE_OPTIONS="--max-old-space-size=1536 --disable-proto=delete" \
+    PORT=4000 \
+    SERVICE_ROLE=api
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tini ca-certificates openssl \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --system --gid 10001 ess \
+ && useradd  --system --uid 10001 --gid ess --home /app --shell /usr/sbin/nologin ess
+WORKDIR /app
+
+# Provider CA bundle, so DATABASE_URL can use sslmode=verify-full (SECURITY.md §6.1).
+COPY --chown=root:root infra/certs/render-postgres-ca.pem /etc/ssl/certs/render-postgres-ca.pem
+
+COPY --from=build --chown=root:root /repo/node_modules              ./node_modules
+COPY --from=build --chown=root:root /repo/packages/shared/dist      ./packages/shared/dist
+COPY --from=build --chown=root:root /repo/packages/shared/package.json ./packages/shared/package.json
+COPY --from=build --chown=root:root /repo/apps/api/dist             ./apps/api/dist
+COPY --from=build --chown=root:root /repo/apps/api/node_modules     ./apps/api/node_modules
+COPY --from=build --chown=root:root /repo/apps/api/package.json     ./apps/api/package.json
+COPY --from=build --chown=root:root /repo/apps/api/prisma           ./apps/api/prisma
+
+ARG GIT_SHA=unknown
+ARG BUILT_AT=unknown
+ENV APP_VERSION=${GIT_SHA} BUILT_AT=${BUILT_AT}
+LABEL org.opencontainers.image.source="https://github.com/widedrop/widedrop-ess" \
+      org.opencontainers.image.revision="${GIT_SHA}" \
+      org.opencontainers.image.licenses="UNLICENSED"
+
+USER 10001:10001
+EXPOSE 4000
+
+# Liveness only, touching no dependency (API.md §13.x) — a Postgres blip must
+# not restart-loop the API.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD ["node","-e","fetch('http://127.0.0.1:'+(process.env.PORT||4000)+'/api/v1/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+
+# tini is PID 1: it reaps zombies and forwards SIGTERM/SIGINT to node.
+ENTRYPOINT ["/usr/bin/tini","-g","--"]
+CMD ["node","apps/api/dist/entrypoint.js"]
+```
+
+`apps/api/dist/entrypoint.js` branches on `SERVICE_ROLE`, so one image serves both services:
+
+```
+SERVICE_ROLE=api     → import('./server.js')
+SERVICE_ROLE=worker  → import('./worker.js')
+anything else        → log the offending value, exit 1
+```
+
+**Signal handling contract** (implement in both `server.ts` and `worker.ts`):
+
+| Step | API | Worker |
+|---|---|---|
+| 1. `SIGTERM` received | set `readyz` to `503` immediately, so the platform drains it from the load balancer | stop claiming new jobs and new outbox rows |
+| 2. drain | stop accepting new connections; let in-flight requests finish, **cap 25 s** | finish the in-flight job/batch, **cap 25 s**; a job that will not finish releases its lease so another worker reclaims it |
+| 3. close | `await prisma.$disconnect()`, flush pino, flush Sentry (2 s), close the storage client | same |
+| 4. exit | `process.exit(0)` | `process.exit(0)` |
+| Hard stop | a 30 s watchdog calls `process.exit(1)` so a stuck handle cannot block the deploy | same |
+| Never | no `process.on('uncaughtException')` that swallows and continues — log, flush, exit non-zero | same |
+
+Render sends `SIGTERM` then `SIGKILL` after 30 s; the caps above sit inside that window.
+
+### 3.4 Resource sizing and concurrency
+
+| Service | Plan | Why that size | Scale trigger |
+|---|---|---|---|
+| `ess-api` | 2 × Standard (1 vCPU, 2 GB) | Node is single-threaded per instance; Argon2id at m=64 MiB, t=3 costs ~90 ms and ~64 MB *per concurrent login*, which is the real memory driver. 2 GB leaves headroom for 8 concurrent hashes plus the Prisma client. Two instances make rolling deploys zero-downtime and survive one instance dying. | p95 latency > 800 ms for 10 min, or CPU > 70 % for 15 min → 3 instances |
+| `ess-worker` | 1 × Starter (0.5 vCPU, 512 MB) | The workload is IO-bound (outbox sends, SQL scans). The one CPU-heavy job, payroll calculation, is bounded by `WORKER_CONCURRENCY=4` and runs monthly. | `outbox_pending` > 50 for 15 min, or a payroll run exceeding 10 min → Standard for the payroll window |
+| `ess-pgbouncer` | 1 × Starter | pgbouncer is a single-process event loop; 400 client connections fit comfortably in 512 MB | client-connection saturation |
+| `ess-clamav` | 1 × Standard (2 GB) | `clamd` memory-maps the full signature database (~1.3 GB resident after `freshclam`). Starter would OOM. | never; uploads are rare |
+| `ess-postgres` | Standard (4 GB, 100 GB) | ~120 employees × 8 years of payslips, audit chain and attendance is well under 20 GB; the plan is chosen for the **PITR window and backup retention**, not for size | disk > 70 % or cache-hit ratio < 0.98 |
+
+**Concurrency knobs (all explicit, none defaulted):** Fastify `bodyLimit: 1 MiB` (multipart
+routes are excepted and capped per `SECURITY.md` §5.3); `server.keepAliveTimeout = 65_000`
+and `headersTimeout = 66_000` (both above the platform's 60 s idle timeout, so the platform
+closes the connection, not Node — this avoids the classic 502-on-keepalive race);
+`requestTimeout = 30_000`; Prisma `connection_limit=8` per API instance (2 instances × 8 = 16
+client connections into PgBouncer's pool of 25 server connections, which is 25 of the
+Standard plan's 200 `max_connections` — deliberately far under); `@fastify/under-pressure`
+with `maxEventLoopDelay: 1000`, `maxHeapUsedBytes: 1.6 GB`, returning `503` with
+`Retry-After` when tripped, and **exempting `/healthz`** so a load spike does not look like
+a dead container.
+
+**Autoscaling.** Left **off** at this size, on purpose: the workload is a predictable
+business-hours curve with a monthly payroll spike, and a fixed two-instance floor is cheaper
+and more predictable than reactive scaling. The payroll spike is handled by the scheduled
+uplift in the §11.2 runbook. If autoscaling is later enabled, the constraints are: minimum 2,
+maximum 4 (4 × 8 = 32 pooled connections, still safe), target CPU 65 %, and the **worker
+stays at exactly 1 instance** unless the lease semantics in `ess_ops.background_job` have
+been load-tested with concurrent claimants.
+
+### 3.5 Scheduling lives in the worker, not in the platform
+
+All 21 named jobs (`DATA-MODEL.md` §17.5) plus `email-dispatch` are scheduled *inside* the
+worker process from a single table-driven timer, each claiming an `ess_ops.background_job`
+row by lease (`lease_owner`, `lease_expires_at`). Rationale: it is host-portable (moving to
+Fly.io changes nothing), it is testable in CI with no platform involved, a missed tick is
+visible as a `PENDING` row rather than vanishing, and the lease makes a duplicate run
+impossible even if a second worker is accidentally started. Platform cron (`type: cron` on
+Render) is used for exactly one thing — the quarterly restore drill in §11.5 — because that
+one must run *outside* the application.
+
+### 3.6 Deploy mechanics on Render
+
+1. CI builds and pushes `ghcr.io/widedrop/ess-api:<sha>` and resolves it to a digest.
+2. CI runs migrations (§4.6) against `DIRECT_DATABASE_URL` as `ess_migrator`.
+3. CI calls `POST https://api.render.com/v1/services/<id>/deploys` with
+   `{"imageUrl":"ghcr.io/widedrop/ess-api@sha256:<digest>"}` for `ess-api`, then for
+   `ess-worker`, and polls until both report `live`.
+4. Render starts new instances, waits for `/api/v1/healthz` to pass, shifts traffic, then
+   `SIGTERM`s the old ones. `autoDeploy: false` guarantees no deploy ever happens from a
+   push alone.
+5. The worker is deployed **after** the API, so a schema-dependent job never runs against an
+   older API's expectations.
+
+### 3.7 Stated alternative: Fly.io
+
+Use if Render is unavailable, if the organisation later requires in-country hosting (Fly has
+`bom`, Mumbai), or if egress costs change the calculus.
+
+```toml
+# infra/fly/fly.toml
+app            = "widedrop-ess-api"
+primary_region = "bom"
+kill_signal    = "SIGTERM"
+kill_timeout   = "30s"
+
+[build]
+  image = "ghcr.io/widedrop/ess-api:REPLACED_BY_CI"
+
+[deploy]
+  strategy = "rolling"
+  # Migrations run in CI, not here: a release_command failure is harder to
+  # observe and cannot be gated behind an environment approval.
+
+[env]
+  NODE_ENV     = "production"
+  SERVICE_ROLE = "api"
+  PORT         = "4000"
+
+[http_service]
+  internal_port        = 4000
+  force_https          = true
+  auto_stop_machines   = false     # never scale to zero: cold starts break refresh
+  auto_start_machines  = true
+  min_machines_running = 2
+  [http_service.concurrency]
+    type       = "requests"
+    soft_limit = 120
+    hard_limit = 200
+
+[[http_service.checks]]
+  grace_period = "20s"
+  interval     = "15s"
+  method       = "GET"
+  path         = "/api/v1/healthz"
+  timeout      = "5s"
+
+[[vm]]
+  size       = "shared-cpu-2x"
+  memory     = "2gb"
+  processes  = ["app"]
+
+[processes]
+  app    = "node apps/api/dist/entrypoint.js"
+  worker = "node apps/api/dist/entrypoint.js"   # with SERVICE_ROLE=worker in its secrets
+```
+
+Differences to account for: Fly has no managed Postgres of Render's maturity, so the database
+moves to **Neon** or **Crunchy Bridge** in `ap-south-1` (both expose a built-in transaction
+pooler, which then **replaces the PgBouncer private service** — delete it and point
+`DATABASE_URL` at the provider's pooled endpoint, keeping `DIRECT_DATABASE_URL` on the direct
+endpoint); private services become Fly apps with `flycast` internal addresses; secrets move to
+`fly secrets set`; and `fly.io` rollback is `fly releases` + `fly deploy --image <previous digest>`.
