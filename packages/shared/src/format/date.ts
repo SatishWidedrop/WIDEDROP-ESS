@@ -90,11 +90,21 @@ const DISPLAY_WITH_TIME = new Intl.DateTimeFormat('en-IN', {
   timeZone: 'Asia/Kolkata',
 });
 
+/**
+ * Current ICU renders September as `Sept` in en-IN, where every other month
+ * abbreviates to three letters. The prototype uses three letters throughout, and
+ * a column of dates only lines up if they are all the same width, so the one
+ * four-letter abbreviation is trimmed back.
+ */
+function threeLetterMonths(formatted: string): string {
+  return formatted.replace(/\bSept\b/, 'Sep');
+}
+
 /** `29 Sep 2026` — the prototype's date format. */
 export function formatDate(value: IsoDate | Date | null | undefined): string {
   if (value == null) return '—';
   const date = typeof value === 'string' ? parseIsoDate(value) : value;
-  return DISPLAY.format(date);
+  return threeLetterMonths(DISPLAY.format(date));
 }
 
 /** `29 Sep 2026, 18:22` in IST — for audit trails and timestamps. */
@@ -102,7 +112,7 @@ export function formatDateTime(value: Date | string | null | undefined): string 
   if (value == null) return '—';
   const date = typeof value === 'string' ? new Date(value) : value;
   if (Number.isNaN(date.getTime())) return '—';
-  return DISPLAY_WITH_TIME.format(date);
+  return threeLetterMonths(DISPLAY_WITH_TIME.format(date));
 }
 
 /** `20 – 24 Oct 2026`, or a single date when both ends match. */
