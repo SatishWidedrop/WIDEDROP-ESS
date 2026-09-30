@@ -14,6 +14,7 @@ import { requirePrincipal } from '../../plugins/authenticate.js';
 import { recordAudit } from '../../services/audit.js';
 import { assertPermission } from '../../services/auth/authorization.js';
 import { generatePayroll } from '../../services/payroll/generation.js';
+import { renderPendingPayslips } from '../../services/payroll/render.js';
 import {
   availableEvents,
   eligibleCount,
@@ -547,7 +548,7 @@ export async function payrollRoutes(app: App): Promise<void> {
       const principal = requirePrincipal(request);
       assertPermission(principal, 'payroll-cycle:generate', 'ORG');
 
-      return db.$transaction(
+      const calculated = await db.$transaction(
         async (tx) => {
           await transitionCycle(
             tx,
@@ -631,6 +632,72 @@ export async function payrollRoutes(app: App): Promise<void> {
         },
         { timeout: 300_000 },
       );
+
+      // Documents, after the calculation has committed and outside its
+      // transaction: rendering writes to object storage, which cannot be rolled
+      // back, so it must not be holding a database transaction open while it
+      // does. The publish guard requires every payslip to have one, and doing
+      // it here means the ordinary path needs nobody to remember a second
+      // step.
+      //
+      // A failure is reported rather than thrown. The calculation is committed
+      // and correct; what failed is a file, the worker's sweep will try again,
+      // and losing the run because a render failed would be the wrong trade.
+      const documents = await renderPendingPayslips(db, env, {
+        organizationId: principal.organizationId,
+        cycleId: request.params.id,
+      });
+
+      if (documents.failed.length > 0) {
+        app.log.error(
+          { cycleId: request.params.id, failed: documents.failed },
+          'some payslip documents could not be rendered',
+        );
+      }
+
+      return {
+        ...calculated,
+        documents: {
+          rendered: documents.rendered,
+          failed: documents.failed.length,
+        },
+      };
+    },
+  );
+
+  /* ---------------------------------------------------------------- */
+  /* POST /payroll/cycles/:id/render                                   */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * Render the documents for any payslip in this cycle that has none.
+   *
+   * Calculating already does this. The endpoint exists for the case where it
+   * partly failed — a storage outage during a run of four hundred — so Accounts
+   * can retry from the screen that told them the publish will not go, rather
+   * than waiting for the sweep or asking somebody to run something.
+   *
+   * Idempotent: a payslip that already has a document is not touched.
+   */
+  app.post<{ Params: { id: string } }>(
+    '/api/v1/payroll/cycles/:id/render',
+    { onRequest: app.authenticate(), config: { rateLimitName: 'payroll:mutate' } },
+    async (request) => {
+      const principal = requirePrincipal(request);
+      assertPermission(principal, 'payroll-cycle:generate', 'ORG');
+
+      const cycle = await db.payrollCycle.findFirst({
+        where: { id: request.params.id, organizationId: principal.organizationId },
+        select: { id: true },
+      });
+      if (!cycle) throw new AppError(404, ERROR_CODES.NOT_FOUND, 'That cycle could not be found.');
+
+      const summary = await renderPendingPayslips(db, env, {
+        organizationId: principal.organizationId,
+        cycleId: cycle.id,
+      });
+
+      return { rendered: summary.rendered, failed: summary.failed.length };
     },
   );
 

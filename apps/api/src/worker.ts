@@ -3,6 +3,7 @@ import { createLogger } from './lib/logger.js';
 import { createPrismaClient } from './lib/prisma.js';
 import { markOverdueAcknowledgements } from './services/policies/service.js';
 import { startOutboxWorker } from './services/email/worker.js';
+import { renderPendingPayslips } from './services/payroll/render.js';
 
 /**
  * The background worker.
@@ -26,6 +27,7 @@ async function main(): Promise<void> {
 
   const outbox = startOutboxWorker(db, env, logger);
   const sweeps = startPeriodicSweeps(db, logger, env.WORKER_POLL_INTERVAL_MS);
+  const renders = startRenderSweep(db, env, logger, env.WORKER_POLL_INTERVAL_MS);
 
   let shuttingDown = false;
   const shutdown = async (signal: NodeJS.Signals) => {
@@ -42,7 +44,7 @@ async function main(): Promise<void> {
     try {
       // Finishing the message in flight rather than abandoning it: a message
       // left in SENDING would wait for the stall reclaim to notice.
-      await Promise.all([outbox.stop(), sweeps.stop()]);
+      await Promise.all([outbox.stop(), sweeps.stop(), renders.stop()]);
       await db.$disconnect();
       clearTimeout(force);
       logger.info('worker shutdown complete');
@@ -59,6 +61,77 @@ async function main(): Promise<void> {
     logger.fatal({ err: reason }, 'unhandled rejection in worker');
     void shutdown('SIGTERM');
   });
+}
+
+/**
+ * Payslip documents that were not rendered.
+ *
+ * Calculating a cycle renders them, so this normally finds nothing. It exists
+ * for the run where storage was unavailable for a minute: the publish guard
+ * refuses a cycle whose payslips have no document, and without this somebody
+ * has to notice and retry by hand.
+ *
+ * Kept separate from the hourly sweeps because the cadence is different — this
+ * is unblocking a person who is waiting to publish, not maintaining a status
+ * measured in days.
+ */
+function startRenderSweep(
+  db: ReturnType<typeof createPrismaClient>,
+  env: ReturnType<typeof loadEnv>,
+  logger: ReturnType<typeof createLogger>,
+  intervalMs: number,
+): { stop: () => Promise<void> } {
+  let running = true;
+
+  const loop = async (): Promise<void> => {
+    while (running) {
+      try {
+        // Cycles with at least one payslip missing its document. Grouped so
+        // one query finds the work rather than one per cycle.
+        const pending = await db.payslip.groupBy({
+          by: ['organizationId', 'payrollCycleId'],
+          where: { pdfFileObjectId: null, status: { in: ['GENERATED', 'PUBLISHED'] } },
+          _count: { _all: true },
+        });
+
+        for (const group of pending) {
+          if (!running) break;
+          const summary = await renderPendingPayslips(db, env, {
+            organizationId: group.organizationId,
+            cycleId: group.payrollCycleId,
+          });
+          if (summary.rendered > 0 || summary.failed.length > 0) {
+            logger.info(
+              {
+                cycleId: group.payrollCycleId,
+                rendered: summary.rendered,
+                failed: summary.failed.length,
+              },
+              'swept payslip documents',
+            );
+          }
+          // A cycle whose renders keep failing must not be retried in a tight
+          // loop for the rest of the hour; the next pass will reach it.
+          if (summary.failed.length > 0) break;
+        }
+      } catch (error) {
+        logger.error({ err: error }, 'payslip render sweep failed');
+      }
+
+      for (let waited = 0; waited < intervalMs && running; waited += 1_000) {
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+      }
+    }
+  };
+
+  const current = loop();
+
+  return {
+    async stop() {
+      running = false;
+      await current;
+    },
+  };
 }
 
 /**

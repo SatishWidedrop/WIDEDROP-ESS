@@ -105,10 +105,29 @@ reason. In order of how often it is each one:
 
 | Message                                         | What it means                                                                 |
 | ----------------------------------------------- | ----------------------------------------------------------------------------- |
-| `N payslips have no document yet`               | Rendering has not finished. Wait; the publish is safe to retry.               |
+| `N payslips have no document yet`               | Rendering has not finished, or partly failed. See below.                      |
 | `attendance for this period is not approved`    | A manager has not decided. The cycle screen lists who.                        |
 | `N employees were excluded`                     | Validation found blocking problems. The findings name each person and remedy. |
 | `a cycle that is published cannot be published` | Somebody already did it. Reload before acting.                                |
+
+**Payslips with no document.** Calculating a cycle renders them, and the
+worker re-renders anything it missed on its next pass — so this usually clears
+itself within a poll interval. If it does not, the render failed rather than
+lagged: look for `payslip render sweep failed` or
+`some payslip documents could not be rendered` in the logs. It is almost always
+object storage, so check `STORAGE_*` and the bucket's reachability rather than
+anything in payroll. `POST /api/v1/payroll/cycles/:id/render` retries on
+demand, and is idempotent — a payslip that already has a document is untouched.
+
+```sql
+SELECT c.label, count(*) AS missing
+  FROM ess.payslip p JOIN ess.payroll_cycle c ON c.id = p.payroll_cycle_id
+ WHERE p.pdf_file_object_id IS NULL AND p.status IN ('GENERATED','PUBLISHED')
+ GROUP BY c.label;
+```
+
+Never set `pdf_file_object_id` by hand to get past the guard. It exists so an
+employee is not told their payslip is ready and then offered nothing.
 
 A cycle stuck in `VALIDATING` or `CALCULATING` means a run died mid-flight.
 Both transitions are transactional, so nothing is half-written: move the cycle
@@ -152,7 +171,11 @@ is always findable.
 
 1. **A payslip figure** → every line carries its derivation in
    `calculation_note`, and the run that produced it carries an `input_digest`.
-   The same inputs reproduce the same output.
+   The same inputs reproduce the same output — and so does the document: the
+   PDF is a function of the stored rows and nothing else, so re-rendering a
+   disputed payslip and comparing the bytes tells you whether the figures
+   changed or only somebody's memory of them did. The derivations are printed
+   on the payslip itself, so the answer is usually in the employee's own copy.
 2. **A leave balance** → `ess.leave_balance_ledger` has one row per movement,
    each naming its source. The balance is the sum; `available_days` is a
    generated column, so it cannot disagree with its parts.

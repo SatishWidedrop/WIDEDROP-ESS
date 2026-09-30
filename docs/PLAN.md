@@ -32,7 +32,7 @@ summarised.
 
 ## 2. Milestones
 
-Ten milestones, in dependency order. Each one was merged working: the gate
+Twelve milestones, in dependency order. Each one was merged working: the gate
 (typecheck, lint, format, tests, build, audit) passed before the next started.
 
 ### M1 — Foundation
@@ -139,7 +139,28 @@ see. They are worth listing, because each one is a category:
    the entire API with the index page. The build now asserts the bundle contains
    the origin its own `connect-src` permits.
 
-### M11 — Uploads
+### M11 — Payslip documents
+
+The pipeline refuses to publish a cycle whose payslips have no document — a
+payslip an employee can see in a list and cannot open reads as a broken portal
+— and nothing rendered one. The end-to-end test fabricated `FileObject` rows to
+get past it, which meant the one step between "payroll is calculated" and "an
+employee can download their payslip" was the one step never exercised. In
+production no cycle could have been published at all.
+
+The renderer is written against the PDF format rather than a document library,
+for the reason the rest of the system is the way it is: a payslip has to be
+reproducible. Every payslip carries a `sourceDigest` claiming the same inputs
+produce the same output, and a library that stamps a creation date — or that
+lays text out a hair differently in its next minor version — quietly makes that
+untrue. Here the bytes are a function of the data and nothing else, which the
+tests assert directly.
+
+It runs after calculation and again in the worker's sweep, so the ordinary path
+needs nobody to remember a second step and a run whose storage failed halfway
+heals itself. The end-to-end test now uses the real renderer.
+
+### M12 — Uploads
 
 The one place bytes somebody else chose reach the system. The accept list was
 described in a constant and enforced nowhere; `file-type` was a dependency
@@ -156,10 +177,10 @@ check exists for.
 | ----------------- | ------------------------------- |
 | Database models   | 100, across 7 migrations        |
 | API route modules | 21                              |
-| Domain services   | 25                              |
+| Domain services   | 26                              |
 | Screens           | 24                              |
-| Test files        | 29                              |
-| Tests             | 489 (370 API + 119 shared)      |
+| Test files        | 32                              |
+| Tests             | 518 (399 API + 119 shared)      |
 | Permissions       | 58, across 4 roles and 5 scopes |
 
 The gate that has to pass before anything merges: `npm run typecheck`,
@@ -184,9 +205,6 @@ anybody can act on.
   `POLICY_PDF`, `TICKET_ATTACHMENT`, `EMPLOYEE_DOCUMENT`, `BENEFIT_DOCUMENT`,
   `PAYROLL_INPUT_UPLOAD`). Each is a route that calls `acceptUpload` and links
   the resulting `FileObject`.
-- **Payslip PDF rendering.** The pipeline refuses to publish a cycle whose
-  payslips have no document, which is correct behaviour and means publication
-  currently waits on a renderer that is not there.
 - **`DEPARTMENT` scope.** Defined and resolved, held by no role. Granting it is
   a line in `roles.ts`.
 

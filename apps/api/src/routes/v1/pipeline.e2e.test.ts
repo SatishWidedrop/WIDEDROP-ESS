@@ -8,6 +8,7 @@ import { runWithContext } from '../../lib/request-context.js';
 import { generatePayroll } from '../../services/payroll/generation.js';
 import { transitionCycle } from '../../services/payroll/pipeline.js';
 import { runValidation } from '../../services/payroll/validation.js';
+import { renderPendingPayslips } from '../../services/payroll/render.js';
 import {
   deriveAttendanceRecords,
   openAttendancePeriod,
@@ -336,31 +337,15 @@ async function publish(): Promise<void> {
 
   // The pipeline refuses to publish a payslip with no document: an employee
   // told their payslip is ready and then offered nothing to download is worse
-  // than one told to wait. Rendering happens outside this test, so the file
-  // rows stand in for it.
-  const generated = await db.payslip.findMany({
-    where: { payrollCycleId: cycleId, status: 'GENERATED' },
-    select: { id: true, reference: true },
+  // than one told to wait. The real renderer satisfies it — this used to
+  // fabricate FileObject rows, which meant the one step between "calculated"
+  // and "the employee can download it" was the one step never exercised.
+  const documents = await renderPendingPayslips(db, testEnv(), {
+    organizationId: fixture.organizationId,
+    cycleId,
   });
-  for (const payslip of generated) {
-    const file = await db.fileObject.create({
-      data: {
-        organizationId: fixture.organizationId,
-        purpose: 'PAYSLIP_PDF',
-        storageKey: `payslips/${payslip.id}.pdf`,
-        displayFilename: `${payslip.reference}.pdf`,
-        contentType: 'application/pdf',
-        sizeBytes: 48_128,
-        sha256: 'f'.repeat(64),
-        scanStatus: 'SKIPPED',
-      },
-      select: { id: true },
-    });
-    await db.payslip.update({
-      where: { id: payslip.id },
-      data: { pdfFileObjectId: file.id },
-    });
-  }
+  expect(documents.failed).toEqual([]);
+  expect(documents.rendered).toBeGreaterThan(0);
 
   await as(accounts, () =>
     db.$transaction(async (tx) => {
