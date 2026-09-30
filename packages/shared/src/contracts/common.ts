@@ -195,6 +195,15 @@ export const errorEnvelope = z.object({
     code: z.string(),
     message: z.string(),
     details: z.array(errorDetail).optional(),
+    /**
+     * How long to wait, in seconds, on a 429 or a 503.
+     *
+     * Also sent as the `Retry-After` header, which is what a proxy reads. This
+     * is for the page: "try again later" with no number is a worse thing to
+     * tell somebody who has just been locked out than "try again in fifteen
+     * minutes", and the header is awkward to reach from a fetch response.
+     */
+    retryAfterSeconds: z.number().int().nonnegative().optional(),
     requestId: z.string(),
   }),
 });

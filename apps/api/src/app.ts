@@ -100,7 +100,17 @@ export async function buildApp({ env, db, logger }: AppDependencies) {
     },
   });
 
-  await app.register(rateLimitPlugin, { redisUrl: env.REDIS_URL });
+  await app.register(rateLimitPlugin, {
+    redisUrl: env.REDIS_URL,
+    // The fallback when there is no Redis: the database is already shared and
+    // already on the path of every request, which beats a per-instance counter
+    // that makes a sign-in lockout hold on one instance out of however many.
+    ...(env.RATE_LIMIT_ALLOW_IN_PROCESS ? {} : { db }),
+    // So the store holds a hash of an email rather than the email. Reused
+    // rather than given its own variable — it is a keying secret here, not a
+    // signature, and one fewer secret is one fewer to rotate and lose.
+    keyingSecret: env.AUDIT_HMAC_KEY,
+  });
 
   await app.register(csrfPlugin, {
     secure: env.COOKIE_SECURE,

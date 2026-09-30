@@ -129,9 +129,28 @@ const baseSchema = z.object({
 
   /* ---------------- Rate limiting ---------------- */
 
-  /** Shared counter store. Falls back to an in-process store when unset, which
-   *  is correct only for a single instance — production must set this. */
+  /**
+   * Redis, for the rate limiter's counters.
+   *
+   * Optional. Without it the limiter uses the database, which is shared for
+   * the same reason Redis is and costs one upsert per limited request. Set
+   * this when that cost starts to matter; nothing else changes.
+   */
   REDIS_URL: z.string().url().optional(),
+
+  /**
+   * Allow the in-process rate limiter in production.
+   *
+   * There is exactly one situation where this is not a mistake: a single
+   * instance that will never be scaled out. With two, each gets its own
+   * counters, and an account lockout holds only on whichever one the next
+   * attempt reaches — which is not a lockout, and is the control that stops
+   * credential stuffing.
+   *
+   * It has to be said out loud because the failure is silent: nothing looks
+   * wrong, the limiter simply stops limiting at the rate it claims.
+   */
+  RATE_LIMIT_ALLOW_IN_PROCESS: boolish.default('false'),
 
   /* ---------------- Object storage ---------------- */
 
@@ -191,10 +210,14 @@ const schema = baseSchema.superRefine((env, ctx) => {
   if (env.COOKIE_SAMESITE === 'none' && !env.COOKIE_SECURE) {
     fail('COOKIE_SAMESITE', 'SameSite=None requires Secure cookies');
   }
-  if (!env.REDIS_URL) {
+  // The limiter needs a store every instance can see. Redis is one; the
+  // database is the other, and it is always present — so this only fails when
+  // somebody has explicitly asked for the in-process store and then thought
+  // better of naming the instance count.
+  if (env.RATE_LIMIT_ALLOW_IN_PROCESS && env.REDIS_URL) {
     fail(
-      'REDIS_URL',
-      'is required in production — an in-process rate-limit store does not hold across instances',
+      'RATE_LIMIT_ALLOW_IN_PROCESS',
+      'is set alongside REDIS_URL — one of them is a mistake, and the shared store is the one worth keeping',
     );
   }
   if (env.STORAGE_DRIVER === 'filesystem') {

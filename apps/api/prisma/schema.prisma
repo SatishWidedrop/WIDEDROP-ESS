@@ -3608,6 +3608,33 @@ model JobRun {
   @@schema("ess_ops")
 }
 
+/// A rate-limit window, shared by every instance of the API.
+///
+/// An in-process counter gives each instance its own budget, so a sign-in
+/// lockout holds only on whichever instance the next attempt happens to reach
+/// — which is not a lockout. Redis is the usual answer and remains supported;
+/// this exists because the target deployment (Netlify Functions in front of
+/// Supabase) has no Redis, and a control this load-bearing must not quietly
+/// become per-instance for want of one.
+///
+/// The counter is maintained by a single `INSERT ... ON CONFLICT DO UPDATE`
+/// that also handles window expiry, so two requests arriving together cannot
+/// read the same count and both write back the same increment.
+///
+/// Rows are disposable: losing the table loses nothing but the current
+/// windows. `expires_at` is swept by the worker.
+model RateLimitCounter {
+  /// Opaque and already route-scoped. Carries a hashed identifier, never an
+  /// email address — see `rateLimitKey` in plugins/rate-limit.ts.
+  key       String   @id
+  count     Int
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+
+  @@index([expiresAt], map: "ix_rate_limit_counter__expires")
+  @@map("rate_limit_counter")
+  @@schema("ess_ops")
+}
+
 /// The declared state machines, seeded as reference data. The service layer
 /// checks a transition against this table before every state change, so an
 /// undeclared transition cannot happen even if application code asks for it.

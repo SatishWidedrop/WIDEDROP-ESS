@@ -1,7 +1,10 @@
+import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import rateLimit from '@fastify/rate-limit';
 import { AppError, ERROR_CODES } from '../lib/errors.js';
+import type { Database } from '../lib/prisma.js';
+import { postgresRateLimitStore } from './rate-limit-store.js';
 
 /**
  * Rate limiting.
@@ -67,9 +70,29 @@ declare module 'fastify' {
   }
 }
 
+export interface RateLimitOptions {
+  /** Preferred where it exists: fastest, and purpose-built for this. */
+  redisUrl?: string | undefined;
+  /**
+   * The fallback shared store. Slower than Redis and correct, which is the
+   * order of priorities for a control that stops credential stuffing.
+   */
+  db?: Database | undefined;
+  /** Mixed into the hash of a keyed identifier so the store never holds one. */
+  keyingSecret?: string | undefined;
+}
+
 export const rateLimitPlugin = fp(
-  async (app: FastifyInstance, options: { redisUrl?: string | undefined }) => {
+  async (app: FastifyInstance, options: RateLimitOptions) => {
+    // Redis, then Postgres, then in-process — in that order, because the first
+    // two are shared across instances and the third is not.
+    const sharedStore =
+      !options.redisUrl && options.db ? { store: postgresRateLimitStore(options.db) } : {};
+
+    keyingSecret = options.keyingSecret;
+
     await app.register(rateLimit, {
+      ...sharedStore,
       global: true,
       // Run after the body is parsed.
       //
@@ -112,7 +135,11 @@ export const rateLimitPlugin = fp(
       },
     });
 
-    if (!options.redisUrl) {
+    if (options.redisUrl) {
+      app.log.info({ store: 'redis' }, 'rate limiting is using a shared store');
+    } else if (options.db) {
+      app.log.info({ store: 'postgres' }, 'rate limiting is using a shared store');
+    } else {
       app.log.warn(
         'rate limiting is using an in-process store: correct for a single instance only',
       );
@@ -144,18 +171,36 @@ function rateLimitKey(request: FastifyRequest): string {
   if (field && request.body && typeof request.body === 'object') {
     const value = (request.body as Record<string, unknown>)[field];
     if (typeof value === 'string' && value.length > 0 && value.length < 256) {
-      // Hashing keeps the email out of the rate-limit store.
+      // Hashing keeps the email out of the store.
       return `f:${route}:${hashKey(value.toLowerCase())}`;
     }
   }
   return `i:${ip}:${route}`;
 }
 
+/** Set at registration; mixed into the hash below. */
+let keyingSecret: string | undefined;
+
+/**
+ * A stable, non-reversible stand-in for an identifier being rate limited.
+ *
+ * Two properties matter. It must not be reversible, because the value is
+ * usually an email address and it now lands in a database row rather than in a
+ * process that forgets it — a plain digest of a lowercase email is a dictionary
+ * lookup away from the address, so a server-side secret is mixed in.
+ *
+ * And it must not collide, because a collision means two people sharing one
+ * sign-in budget: the first could lock out the second by failing to sign in.
+ * The 32-bit FNV hash this replaced had roughly even odds of a collision
+ * somewhere in a directory of 77,000 addresses, and worse odds than that of
+ * one *somewhere* in a large organisation. 128 bits of SHA-256 makes it not a
+ * consideration.
+ */
 function hashKey(value: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < value.length; i += 1) {
-    hash ^= value.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(36);
+  return createHash('sha256')
+    .update(keyingSecret ?? '')
+    .update('\u0000')
+    .update(value)
+    .digest('base64url')
+    .slice(0, 22);
 }

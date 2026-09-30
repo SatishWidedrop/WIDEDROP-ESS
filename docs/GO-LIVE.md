@@ -47,25 +47,30 @@ half-calculated payroll run is worse than none.
 
 ## 2. The three decisions still open
 
-### 2.1 Rate limiting has no home
+### 2.1 Rate limiting — resolved, Postgres-backed
 
-`config/env.ts` refuses to start in production without `REDIS_URL`, and the
-reason is not ceremony: with an in-process counter, ten Lambda instances mean
-ten separate budgets, and an account lockout holds only on whichever instance
-the next attempt happens to reach. That is not a lockout. Brute-force
-protection on sign-in was one of the stated requirements.
+~~Blocked.~~ Built. With an in-process counter, ten Lambda instances mean ten
+separate budgets and an account lockout holds only on whichever instance the
+next attempt reaches — which is not a lockout, and brute-force protection on
+sign-in was a stated requirement.
 
-Neither Netlify nor Supabase provides Redis. Three ways out:
+Neither Netlify nor Supabase provides Redis, so the limiter now falls back to a
+store every instance can already see: `ess_ops.rate_limit_counter`, maintained
+by a single `INSERT ... ON CONFLICT DO UPDATE` that also handles window expiry,
+so two requests arriving together cannot read the same count and write back the
+same increment. A test builds two app instances sharing nothing but the
+database and spends one sign-in budget across both.
 
-1. **A Postgres-backed limiter.** One small table, one upsert per limited
-   request. Correct, shares the database you already have, costs a write.
-   Roughly a day including tests. _Recommended._
-2. **Upstash Redis.** Serverless Redis with a free tier, works over HTTP so it
-   suits Lambda. Correct and fast, but it is the third provider you were trying
-   to avoid.
-3. **Netlify's edge rate limiting.** Coarser — per-IP at the edge, with no
-   knowledge of which email address is being attempted, so it cannot do the
-   per-account lockout. Useful as a layer, not a replacement.
+It costs one upsert per limited request — a real cost, and the reason it is the
+fallback rather than the default. Set `REDIS_URL` when that starts to matter
+and nothing else changes. `RATE_LIMIT_ALLOW_IN_PROCESS=true` exists for the one
+case where the in-process counter is not a mistake, a single instance that will
+never be scaled out, and has to be said out loud because otherwise the failure
+is silent.
+
+Netlify's edge rate limiting is still worth adding in front: it stops a flood
+before it costs an invocation. It cannot replace this, because it sees an IP
+and not the email address being attempted.
 
 ### 2.2 Supabase free tier is not where payroll records should live
 
@@ -163,9 +168,8 @@ owed — but only the worker actually sends it, and an unsent outbox is silent.
 
 ### Step 3 — Rate limiting
 
-Decide §2.1 and implement it. This blocks production, because the environment
-validator will not start without a shared store and the reason it insists is
-sound.
+Nothing to do; see §2.1. Optionally put Netlify's edge rate limiting in front,
+which stops a flood before it costs an invocation.
 
 ### Step 4 — The API on Netlify Functions
 
@@ -259,7 +263,7 @@ A rehearsal, on real headcount, in this order:
 | Netlify          | Free — 125k function invocations, 100 GB bandwidth |
 | Supabase Pro     | ~$25/month — the only thing I would insist on      |
 | Resend           | Free at this volume                                |
-| Rate-limit store | Free if Postgres-backed; Upstash has a free tier   |
+| Rate-limit store | Free — the database you already have               |
 | **Total**        | **~$25/month**                                     |
 
 ---
@@ -274,5 +278,6 @@ From `docs/PLAN.md` §4, the ones that matter before real use:
   prototype names explicitly.
 - **Virus scanning.** Every uploaded row is written `SKIPPED` rather than
   `PENDING`, because `PENDING` would claim a scanner is coming.
-- **Rate limiting on this architecture** (§2.1) — the only item that blocks
-  production outright.
+
+Rate limiting was on this list and is not any more; see §2.1. Nothing that
+remains blocks production outright.

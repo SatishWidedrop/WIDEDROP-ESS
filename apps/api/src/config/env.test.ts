@@ -113,10 +113,31 @@ describe('production hardening', () => {
     expect(complaint(production({ MAIL_DRIVER: 'file' }), 'MAIL_DRIVER')).toContain('smtp');
   });
 
-  it('refuses an in-process rate limiter', () => {
-    // Two instances with their own counters means a lockout that holds on
-    // whichever one the next attempt happens to reach.
-    expect(complaint(production({ REDIS_URL: undefined }), 'REDIS_URL')).toContain('required');
+  it('accepts no Redis, because the database is a shared store too', () => {
+    // The limiter falls back to Postgres, which every instance can see. What
+    // it must never fall back to silently is the in-process counter.
+    expect(() => loadEnv(production({ REDIS_URL: undefined }) as NodeJS.ProcessEnv)).not.toThrow();
+  });
+
+  it('refuses the in-process limiter and a shared one at the same time', () => {
+    // One of the two is a mistake, and it is not obvious which from the
+    // outside — so it is refused rather than silently resolved.
+    expect(
+      complaint(production({ RATE_LIMIT_ALLOW_IN_PROCESS: 'true' }), 'RATE_LIMIT_ALLOW_IN_PROCESS'),
+    ).toContain('mistake');
+  });
+
+  it('allows the in-process limiter when it is asked for on its own', () => {
+    // One instance that will never be scaled out is the one case where this is
+    // not a mistake. It has to be said out loud because the failure is silent.
+    expect(() =>
+      loadEnv(
+        production({
+          REDIS_URL: undefined,
+          RATE_LIMIT_ALLOW_IN_PROCESS: 'true',
+        }) as NodeJS.ProcessEnv,
+      ),
+    ).not.toThrow();
   });
 
   it('refuses a wildcard or plaintext CORS origin', () => {

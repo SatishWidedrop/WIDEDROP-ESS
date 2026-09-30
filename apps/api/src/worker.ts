@@ -5,6 +5,7 @@ import { createPrismaClient } from './lib/prisma.js';
 import { markOverdueAcknowledgements } from './services/policies/service.js';
 import { startOutboxWorker } from './services/email/worker.js';
 import { renderPendingPayslips } from './services/payroll/render.js';
+import { sweepExpiredRateLimits } from './plugins/rate-limit-store.js';
 import { runAsSystem } from './lib/request-context.js';
 
 /**
@@ -172,6 +173,15 @@ function startPeriodicSweeps(
           where: { isActive: true },
           select: { id: true, displayName: true },
         });
+
+        // Windows that closed over an hour ago. Nothing depends on this for
+        // correctness — an expired row is reset in place by the next request
+        // that touches its key — but a key seen once and never again would
+        // otherwise sit in the table forever.
+        const sweptLimits = await sweepExpiredRateLimits(db);
+        if (sweptLimits > 0) {
+          logger.info({ count: sweptLimits }, 'swept expired rate-limit windows');
+        }
 
         for (const organization of organizations) {
           const overdue = await runAsSystem(

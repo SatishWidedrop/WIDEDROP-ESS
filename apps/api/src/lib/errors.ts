@@ -113,6 +113,13 @@ export class AppError extends Error {
         code: this.code,
         message: this.message,
         ...(this.details?.length ? { details: this.details } : {}),
+        // In the body as well as the `Retry-After` header. The header is what
+        // a proxy honours; this is what the page can read without reaching
+        // into response headers, so it can say "try again in fifteen minutes"
+        // rather than "try again later".
+        ...(this.retryAfterSeconds !== undefined
+          ? { retryAfterSeconds: this.retryAfterSeconds }
+          : {}),
         requestId,
       },
     };
