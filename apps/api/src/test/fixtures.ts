@@ -334,3 +334,154 @@ export async function buildFixture(): Promise<Fixture> {
     },
   };
 }
+
+/**
+ * Everything payroll needs on top of the base fixture.
+ *
+ * Pay components, a salary structure per person, a tax regime election, and the
+ * bank account and statutory identifiers validation insists on. Split out so a
+ * suite that has nothing to do with payroll does not pay for it.
+ */
+export interface PayrollFixture {
+  taxRegimeId: string;
+  componentIds: Record<string, string>;
+  monthlyCtcMinor: bigint;
+}
+
+export async function addPayrollConfig(fixture: Fixture): Promise<PayrollFixture> {
+  const { organizationId } = fixture;
+
+  const regime = await db.taxRegime.create({
+    data: {
+      code: 'NEW',
+      fiscalYearStartYear: 2026,
+      name: 'New regime',
+      slabs: [
+        { upToMinor: 30_000_000, rate: 0 },
+        { upToMinor: 70_000_000, rate: 0.05 },
+        { upToMinor: 100_000_000, rate: 0.1 },
+        { upToMinor: 120_000_000, rate: 0.15 },
+        { upToMinor: 150_000_000, rate: 0.2 },
+        { upToMinor: null, rate: 0.3 },
+      ],
+      standardDeductionMinor: rupees(75_000),
+      rebateThresholdMinor: rupees(700_000),
+      rebateMaxMinor: rupees(25_000),
+      cessRate: 0.04,
+      allowsDeductions: false,
+    },
+    select: { id: true },
+  });
+
+  const componentIds: Record<string, string> = {};
+  const specs = [
+    { code: 'BASIC', name: 'Basic salary', calc: 'PRORATED_FIXED', order: 1, pf: true },
+    { code: 'HRA', name: 'House rent allowance', calc: 'PERCENT_OF_BASIC', order: 2, rate: 0.5 },
+    { code: 'SPECIAL', name: 'Special allowance', calc: 'PRORATED_FIXED', order: 3 },
+  ] as const;
+
+  for (const spec of specs) {
+    const created = await db.payComponent.create({
+      data: {
+        organizationId,
+        code: spec.code,
+        name: spec.name,
+        kind: 'EARNING',
+        calc: spec.calc,
+        rate: 'rate' in spec ? spec.rate : null,
+        isProrated: true,
+        isPfApplicable: 'pf' in spec ? spec.pf : false,
+        displayOrder: spec.order,
+      },
+      select: { id: true },
+    });
+    componentIds[spec.code] = created.id;
+  }
+
+  const everyone = [fixture.people.arjun, fixture.people.priya, fixture.people.divya];
+  const ananya = await db.employee.findFirstOrThrow({
+    where: { organizationId, employeeNumber: 'WDT-01120' },
+    select: { id: true },
+  });
+
+  for (const employeeId of [...everyone, ananya.id]) {
+    const employee = await db.employee.findUniqueOrThrow({
+      where: { id: employeeId },
+      select: { fullName: true, employeeNumber: true },
+    });
+
+    await db.employeeBankAccount.create({
+      data: {
+        organizationId,
+        employeeId,
+        bankName: 'HDFC Bank',
+        accountNumberCt: Buffer.from('ct'),
+        accountNumberIv: Buffer.from('iv'),
+        accountNumberTag: Buffer.from('tag'),
+        accountNumberMasked: '•• •••• •••• 4412',
+        accountNumberFingerprint: `fp-acct-${employee.employeeNumber}`,
+        ifscCt: Buffer.from('ct'),
+        ifscIv: Buffer.from('iv'),
+        ifscTag: Buffer.from('tag'),
+        ifscMasked: 'HDFC000••••',
+        accountHolderName: employee.fullName,
+        verifiedAt: new Date('2024-07-20'),
+      },
+    });
+
+    for (const kind of ['PAN', 'UAN'] as const) {
+      await db.employeeStatutoryId.create({
+        data: {
+          organizationId,
+          employeeId,
+          kind,
+          valueCt: Buffer.from('ct'),
+          valueIv: Buffer.from('iv'),
+          valueTag: Buffer.from('tag'),
+          maskedValue: kind === 'PAN' ? 'AXYPR••••K' : '•••• 7890',
+          fingerprint: `fp-${kind}-${employee.employeeNumber}`,
+          verifiedAt: new Date('2024-07-20'),
+        },
+      });
+    }
+
+    await db.employeeTaxRegimeElection.create({
+      data: {
+        organizationId,
+        employeeId,
+        fiscalYearId: fixture.fiscalYearId,
+        taxRegimeId: regime.id,
+      },
+    });
+
+    const structure = await db.salaryStructure.create({
+      data: {
+        organizationId,
+        employeeId,
+        effectiveFrom: new Date('2026-04-01'),
+        annualCtcMinor: rupees(1_800_000),
+      },
+      select: { id: true },
+    });
+
+    await db.salaryStructureComponent.createMany({
+      data: [
+        {
+          organizationId,
+          salaryStructureId: structure.id,
+          payComponentId: componentIds.BASIC!,
+          monthlyAmountMinor: rupees(60_000),
+        },
+        { organizationId, salaryStructureId: structure.id, payComponentId: componentIds.HRA! },
+        {
+          organizationId,
+          salaryStructureId: structure.id,
+          payComponentId: componentIds.SPECIAL!,
+          monthlyAmountMinor: rupees(30_000),
+        },
+      ],
+    });
+  }
+
+  return { taxRegimeId: regime.id, componentIds, monthlyCtcMinor: rupees(150_000) };
+}

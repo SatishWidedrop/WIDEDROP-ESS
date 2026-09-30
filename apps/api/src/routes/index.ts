@@ -15,6 +15,12 @@ import { documentRoutes } from './v1/documents.js';
 import { profileRoutes } from './v1/profile.js';
 import { taxRoutes } from './v1/tax.js';
 import { benefitRoutes } from './v1/benefits.js';
+import { approvalRoutes } from './v1/approvals.js';
+import { attendanceRoutes } from './v1/attendance.js';
+import { hrRoutes } from './v1/hr.js';
+import { payrollRoutes } from './v1/payroll.js';
+import { reimbursementRoutes } from './v1/reimbursements.js';
+import { auditRoutes } from './v1/audit.js';
 
 /**
  * Route registration.
@@ -65,4 +71,10 @@ export async function registerRoutes(app: App): Promise<void> {
   await app.register(directoryRoutes);
   await app.register(announcementRoutes);
   await app.register(helpdeskRoutes);
+  await app.register(approvalRoutes);
+  await app.register(attendanceRoutes);
+  await app.register(hrRoutes);
+  await app.register(payrollRoutes);
+  await app.register(reimbursementRoutes);
+  await app.register(auditRoutes);
 }

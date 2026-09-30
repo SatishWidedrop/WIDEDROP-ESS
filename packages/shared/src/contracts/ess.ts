@@ -317,22 +317,23 @@ export const payrollCycleCreate = z
 
 export const payrollCycleEvent = z
   .object({
+    /**
+     * The events a person may request. The outcome events the system raises
+     * for itself — VALIDATION_PASSED, VALIDATION_REJECTED,
+     * CALCULATION_SUCCEEDED, CALCULATION_FAILED — are deliberately absent:
+     * they are conclusions, not requests, and the server refuses them here.
+     */
     event: z.enum([
-      'OPEN_INPUTS',
       'UPLOAD_INPUTS',
       'LOCK_INPUTS',
+      'REOPEN_INPUTS',
       'SUBMIT_ATTENDANCE',
+      'RETURN_ATTENDANCE',
       'APPROVE_ATTENDANCE',
-      'VALIDATE',
-      'VALIDATION_PASSED',
-      'VALIDATION_REJECTED',
-      'CALCULATE',
-      'CALCULATION_COMPLETE',
       'APPROVE',
       'PUBLISH',
       'CLOSE',
       'CANCEL',
-      'REOPEN_INPUTS',
     ]),
     note: freeText(1_000).optional(),
   })
@@ -342,15 +343,15 @@ export const payrollInputItemCreate = z
   .object({
     employeeId: id,
     kind: z.enum([
+      'VARIABLE_PAY',
       'INCENTIVE',
       'BONUS',
       'ARREAR',
-      'OVERTIME',
+      'ONE_OFF_DEDUCTION',
+      'LOP_OVERRIDE',
+      'REIMBURSEMENT_PAYOUT',
       'ADVANCE_RECOVERY',
-      'LOAN_EMI',
-      'ONE_TIME_DEDUCTION',
-      'REIMBURSEMENT',
-      'ADJUSTMENT',
+      'TDS_OVERRIDE',
     ]),
     amountMinor: paise,
     note: freeText(300).optional(),
