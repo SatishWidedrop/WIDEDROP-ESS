@@ -1,0 +1,54 @@
+.yearSelect {
+  padding: 8px 11px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--text-body-sm);
+}
+
+.metric {
+  font-size: var(--text-metric-lg);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.metricNote {
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+  margin-top: var(--space-4);
+  line-height: var(--leading-relaxed);
+}
+
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin: var(--space-9) 0;
+}
+
+.progressRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-6);
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+}
+
+.progressValue {
+  color: var(--text);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+.progressNote {
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+}
+
+.glyph {
+  color: var(--accent-soft);
+}

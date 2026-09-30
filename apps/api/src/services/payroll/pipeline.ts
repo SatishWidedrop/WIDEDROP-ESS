@@ -108,7 +108,12 @@ export async function transitionCycle(
 
   await tx.payrollCycle.update({
     where: { id: input.cycleId },
-    data: { status: to, ...(options.data ?? {}) },
+    // The stage timestamp belongs to the transition, not to whoever asked for
+    // it: stamping it here means every caller records it, and the Payroll
+    // screen's timeline cannot show a later stage complete while an earlier
+    // one looks outstanding. A caller may still add its own columns — who
+    // approved, why it was cancelled — and those win.
+    data: { status: to, ...stageTimestamp(input.event), ...(options.data ?? {}) },
   });
 
   await recordAudit(
@@ -324,4 +329,37 @@ export function availableEvents(
     const required = PAYROLL_EVENT_ACTOR[event];
     return required !== null && personas.includes(required);
   });
+}
+
+/**
+ * The column each event stamps.
+ *
+ * Only the seven stages the pipeline's timeline draws. Events that move a
+ * cycle without completing a stage — a validation rejection, an input reopen —
+ * stamp nothing, because the stage they would touch has not been reached.
+ */
+function stageTimestamp(event: PayrollCycleEvent): Record<string, Date> {
+  const now = new Date();
+  switch (event) {
+    case 'LOCK_INPUTS':
+      return { inputsLockedAt: now };
+    case 'SUBMIT_ATTENDANCE':
+      return { attendanceSubmittedAt: now };
+    case 'APPROVE_ATTENDANCE':
+      return { attendanceApprovedAt: now };
+    case 'VALIDATION_PASSED':
+      return { validatedAt: now };
+    case 'CALCULATION_SUCCEEDED':
+      return { calculatedAt: now };
+    case 'APPROVE':
+      return { approvedAt: now };
+    case 'PUBLISH':
+      return { publishedAt: now };
+    case 'CLOSE':
+      return { closedAt: now };
+    case 'CANCEL':
+      return { cancelledAt: now };
+    default:
+      return {};
+  }
 }

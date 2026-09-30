@@ -51,6 +51,10 @@
 }
 
 .rowMain {
+  /* A column, because the title and the meta are spans: left inline they sit
+     side by side and read as one run-on string. */
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-width: 0;
 }

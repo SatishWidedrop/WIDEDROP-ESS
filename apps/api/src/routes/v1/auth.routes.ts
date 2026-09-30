@@ -74,6 +74,33 @@ export async function authRoutes(app: App, options: { keys: TokenKeys }): Promis
     maxAgeSeconds: env.REFRESH_TOKEN_TTL_SECONDS,
   };
 
+  /**
+   * Which organisation an email belongs to.
+   *
+   * The domain, not "whichever organisation is oldest". A second organisation
+   * in the database — another tenant, or a leftover test fixture — would
+   * otherwise silently become the one every sign-in is checked against, and
+   * the failure looks exactly like a wrong password.
+   *
+   * An address whose domain matches nothing resolves to a UUID that cannot
+   * exist, so the caller still runs the same no-such-user path with its dummy
+   * password verification: an unknown domain must not be distinguishable from
+   * a wrong password by timing or by response.
+   */
+  const NO_TENANT = '00000000-0000-0000-0000-000000000000';
+
+  async function resolveTenant(email: string): Promise<string> {
+    const domain = email.trim().toLowerCase().split('@')[1];
+    if (!domain) return NO_TENANT;
+
+    const organization = await db.organization.findFirst({
+      where: { domain, isActive: true },
+      select: { id: true },
+    });
+
+    return organization?.id ?? NO_TENANT;
+  }
+
   /** Build the session response and set the refresh cookie. */
   async function establishSession(
     reply: FastifyReply,
@@ -175,18 +202,13 @@ export async function authRoutes(app: App, options: { keys: TokenKeys }): Promis
     async (request, reply) => {
       const body = loginRequest.parse(request.body);
 
-      const organization = await db.organization.findFirst({
-        where: { isActive: true },
-        orderBy: { createdAt: 'asc' },
-        select: { id: true },
-      });
-      if (!organization) throw loginRejection('UNKNOWN_USER');
+      const organizationId = await resolveTenant(body.email);
 
       const result = await db.$transaction((tx) =>
         attemptLogin(
           tx,
           {
-            organizationId: organization.id,
+            organizationId,
             email: body.email,
             password: body.password,
             pepper: env.PASSWORD_PEPPER,
@@ -227,7 +249,7 @@ export async function authRoutes(app: App, options: { keys: TokenKeys }): Promis
           tx,
           {
             userId: result.userId,
-            organizationId: organization.id,
+            organizationId,
             ip: request.context.ip,
             mfaUsed: false,
           },
@@ -238,7 +260,7 @@ export async function authRoutes(app: App, options: { keys: TokenKeys }): Promis
       return reply.status(200).send(
         await establishSession(reply, {
           userId: result.userId,
-          organizationId: organization.id,
+          organizationId,
           employeeId: result.employeeId,
           personas: result.personas,
           mfaSatisfied: false,
@@ -635,7 +657,11 @@ export async function authRoutes(app: App, options: { keys: TokenKeys }): Promis
 
       if (typeof address === 'string' && address.includes('@')) {
         const user = await db.appUser.findFirst({
-          where: { email: address.trim().toLowerCase(), status: 'ACTIVE' },
+          where: {
+            organizationId: await resolveTenant(address),
+            email: address.trim().toLowerCase(),
+            status: 'ACTIVE',
+          },
           select: { id: true, organizationId: true },
         });
 

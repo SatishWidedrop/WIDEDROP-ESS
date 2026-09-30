@@ -1,0 +1,152 @@
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-7);
+  width: 100%;
+  padding: var(--space-7) var(--space-8);
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  min-width: 0;
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.clickable {
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease);
+}
+
+.clickable:hover {
+  background: var(--surface-hover);
+}
+
+.clickable:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.selected,
+.selected:hover {
+  background: var(--surface-selected);
+}
+
+.leading {
+  flex: none;
+  display: flex;
+  align-items: center;
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.title {
+  font-size: var(--text-body-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.value {
+  flex: none;
+  font-size: var(--text-body-sm);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+.absent {
+  color: var(--text-dim);
+}
+
+.trailing {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.reference {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+}
+
+/* ── Detail grid ──────────────────────────────────────────────────── */
+
+.detailGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-8);
+  padding: var(--space-8) 0;
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.detail {
+  min-width: 0;
+}
+
+.detailLabel {
+  font-size: var(--text-eyebrow);
+  letter-spacing: var(--tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-dim);
+  font-weight: var(--weight-medium);
+}
+
+.detailValue {
+  font-size: var(--text-body-sm);
+  color: var(--text);
+  margin-top: var(--space-3);
+  line-height: var(--leading-normal);
+  overflow-wrap: anywhere;
+}
+
+/* ── Meter ────────────────────────────────────────────────────────── */
+
+.meter {
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-hover);
+  overflow: hidden;
+}
+
+.meterFill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  transition: width var(--duration-base) var(--ease);
+}
+
+.accent {
+  background: var(--accent);
+}
+.green {
+  background: var(--tone-green-fg);
+}
+.amber {
+  background: var(--tone-amber-fg);
+}
+.red {
+  background: var(--tone-red-fg);
+}

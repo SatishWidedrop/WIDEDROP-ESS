@@ -1,0 +1,68 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+  align-items: stretch;
+}
+
+.form > button {
+  align-self: flex-start;
+}
+
+.results {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.result {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: var(--space-5) var(--space-6);
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-shell);
+  color: inherit;
+  font: inherit;
+  font-size: var(--text-body-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.result:last-child {
+  border-bottom: 0;
+}
+
+.result:hover {
+  background: var(--surface-hover);
+}
+
+.result:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.resultMeta {
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+}
+
+.commit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  align-items: flex-start;
+  padding: var(--space-8);
+  border-top: 1px solid var(--border);
+}
+
+.note {
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+  line-height: var(--leading-relaxed);
+}

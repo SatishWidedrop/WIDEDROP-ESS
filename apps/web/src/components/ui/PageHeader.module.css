@@ -1,0 +1,64 @@
+.header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-8);
+  flex-wrap: wrap;
+}
+
+.titleGroup {
+  min-width: 0;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: var(--text-heading-lg);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+  line-height: var(--leading-tight);
+}
+
+.subtitle {
+  font-size: var(--text-meta);
+  color: var(--text-muted);
+  margin-top: var(--space-2);
+  line-height: var(--leading-normal);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+}
+
+.split {
+  display: grid;
+  gap: var(--space-9);
+  align-items: start;
+}
+
+.asSplit {
+  grid-template-columns: var(--grid-split-current);
+}
+
+.asForm {
+  grid-template-columns: var(--grid-form-current);
+}
+
+.asCalendar {
+  grid-template-columns: var(--grid-calendar-current);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-9);
+  min-width: 0;
+}

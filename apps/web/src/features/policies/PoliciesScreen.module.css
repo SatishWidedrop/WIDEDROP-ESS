@@ -1,0 +1,102 @@
+.eyebrow {
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+}
+
+.name {
+  font-size: var(--text-title);
+  font-weight: var(--weight-semibold);
+  margin-top: var(--space-3);
+  line-height: var(--leading-tight);
+}
+
+.summary {
+  font-size: var(--text-body-sm);
+  color: var(--text-secondary);
+  margin-top: var(--space-5);
+  line-height: var(--leading-relaxed);
+}
+
+.superseded {
+  margin-top: var(--space-7);
+  padding: var(--space-6) var(--space-7);
+  background: var(--tone-amber-bg);
+  color: var(--tone-amber-fg);
+  border-radius: var(--radius-md);
+  font-size: var(--text-caption);
+  line-height: var(--leading-relaxed);
+}
+
+.points {
+  padding-top: var(--space-9);
+}
+
+.pointsHeading {
+  font-size: var(--text-eyebrow);
+  letter-spacing: var(--tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-dim);
+  font-weight: var(--weight-medium);
+}
+
+.pointList {
+  list-style: none;
+  margin-top: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* The prototype's accent bullet, drawn rather than a list marker so its
+   colour and size are ours. */
+.point {
+  position: relative;
+  padding-left: var(--space-8);
+  font-size: var(--text-body-sm);
+  color: var(--text-secondary);
+  line-height: var(--leading-relaxed);
+}
+
+.point::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.55em;
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-circle);
+  background: var(--accent);
+}
+
+.body {
+  padding-top: var(--space-9);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.paragraph {
+  font-size: var(--text-body-sm);
+  color: var(--text-secondary);
+  line-height: var(--leading-relaxed);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-7);
+  flex-wrap: wrap;
+  padding-top: var(--space-9);
+  margin-top: var(--space-9);
+  border-top: 1px solid var(--border);
+}
+
+.due {
+  font-size: var(--text-caption);
+  color: var(--tone-amber-fg);
+}
+
+.acknowledged {
+  font-size: var(--text-caption);
+  color: var(--tone-green-fg);
+}

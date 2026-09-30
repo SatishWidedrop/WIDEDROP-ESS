@@ -1,0 +1,120 @@
+.filters {
+  display: flex;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.filters > * {
+  min-width: 160px;
+}
+
+.padded {
+  padding: var(--space-8);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+  align-items: stretch;
+}
+
+.form > button {
+  align-self: flex-start;
+}
+
+.versions {
+  display: flex;
+  flex-direction: column;
+}
+
+.policyGroup {
+  padding: var(--space-7) var(--space-8);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.policyGroup:last-child {
+  border-bottom: 0;
+}
+
+.policyName {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+}
+
+.policyTitle {
+  font-size: var(--text-body-sm);
+  font-weight: var(--weight-medium);
+}
+
+.policyOwner {
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+}
+
+.version {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+  padding: var(--space-5) 0 0;
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+}
+
+.progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  min-width: 160px;
+  flex: 1;
+}
+
+.progressText {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.meterWrap {
+  flex: 1;
+  min-width: 60px;
+}
+
+.paragraphs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.note {
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+  line-height: var(--leading-relaxed);
+}
+
+.preview {
+  margin-top: var(--space-7);
+  padding: var(--space-8);
+  background: var(--surface-shell);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-caption);
+  color: var(--text-secondary);
+  line-height: var(--leading-relaxed);
+  white-space: pre-wrap;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.missing {
+  margin-top: var(--space-6);
+  padding: var(--space-6) var(--space-7);
+  background: var(--tone-red-bg);
+  color: var(--tone-red-fg);
+  border-radius: var(--radius-md);
+  font-size: var(--text-caption);
+  line-height: var(--leading-relaxed);
+}

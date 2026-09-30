@@ -1,0 +1,151 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+  align-items: flex-start;
+}
+
+.form > div {
+  width: 100%;
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+  margin-top: var(--space-9);
+  padding-top: var(--space-8);
+  border-top: 1px solid var(--border);
+}
+
+.cancelled {
+  margin-top: var(--space-8);
+  padding: var(--space-6) var(--space-7);
+  background: var(--tone-red-bg);
+  color: var(--tone-red-fg);
+  border-radius: var(--radius-md);
+  font-size: var(--text-caption);
+  line-height: var(--leading-relaxed);
+}
+
+/* ── The pipeline timeline ────────────────────────────────────────── */
+
+.timeline {
+  list-style: none;
+  margin-top: var(--space-10);
+  display: flex;
+  flex-direction: column;
+}
+
+.stage {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-6);
+  position: relative;
+  padding-bottom: var(--space-7);
+}
+
+/* The connecting line, drawn between the dots rather than under them. */
+.stage:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 18px;
+  bottom: 0;
+  width: 1px;
+  background: var(--border-strong);
+}
+
+.stageDot {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  width: 17px;
+  height: 17px;
+  margin-top: 1px;
+  border-radius: var(--radius-circle);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-panel);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--surface-on-accent);
+}
+
+.stageDone .stageDot {
+  background: var(--tone-green-fg);
+  border-color: var(--tone-green-fg);
+}
+
+.stageBody {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.stageLabel {
+  font-size: var(--text-body-sm);
+  color: var(--text-muted);
+}
+
+.stageDone .stageLabel {
+  color: var(--text);
+  font-weight: var(--weight-medium);
+}
+
+.stageMeta {
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+}
+
+/* ── Validation findings ──────────────────────────────────────────── */
+
+.finding {
+  padding: var(--space-7) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.finding:last-child {
+  border-bottom: 0;
+}
+
+.findingHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+}
+
+.findingLabel {
+  font-size: var(--text-body-sm);
+  font-weight: var(--weight-medium);
+}
+
+.findingCount {
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+  margin-left: auto;
+}
+
+.findingRemedy {
+  margin-top: var(--space-4);
+  font-size: var(--text-caption);
+  color: var(--text-secondary);
+  line-height: var(--leading-relaxed);
+}
+
+.findingList {
+  list-style: none;
+  margin-top: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+  line-height: var(--leading-relaxed);
+}
+
+.findingMore {
+  font-style: italic;
+}

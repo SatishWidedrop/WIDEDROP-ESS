@@ -1,0 +1,98 @@
+.filters {
+  display: flex;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.filters > * {
+  min-width: 180px;
+}
+
+.padded {
+  padding: var(--space-8);
+}
+
+.person {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding-bottom: var(--space-8);
+}
+
+.personName {
+  font-size: var(--text-title);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+.personRole {
+  font-size: var(--text-meta);
+  color: var(--text-muted);
+  margin-top: var(--space-3);
+}
+
+.reporting {
+  padding-top: var(--space-9);
+}
+
+.reportingHeading {
+  font-size: var(--text-eyebrow);
+  letter-spacing: var(--tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-dim);
+  font-weight: var(--weight-medium);
+  margin-bottom: var(--space-6);
+}
+
+.personLink {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  width: 100%;
+  padding: var(--space-5) var(--space-6);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.personLink:hover {
+  background: var(--surface-hover);
+}
+
+.personLink:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.linkName {
+  display: block;
+  font-size: var(--text-body-sm);
+  font-weight: var(--weight-medium);
+}
+
+.linkMeta {
+  display: block;
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+  margin-top: 1px;
+}
+
+.reports {
+  margin-top: var(--space-6);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.none {
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+  padding: var(--space-5) var(--space-6);
+}

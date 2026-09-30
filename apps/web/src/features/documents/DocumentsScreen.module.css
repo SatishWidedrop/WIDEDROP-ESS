@@ -1,0 +1,18 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+  align-items: stretch;
+}
+
+.form > button {
+  align-self: flex-start;
+}
+
+.padded {
+  padding: var(--space-8);
+}
+
+.glyph {
+  color: var(--accent-soft);
+}

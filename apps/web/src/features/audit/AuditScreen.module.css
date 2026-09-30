@@ -1,0 +1,116 @@
+.filters {
+  display: flex;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.filters > * {
+  min-width: 130px;
+}
+
+.padded {
+  padding: var(--space-8);
+}
+
+.verifiedOk,
+.verifiedBroken {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-6);
+  padding: var(--space-7) var(--space-8);
+  border-radius: var(--radius-lg);
+  border: 1px solid transparent;
+}
+
+.verifiedOk {
+  background: var(--tone-green-bg);
+  color: var(--tone-green-fg);
+}
+
+.verifiedBroken {
+  background: var(--tone-red-bg);
+  color: var(--tone-red-fg);
+}
+
+.verifiedTitle {
+  font-size: var(--text-body-sm);
+  font-weight: var(--weight-medium);
+}
+
+.verifiedBody {
+  font-size: var(--text-caption);
+  margin-top: var(--space-3);
+  line-height: var(--leading-relaxed);
+  opacity: 0.92;
+}
+
+.table {
+  overflow-x: auto;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 64px minmax(200px, 2fr) minmax(130px, 1fr) 130px 150px;
+  gap: var(--space-6);
+  align-items: center;
+  padding: var(--space-6) var(--space-8);
+  border-bottom: 1px solid var(--border-subtle);
+  min-width: 760px;
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+/* The chain position, in the mono face: it is a number in a sequence, and
+   reading it as one is the point. */
+.sequence {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.main,
+.actor {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.summary {
+  font-size: var(--text-body-sm);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actorName {
+  font-size: var(--text-body-sm);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.action {
+  min-width: 0;
+}
+
+.time {
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}

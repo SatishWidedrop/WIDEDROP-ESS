@@ -1,0 +1,51 @@
+.plans {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-7);
+}
+
+.plan {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-8);
+  background: var(--surface-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.planCategory {
+  font-size: var(--text-eyebrow);
+  letter-spacing: var(--tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-dim);
+  font-weight: var(--weight-medium);
+}
+
+.planName {
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+}
+
+.planValue {
+  font-size: var(--text-metric);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.planMeta {
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+  line-height: var(--leading-relaxed);
+  flex: 1;
+}
+
+.planFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+  padding-top: var(--space-5);
+}

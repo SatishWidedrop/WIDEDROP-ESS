@@ -1,0 +1,95 @@
+.field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.label {
+  display: block;
+  font-size: var(--text-caption);
+  color: var(--text-secondary);
+  margin-bottom: var(--space-4);
+  font-weight: var(--weight-medium);
+}
+
+.optional {
+  color: var(--text-dim);
+  font-weight: var(--weight-regular);
+}
+
+.control {
+  width: 100%;
+  background: var(--surface-shell);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 9px 12px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--text-body-sm);
+  outline: none;
+  transition: border-color var(--duration-fast) var(--ease);
+}
+
+.control::placeholder {
+  color: var(--text-dim);
+}
+
+.control:focus {
+  border-color: var(--accent);
+}
+
+.control:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.control:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.controlInvalid {
+  border-color: var(--tone-red-fg);
+}
+
+.select {
+  padding: 10px 12px;
+  /* The native arrow, kept: a custom one is one more thing to get wrong on a
+     platform we have not tested. */
+  appearance: auto;
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 72px;
+  line-height: var(--leading-normal);
+}
+
+.hint {
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+  margin-top: var(--space-3);
+  line-height: var(--leading-relaxed);
+}
+
+.error {
+  font-size: var(--text-caption);
+  color: var(--tone-red-fg);
+  margin-top: var(--space-3);
+  line-height: var(--leading-relaxed);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-6);
+}
+
+.formError {
+  padding: var(--space-6) var(--space-7);
+  background: var(--tone-red-bg);
+  color: var(--tone-red-fg);
+  border-radius: var(--radius-md);
+  font-size: var(--text-body-sm);
+  line-height: var(--leading-relaxed);
+}

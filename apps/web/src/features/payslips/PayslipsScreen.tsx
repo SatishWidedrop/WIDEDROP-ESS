@@ -292,7 +292,9 @@ function PayslipDetailView({
           {prorated ? (
             <span>
               Loss of pay{' '}
-              <span className={styles.attendanceValue}>{payslip.attendance.lopDays} days</span>
+              <span className={styles.attendanceValue}>
+                {payslip.attendance.lopDays} {payslip.attendance.lopDays === 1 ? 'day' : 'days'}
+              </span>
             </span>
           ) : null}
         </div>

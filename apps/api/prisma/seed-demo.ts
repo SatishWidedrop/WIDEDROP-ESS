@@ -23,6 +23,7 @@ import { EncryptionService } from '../src/services/encryption.js';
 import { runAsSystem } from '../src/lib/request-context.js';
 import { transitionCycle } from '../src/services/payroll/pipeline.js';
 import { runValidation } from '../src/services/payroll/validation.js';
+import { refreshPayslipRollups } from '../src/services/payroll/rollups.js';
 import { generatePayroll } from '../src/services/payroll/generation.js';
 import { rebuildReportingClosure, type Principal } from '../src/services/auth/authorization.js';
 
@@ -749,6 +750,11 @@ async function runOneCycle(input: {
     where: { organizationId, year, month, runType: 'REGULAR' },
   });
   if (existing) {
+    // Already run. The pipeline is not repeated — a published cycle is a
+    // business record, not something a seed may redo — but the projections
+    // are refreshed, so re-running the seed after a change to how a rollup is
+    // computed converges rather than leaving stale totals behind.
+    await updateRollups(organizationId, existing.id);
     console.log(`  payroll ${label}: already present (${existing.status})`);
     return;
   }
@@ -1109,89 +1115,25 @@ async function runOneCycle(input: {
 }
 
 /** Year-to-date totals, maintained as payslips publish. */
+/**
+ * The projections the portal reads: year-to-date totals and quarterly TDS.
+ *
+ * Delegated to the same service the publish endpoint uses, so the seed cannot
+ * produce a rollup the application would compute differently — which is the
+ * whole point of a seed that drives the real pipeline.
+ */
 async function updateRollups(organizationId: string, cycleId: string): Promise<void> {
   const payslips = await prisma.payslip.findMany({
     where: { payrollCycleId: cycleId, status: 'PUBLISHED' },
-    select: {
-      employeeId: true,
-      periodStart: true,
-      grossEarningsMinor: true,
-      netPayMinor: true,
-      tdsMinor: true,
-      pfEmployeeMinor: true,
-      pfEmployerMinor: true,
-    },
+    select: { employeeId: true, periodEnd: true },
   });
+  if (payslips.length === 0) return;
 
-  for (const payslip of payslips) {
-    const startYear =
-      payslip.periodStart.getUTCMonth() >= 3
-        ? payslip.periodStart.getUTCFullYear()
-        : payslip.periodStart.getUTCFullYear() - 1;
-
-    const fiscalYear = await prisma.fiscalYear.findFirst({
-      where: { organizationId, startYear },
-      select: { id: true, startDate: true, endDate: true, label: true },
-    });
-    if (!fiscalYear) continue;
-
-    const totals = await prisma.payslip.aggregate({
-      where: {
-        employeeId: payslip.employeeId,
-        status: 'PUBLISHED',
-        periodStart: { gte: fiscalYear.startDate },
-        periodEnd: { lte: fiscalYear.endDate },
-      },
-      _count: true,
-      _sum: {
-        grossEarningsMinor: true,
-        netPayMinor: true,
-        tdsMinor: true,
-        pfEmployeeMinor: true,
-        pfEmployerMinor: true,
-      },
-      _min: { periodStart: true },
-      _max: { periodEnd: true },
-    });
-
-    const coverage =
-      totals._min.periodStart && totals._max.periodEnd
-        ? `${monthShort(totals._min.periodStart)} – ${monthShort(totals._max.periodEnd)} ${totals._max.periodEnd.getUTCFullYear()}`
-        : null;
-
-    await prisma.payslipFyRollup.upsert({
-      where: {
-        employeeId_fiscalYearId: { employeeId: payslip.employeeId, fiscalYearId: fiscalYear.id },
-      },
-      update: {
-        payslipCount: totals._count,
-        grossMinor: totals._sum.grossEarningsMinor ?? 0n,
-        netMinor: totals._sum.netPayMinor ?? 0n,
-        tdsMinor: totals._sum.tdsMinor ?? 0n,
-        pfEmployeeMinor: totals._sum.pfEmployeeMinor ?? 0n,
-        pfEmployerMinor: totals._sum.pfEmployerMinor ?? 0n,
-        coverageLabel: coverage,
-      },
-      create: {
-        organizationId,
-        employeeId: payslip.employeeId,
-        fiscalYearId: fiscalYear.id,
-        payslipCount: totals._count,
-        grossMinor: totals._sum.grossEarningsMinor ?? 0n,
-        netMinor: totals._sum.netPayMinor ?? 0n,
-        tdsMinor: totals._sum.tdsMinor ?? 0n,
-        pfEmployeeMinor: totals._sum.pfEmployeeMinor ?? 0n,
-        pfEmployerMinor: totals._sum.pfEmployerMinor ?? 0n,
-        coverageLabel: coverage,
-      },
-    });
-  }
-}
-
-function monthShort(date: Date): string {
-  return ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][
-    date.getUTCMonth()
-  ]!;
+  await refreshPayslipRollups(prisma, {
+    organizationId,
+    employeeIds: payslips.map((payslip) => payslip.employeeId),
+    onDate: payslips[0]!.periodEnd.toISOString().slice(0, 10),
+  });
 }
 
 function currentFiscalYearStart(): number {

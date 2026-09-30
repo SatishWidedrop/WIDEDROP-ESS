@@ -21,6 +21,7 @@ import {
 } from '../../services/payroll/pipeline.js';
 import { runValidation } from '../../services/payroll/validation.js';
 import { notifyEmployee } from '../../services/notifications.js';
+import { refreshPayslipRollups } from '../../services/payroll/rollups.js';
 
 /**
  * Payroll, as Accounts drives it.
@@ -931,6 +932,7 @@ async function publishPayslips(
       employeeId: true,
       reference: true,
       netPayMinor: true,
+      periodEnd: true,
       cycle: { select: { label: true } },
     },
   });
@@ -967,6 +969,19 @@ async function publishPayslips(
   }
 
   if (payslips.length > 0) {
+    // The year-to-date tiles and the quarterly TDS table, recomputed from the
+    // payslips that are now visible. Done after publication rather than with
+    // it, so a total can never describe a payslip the employee cannot see.
+    await db.$transaction(
+      (tx) =>
+        refreshPayslipRollups(tx, {
+          organizationId: input.organizationId,
+          employeeIds: payslips.map((payslip) => payslip.employeeId),
+          onDate: toIsoDate(payslips[0]!.periodEnd),
+        }),
+      { timeout: 120_000 },
+    );
+
     await db.$transaction((tx) =>
       recordAudit(
         tx,

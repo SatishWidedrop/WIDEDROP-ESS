@@ -1,0 +1,101 @@
+.header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-8);
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: var(--text-heading-lg);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+}
+
+.subtitle {
+  font-size: var(--text-meta);
+  color: var(--text-muted);
+  margin-top: var(--space-2);
+}
+
+/* The balance cards, as the prototype lays them out. */
+.balances {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: var(--space-7);
+}
+
+.balance {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-8);
+  background: var(--surface-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.balanceName {
+  font-size: var(--text-eyebrow);
+  letter-spacing: var(--tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-dim);
+  font-weight: var(--weight-medium);
+}
+
+.balanceValue {
+  font-size: var(--text-metric);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.balanceTotal {
+  font-size: var(--text-meta);
+  font-weight: var(--weight-regular);
+  color: var(--text-dim);
+}
+
+.balanceNote {
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+  line-height: var(--leading-relaxed);
+}
+
+/* The form beside the lists, collapsing to one column when narrow. */
+.split {
+  display: grid;
+  grid-template-columns: var(--grid-form-current);
+  gap: var(--space-9);
+  align-items: start;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-9);
+  min-width: 0;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-7);
+  flex-wrap: wrap;
+}
+
+.note {
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+  line-height: var(--leading-relaxed);
+}
+
+.padded {
+  padding: var(--space-8);
+}

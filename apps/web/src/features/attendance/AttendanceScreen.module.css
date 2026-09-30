@@ -1,0 +1,103 @@
+.select {
+  padding: 8px 11px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--text-body-sm);
+}
+
+.decision {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+}
+
+.decisionActions {
+  display: flex;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+}
+
+.returned {
+  font-size: var(--text-body-sm);
+  color: var(--tone-red-fg);
+  line-height: var(--leading-relaxed);
+}
+
+.note {
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+}
+
+/* A table that scrolls sideways rather than squeezing columns to nothing. */
+.table {
+  overflow-x: auto;
+}
+
+.tableRow {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.6fr) repeat(6, minmax(72px, 1fr));
+  gap: var(--space-6);
+  align-items: center;
+  padding: var(--space-6) var(--space-8);
+  border-bottom: 1px solid var(--border-subtle);
+  min-width: 640px;
+}
+
+.tableRow:last-child {
+  border-bottom: 0;
+}
+
+.tableHead {
+  font-size: var(--text-eyebrow);
+  letter-spacing: var(--tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-dim);
+  font-weight: var(--weight-medium);
+  background: var(--surface-raised);
+  position: sticky;
+  top: 0;
+}
+
+.cell {
+  font-size: var(--text-body-sm);
+  color: var(--text-secondary);
+  min-width: 0;
+}
+
+.cellName {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  font-size: var(--text-body-sm);
+  min-width: 0;
+}
+
+.nameText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.nameMeta {
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+}
+
+.cellNumber {
+  font-size: var(--text-body-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--text-secondary);
+}
+
+.cellStrong {
+  color: var(--text);
+  font-weight: var(--weight-medium);
+}
+
+.lop {
+  color: var(--tone-amber-fg);
+}
