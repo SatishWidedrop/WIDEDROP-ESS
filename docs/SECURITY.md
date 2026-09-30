@@ -1,5 +1,21 @@
 # Widedrop ESS — Security Architecture, RBAC/ABAC Model and Privacy Controls
 
+> ### This is the design specification, not the built system
+>
+> Written before the implementation, and kept because the reasoning in it is
+> worth having: it records why each decision went the way it did. But the
+> build made its own decisions in places, and where the two disagree **the
+> code is correct and this document is out of date.**
+>
+> What to read instead, for this document's subject: `docs/RBAC.md` (generated), `packages/shared/src/rbac/roles.ts`, and the plugins under `apps/api/src/plugins/`.
+>
+> The largest divergence is the permission vocabulary. These documents fold
+> the scope into the permission name (`payslip:read:any`,
+> `approval:task:read:team`); what was built separates them, so a permission
+> names an action and each role holds it _at a scope_ (`payslip:read-any` at
+> `ORG`). `docs/RBAC.md` is generated from the module the API enforces, and
+> CI fails if it drifts.
+
 **Status:** Normative specification. An implementer MUST NOT deviate without an ADR in `docs/adr/`.
 **Scope:** `apps/api` (Fastify 5 / Node 22 / Prisma / PostgreSQL 16), `apps/web` (React 18 / Vite SPA),
 `packages/shared`, `infra/`. Companion documents: **`docs/ARCHITECTURE.md` (the index and the

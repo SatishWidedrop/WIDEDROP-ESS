@@ -29,7 +29,9 @@
     "db:migrate": "npm run db:migrate -w @widedrop/api",
     "db:reset": "npm run db:reset -w @widedrop/api",
     "db:seed:reference": "npm run db:seed:reference -w @widedrop/api",
-    "audit:ci": "node scripts/audit-check.mjs"
+    "audit:ci": "node scripts/audit-check.mjs",
+    "docs:rbac": "npm run build -w @widedrop/shared && node scripts/gen-rbac-doc.mjs",
+    "docs:check": "node scripts/gen-rbac-doc.mjs --check"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

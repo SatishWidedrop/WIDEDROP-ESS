@@ -32,6 +32,10 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run format:check
+      # docs/RBAC.md is generated from the permission matrix. A change to
+      # roles.ts that does not regenerate it leaves the one document people
+      # will actually trust describing a system that no longer exists.
+      - run: node scripts/gen-rbac-doc.mjs --check
 
   test:
     name: Tests

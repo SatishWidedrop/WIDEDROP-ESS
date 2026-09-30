@@ -1,5 +1,21 @@
 # Widedrop ESS — REST API Contract
 
+> ### This is the design specification, not the built system
+>
+> Written before the implementation, and kept because the reasoning in it is
+> worth having: it records why each decision went the way it did. But the
+> build made its own decisions in places, and where the two disagree **the
+> code is correct and this document is out of date.**
+>
+> What to read instead, for this document's subject: the route modules under `apps/api/src/routes/v1/`, and their tests beside them.
+>
+> The largest divergence is the permission vocabulary. These documents fold
+> the scope into the permission name (`payslip:read:any`,
+> `approval:task:read:team`); what was built separates them, so a permission
+> names an action and each role holds it _at a scope_ (`payslip:read-any` at
+> `ORG`). `docs/RBAC.md` is generated from the module the API enforces, and
+> CI fails if it drifts.
+
 **Status:** authoritative design contract. An implementer follows this document and
 makes no further interface decisions. Where a decision was previously left open, §18 now
 marks it `RESOLVED` with the decision, or `OPEN` with the owner and the default that holds

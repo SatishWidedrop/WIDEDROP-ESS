@@ -1,5 +1,21 @@
 # Widedrop ESS — Domain Model & PostgreSQL/Prisma Schema
 
+> ### This is the design specification, not the built system
+>
+> Written before the implementation, and kept because the reasoning in it is
+> worth having: it records why each decision went the way it did. But the
+> build made its own decisions in places, and where the two disagree **the
+> code is correct and this document is out of date.**
+>
+> What to read instead, for this document's subject: `apps/api/prisma/schema.prisma` and the SQL under `apps/api/prisma/migrations/`.
+>
+> The largest divergence is the permission vocabulary. These documents fold
+> the scope into the permission name (`payslip:read:any`,
+> `approval:task:read:team`); what was built separates them, so a permission
+> names an action and each role holds it _at a scope_ (`payslip:read-any` at
+> `ORG`). `docs/RBAC.md` is generated from the module the API enforces, and
+> CI fails if it drifts.
+
 **Status:** authoritative. Implementers derive migrations and `schema.prisma` from this
 document; no further modelling decisions are required.
 **Scope:** every module the prototype defines (Home, Payslips, Tax slips, My profile,
