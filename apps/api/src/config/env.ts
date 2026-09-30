@@ -361,6 +361,24 @@ const schema = baseSchema.superRefine((env, ctx) => {
         'connection, or the Session pooler on port 5432, neither of which takes pgbouncer=true',
     );
   }
+  // `?` starts a query string; `&` only separates one that has already
+  // started. Told to "append &pgbouncer=true" to a URL that has no `?` yet,
+  // the whole tail becomes part of the database name — Postgres then reports
+  // that a database called `postgres&sslmode=require&pgbouncer=true` does not
+  // exist, and, worse, the pgbouncer flag is silently not set at all.
+  for (const key of ['DATABASE_URL', 'DIRECT_DATABASE_URL'] as const) {
+    const value = env[key];
+    if (!value) continue;
+    const database = safeDatabase(value);
+    if (database?.includes('&') || database?.includes('=')) {
+      fail(
+        key,
+        `has "${database}" as the database name, so its options were never parsed — the first ` +
+          'option after the database takes ?, and only the ones after it take &',
+      );
+    }
+  }
+
   // Supavisor identifies the tenant from the username, so a pooler connection
   // has to say `postgres.<project-ref>` and not plain `postgres`. Copying the
   // string from the console gets this right; hand-editing one to change the
@@ -398,6 +416,15 @@ const schema = baseSchema.superRefine((env, ctx) => {
 function safeUsername(url: string): string | undefined {
   try {
     return decodeURIComponent(new URL(url).username) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The database name from a connection string, total for the same reason. */
+function safeDatabase(url: string): string | undefined {
+  try {
+    return decodeURIComponent(new URL(url).pathname).replace(/^\//, '') || undefined;
   } catch {
     return undefined;
   }

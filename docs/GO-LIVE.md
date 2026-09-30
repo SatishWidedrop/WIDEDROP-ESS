@@ -206,44 +206,54 @@ Nothing below depends on the decisions above except where noted.
    | **Session pooler**     | `…pooler.supabase.com:5432` | `DIRECT_DATABASE_URL` |
    | Direct connection      | `db.<ref>.supabase.co:5432` | neither — see below   |
 
-   Append `&pgbouncer=true` to the transaction one, and make sure both carry
-   `sslmode=require`. Both pooler usernames are `postgres.<project-ref>` rather
-   than plain `postgres` — Supavisor reads the project from the username, and
-   losing the suffix while hand-editing a port gives you "Tenant or user not
-   found", which names neither. The validator catches that one now.
+   The console gives you the string with no options on it, so both need
+   `?sslmode=require` and the transaction one then takes `&pgbouncer=true`
+   after it. **The first option takes `?`; only the ones after it take `&`.**
+   Starting with `&` makes the whole tail part of the database name — Postgres
+   reports that a database called `postgres&sslmode=require&pgbouncer=true`
+   does not exist, and the pgbouncer flag is silently never set, which is the
+   failure it was there to prevent. Refused at startup now.
 
-   **If the database password contains any of `@ : / ? # [ ] %`, percent-encode
-   it** in the connection string, or the URL parses with a different host than
-   you think. The console says this in small print next to the string.
+       …pooler.supabase.com:6543/postgres?sslmode=require&pgbouncer=true
+       …pooler.supabase.com:5432/postgres?sslmode=require
 
-   Ignore the console's "Transaction pooler uses IPv6 by default — enable the
-   IPv4 add-on" banner. That is about the **dedicated** pooler, a paid-plan
-   feature; the shared pooler the panel gives you is IPv4, so the ~$4/month
-   add-on buys you nothing here. `aws-0-ap-south-1.pooler.supabase.com`
-   resolves to A records only, while `db.<ref>.supabase.co` resolves to AAAA
-   only — which is the whole reason `DIRECT_DATABASE_URL` is the session pooler
-   below. If you ever need to re-check, `getent hosts <host>` answers it in a
-   second and does not care what any banner says.
+Both pooler usernames are `postgres.<project-ref>` rather
+than plain `postgres` — Supavisor reads the project from the username, and
+losing the suffix while hand-editing a port gives you "Tenant or user not
+found", which names neither. The validator catches that one now.
 
-   **`DIRECT_DATABASE_URL` is the Session pooler, not the "Direct connection"
-   tab**, despite the name of the variable. Direct connections resolve to IPv6
-   only unless the project buys the IPv4 add-on, and both Netlify's Lambda
-   runtime and GitHub Actions runners are IPv4. The direct string does not fail
-   loudly there — it hangs until something times out, most likely the first
-   `prisma migrate deploy` of your deploy pipeline. Session mode holds one
-   connection per client for the length of the session, so it carries DDL and
-   the advisory lock a migration takes exactly as a direct connection would.
+**If the database password contains any of `@ : / ? # [ ] %`, percent-encode
+it** in the connection string, or the URL parses with a different host than
+you think. The console says this in small print next to the string.
 
-   Why two at all: the API scales out, so it needs the transaction pooler or it
-   exhausts Postgres's connection slots long before traffic does — but that
-   pooler is free to hand the connection to somebody else between statements,
-   which no migration survives. Prisma has to be told each separately.
+Ignore the console's "Transaction pooler uses IPv6 by default — enable the
+IPv4 add-on" banner. That is about the **dedicated** pooler, a paid-plan
+feature; the shared pooler the panel gives you is IPv4, so the ~$4/month
+add-on buys you nothing here. `aws-0-ap-south-1.pooler.supabase.com`
+resolves to A records only, while `db.<ref>.supabase.co` resolves to AAAA
+only — which is the whole reason `DIRECT_DATABASE_URL` is the session pooler
+below. If you ever need to re-check, `getent hosts <host>` answers it in a
+second and does not care what any banner says.
 
-   The validator refuses a pooled URL missing `pgbouncer=true`, refuses port
-   6543 for migrations, and refuses production without `sslmode`. Each is a
-   failure that otherwise surfaces much later and much less clearly: without
-   `pgbouncer=true` the API starts fine and then fails intermittently under
-   load with "prepared statement already exists".
+**`DIRECT_DATABASE_URL` is the Session pooler, not the "Direct connection"
+tab**, despite the name of the variable. Direct connections resolve to IPv6
+only unless the project buys the IPv4 add-on, and both Netlify's Lambda
+runtime and GitHub Actions runners are IPv4. The direct string does not fail
+loudly there — it hangs until something times out, most likely the first
+`prisma migrate deploy` of your deploy pipeline. Session mode holds one
+connection per client for the length of the session, so it carries DDL and
+the advisory lock a migration takes exactly as a direct connection would.
+
+Why two at all: the API scales out, so it needs the transaction pooler or it
+exhausts Postgres's connection slots long before traffic does — but that
+pooler is free to hand the connection to somebody else between statements,
+which no migration survives. Prisma has to be told each separately.
+
+The validator refuses a pooled URL missing `pgbouncer=true`, refuses port
+6543 for migrations, and refuses production without `sslmode`. Each is a
+failure that otherwise surfaces much later and much less clearly: without
+`pgbouncer=true` the API starts fine and then fails intermittently under
+load with "prepared statement already exists".
 
 5. Storage → create a **private** bucket, `ess-documents`. Not public: every
    read goes through a short-lived signed URL the API issues after it has

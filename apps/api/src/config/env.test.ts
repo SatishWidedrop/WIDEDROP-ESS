@@ -133,6 +133,19 @@ describe('the pooled connection', () => {
     expect(complaint(production({ DATABASE_URL: SESSION }), 'DATABASE_URL')).toBeUndefined();
   });
 
+  it('catches options appended with & when there was no ? yet', () => {
+    // The tail becomes part of the database name, and pgbouncer=true is then
+    // silently not set — which is the failure the flag exists to prevent.
+    const message = complaint(
+      production({
+        DATABASE_URL:
+          'postgresql://postgres.abcdef:pw@aws-0-ap-south-1.pooler.supabase.com:6543/postgres&sslmode=require&pgbouncer=true',
+      }),
+      'DATABASE_URL',
+    );
+    expect(message).toContain('options were never parsed');
+  });
+
   it('catches a pooler username that lost its project ref', () => {
     // Supavisor reads the tenant from the username. Plain `postgres` against a
     // pooler host fails with "Tenant or user not found", which names neither
