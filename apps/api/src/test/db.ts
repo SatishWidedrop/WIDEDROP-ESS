@@ -16,8 +16,42 @@ import { PrismaClient } from '../generated/prisma/index.js';
 const DEFAULT_URL =
   'postgresql://ess:ess_local_dev_only@127.0.0.1:5433/widedrop_ess_test?schema=ess';
 
+/**
+ * The database the suite is allowed to destroy.
+ *
+ * `resetTestDb` truncates every table, so pointing this at a working database
+ * loses that database's contents. It therefore refuses anything whose database
+ * name does not end in `_test`, and it does **not** fall back to
+ * `DATABASE_URL` — which once meant running the suite wiped the developer's
+ * own data, with no error and nothing to suggest what had happened.
+ *
+ * `DATABASE_URL` is still honoured as a *source of connection details*: its
+ * host, port and credentials are reused with `_test` appended to the database
+ * name, so a developer with a non-default setup does not have to configure a
+ * second variable.
+ */
 export function testDatabaseUrl(): string {
-  return process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL ?? DEFAULT_URL;
+  const explicit = process.env.TEST_DATABASE_URL;
+  if (explicit) return assertTestDatabase(explicit);
+
+  const development = process.env.DATABASE_URL;
+  if (!development) return DEFAULT_URL;
+
+  const url = new URL(development);
+  const name = url.pathname.replace(/^\//, '');
+  url.pathname = `/${name.endsWith('_test') ? name : `${name}_test`}`;
+  return assertTestDatabase(url.toString());
+}
+
+function assertTestDatabase(candidate: string): string {
+  const name = new URL(candidate).pathname.replace(/^\//, '');
+  if (!name.endsWith('_test')) {
+    throw new Error(
+      `Refusing to run tests against "${name}": this suite truncates every table, ` +
+        'so its database name must end in `_test`. Set TEST_DATABASE_URL.',
+    );
+  }
+  return candidate;
 }
 
 let prisma: PrismaClient | undefined;

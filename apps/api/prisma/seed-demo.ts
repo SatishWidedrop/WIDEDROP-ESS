@@ -44,9 +44,29 @@ async function main(): Promise<void> {
     return;
   }
 
-  const organization = await prisma.organization.findFirst({ orderBy: { createdAt: 'asc' } });
+  // Resolved by domain, the way the reference seed creates it. Taking whichever
+  // organisation happens to be oldest once picked up a leftover test fixture
+  // and then failed deep inside the salary structures, because that
+  // organisation had no pay components.
+  const domain = process.env.SEED_ORG_DOMAIN ?? 'widedrop.com';
+  const organization = await prisma.organization.findUnique({ where: { domain } });
   if (!organization) {
-    console.error('Run the reference seed first: npm run db:seed:reference -w @widedrop/api');
+    console.error(
+      `No organisation with domain ${domain}. Run the reference seed first:\n` +
+        '  npm run db:seed:reference -w @widedrop/api',
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const componentCount = await prisma.payComponent.count({
+    where: { organizationId: organization.id },
+  });
+  if (componentCount === 0) {
+    console.error(
+      `${organization.displayName} has no pay components, so payroll cannot run.\n` +
+        'Run the reference seed first: npm run db:seed:reference -w @widedrop/api',
+    );
     process.exitCode = 1;
     return;
   }
