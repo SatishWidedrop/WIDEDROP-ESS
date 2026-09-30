@@ -255,16 +255,33 @@ failure that otherwise surfaces much later and much less clearly: without
 `pgbouncer=true` the API starts fine and then fails intermittently under
 load with "prepared statement already exists".
 
-5. Storage → create a **private** bucket, `ess-documents`. Not public: every
+5. Put the two strings somewhere they will actually be read, which is not a
+   text file on the desktop: they are full read-write credentials to a
+   database that will hold every employee's personal and payroll data.
+
+   - **Locally**, `cp .env.example apps/api/.env` and fill them in there. It is
+     git-ignored, and every script that needs it now loads it —
+     `npm run db:migrate`, the seeds, `bootstrap:admin`, `npm run dev`.
+   - **On Netlify**, type them into Site configuration → Environment variables
+     at step 4. That is the durable copy; nothing else needs one.
+   - If you want a personal copy, a password manager entry, not a `.txt`. A
+     file on the desktop ends up in a screenshot, in a sync folder, or
+     committed.
+
+   You do not have to hoard them in any case: the Connect panel is the source
+   of truth and will show the string again, and "Reset database password"
+   beside it issues a new one whenever you want.
+
+6. Storage → create a **private** bucket, `ess-documents`. Not public: every
    read goes through a short-lived signed URL the API issues after it has
    checked authorization.
-6. Project Settings → Storage → S3 access keys → generate a pair. Set
+7. Project Settings → Storage → S3 access keys → generate a pair. Set
    `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`,
    `S3_SECRET_ACCESS_KEY`. These keys bypass row-level security, so they are
    server-side only and must never reach a `VITE_` variable — the SPA build
    asserts that.
-7. `npm run db:migrate -w @widedrop/api`, with `DIRECT_DATABASE_URL` set — that's the connection Prisma migrates over, per step 4.
-8. `npm run db:seed:reference -w @widedrop/api` — roles, permissions, pay
+8. `npm run db:migrate -w @widedrop/api`, with `DIRECT_DATABASE_URL` set — that's the connection Prisma migrates over, per step 4.
+9. `npm run db:seed:reference -w @widedrop/api` — roles, permissions, pay
    components. It creates no people.
 
 ### Step 2 — Email
