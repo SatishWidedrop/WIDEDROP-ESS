@@ -2,11 +2,23 @@
 
 **Status:** implementation-ready specification.
 **Audience:** the implementer and whoever is on call afterwards.
-**Companions:** `docs/SECURITY.md` (controls), `docs/DATA-MODEL.md` (schema),
-`docs/API.md` (wire contract), `docs/WORKFLOWS.md` (state machines).
+**Companions:** **`docs/ARCHITECTURE.md`** (the index and the tie-breaker — canonical entity,
+enum, permission, state and environment-variable names), `docs/SECURITY.md` (controls),
+`docs/DATA-MODEL.md` (schema), `docs/API.md` (wire contract), `docs/WORKFLOWS.md` (state
+machines), `docs/FRONTEND.md` (the SPA this site serves).
 This document is the authority for _where things run, how they are configured, how they
 ship and how they are recovered_. Where it repeats a control from `SECURITY.md` it does so
 only to state the deployment-time obligation; the security rationale lives there.
+
+> ### Canonical reference
+>
+> **`docs/ARCHITECTURE.md` is the system index and the single source of truth for every
+> entity name, enum value, permission string, state name and workflow-stage name.** Where
+> this document and any sibling disagree on a _name_, `ARCHITECTURE.md` §4 (Canonical
+> glossary) wins and the divergent spelling is a defect to be corrected here. Where they
+> disagree on a _control_, the stricter of the two wins and `ARCHITECTURE.md` §4 records
+> which that is. No document may introduce a name, enum value or permission code that
+> `ARCHITECTURE.md` §4 does not carry.
 
 ---
 
@@ -58,18 +70,125 @@ The scaffold in `apps/api/src/config/env.ts` predates `SECURITY.md` §10.2 and u
 single-version key names that the rotation procedures in §7.3 and §3.2 of that document
 cannot express. §7 of this document is the canonical table. Required edits:
 
-| In the scaffold today                               | Canonical name                                                                                                                                                    | Why                                                                                        |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `CORS_ORIGINS`                                      | `ALLOWED_ORIGINS`                                                                                                                                                 | matches `SECURITY.md` §6.5                                                                 |
-| `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY` / `JWT_KEY_ID` | `JWT_SIGNING_KEY_<kid>` / `JWT_PUBLIC_KEY_<kid>` / `JWT_ACTIVE_KID`                                                                                               | overlapping-key rotation (`SECURITY.md` §3.2) needs N keys resident at once                |
-| `PASSWORD_PEPPER`                                   | `PASSWORD_PEPPER_V1` (+ `_V2`…)                                                                                                                                   | lazy re-hash rotation                                                                      |
-| `ENCRYPTION_KEK` / `ENCRYPTION_KEY_VERSION`         | `MASTER_KEK_V1` (+ …) / `MASTER_KEK_ACTIVE_VERSION`                                                                                                               | KEK re-wrap keeps the old KEK for 30 days                                                  |
-| `AUDIT_HMAC_KEY`                                    | `AUDIT_CHAIN_KEY_V1`                                                                                                                                              | chain history is never re-keyed                                                            |
-| `REDIS_URL` **required** in production              | `RATE_LIMIT_STORE=postgres\|redis`, `REDIS_URL` optional                                                                                                          | `SECURITY.md` §9.3 makes Postgres the primary limiter store; Redis is the >200 rps upgrade |
-| `S3_*`                                              | `STORAGE_*`                                                                                                                                                       | matches `SECURITY.md` §10.2                                                                |
-| `SMTP_*`                                            | `MAIL_*` (HTTPS provider API)                                                                                                                                     | `WORKFLOWS.md` §6.3 forbids raw SMTP string concatenation                                  |
-| — (absent)                                          | `DIRECT_DATABASE_URL`                                                                                                                                             | session-scoped advisory locks and migrations must bypass the transaction pooler (§4.3)     |
-| — (absent)                                          | `SERVICE_ROLE`, `TRUSTED_PROXY_CIDRS`, `BLIND_INDEX_KEY_V1`, `CSRF_KEY`, `LOG_HASH_KEY`, `RECOVERY_CODE_KEY`, `CURSOR_HMAC_KEY`, `CLAMAV_*`, `OUTBOUND_ALLOWLIST` | required by `SECURITY.md` §5.3, §5.5, §7.2, §7.4, §9.2                                     |
+| In the scaffold today                               | Canonical name                                                                                                                                                    | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CORS_ORIGINS`                                      | `ALLOWED_ORIGINS`                                                                                                                                                 | matches `SECURITY.md` §6.5                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY` / `JWT_KEY_ID` | `JWT_SIGNING_KEY_<kid>` / `JWT_PUBLIC_KEY_<kid>` / `JWT_ACTIVE_KID`                                                                                               | overlapping-key rotation (`SECURITY.md` §3.2) needs N keys resident at once                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `PASSWORD_PEPPER`                                   | `PASSWORD_PEPPER_V1` (+ `_V2`…)                                                                                                                                   | lazy re-hash rotation                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `ENCRYPTION_KEK` / `ENCRYPTION_KEY_VERSION`         | `MASTER_KEK_V1` (+ …) / `MASTER_KEK_ACTIVE_VERSION`                                                                                                               | KEK re-wrap keeps the old KEK for 30 days                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `AUDIT_HMAC_KEY`                                    | `AUDIT_CHAIN_KEY_V1`                                                                                                                                              | chain history is never re-keyed                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `REDIS_URL` **required** in production              | `RATE_LIMIT_STORE=redis\|postgres` (default `redis`), `REDIS_URL` **required** in staging and production                                                          | **Corrected.** `SECURITY.md` §9.3 makes **Redis the primary** limiter store and Postgres the durable fallback, not the other way round. An earlier line here inverted it. The inversion matters: the Postgres fixed-window upsert is a write to the _primary business database_ on every rate-limited request, which turns a credential-stuffing burst into database load on the system of record. Both stores unavailable ⇒ fail **closed** on `/auth/*` and on every `sensitive: true` route |
+| `S3_*`                                              | `STORAGE_*`                                                                                                                                                       | matches `SECURITY.md` §10.2                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `SMTP_*`                                            | `MAIL_*` (HTTPS provider API)                                                                                                                                     | `WORKFLOWS.md` §6.3 forbids raw SMTP string concatenation                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `INTERNAL_PORT` (`SECURITY.md` §10.2)               | `PRIVATE_PORT`                                                                                                                                                    | One listener, one name. §7.2 here is canonical for variable **names**; `SECURITY.md` §10.2 is canonical for each variable's **constraint**                                                                                                                                                                                                                                                                                                                                                     |
+| — (absent)                                          | `KEY_PROVIDER` (`kms`\|`env`), `KMS_KEY_ARN`, `ORG_SETTING_EMAIL_DOMAIN_ALLOWLIST`, `EX_EMPLOYEE_WINDOW_DAYS_MAX`                                                 | required by `SECURITY.md` §10.2; `MASTER_KEK_V<n>` is required **iff** `KEY_PROVIDER='env'`, so a KMS deployment could not boot without this                                                                                                                                                                                                                                                                                                                                                   |
+| — (absent)                                          | `DIRECT_DATABASE_URL`                                                                                                                                             | session-scoped advisory locks and migrations must bypass the transaction pooler (§4.3)                                                                                                                                                                                                                                                                                                                                                                                                         |
+| — (absent)                                          | `SERVICE_ROLE`, `TRUSTED_PROXY_CIDRS`, `BLIND_INDEX_KEY_V1`, `CSRF_KEY`, `LOG_HASH_KEY`, `RECOVERY_CODE_KEY`, `CURSOR_HMAC_KEY`, `CLAMAV_*`, `OUTBOUND_ALLOWLIST` | required by `SECURITY.md` §5.3, §5.5, §7.2, §7.4, §9.2                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+
+| — (absent) | `PRIVATE_PORT` | `/readyz` and `/metrics` are served on a second listener the platform does not route (§9.2) |
+| — (absent) | `TZ`, plus the rule that every business date resolves in `organization.timezone` | R-16: an unset container timezone silently shifts attendance days, pay dates and cut-offs |
+| — (absent) | `SES_SNS_TOPIC_ARN` | the bounce/complaint webhook of §6.4 has no other way to pin its sender |
+| — (absent) | `BLIND_INDEX_ACTIVE_VERSION` | the value written into every new `<field>_fpr_pepper_version` (`DATA-MODEL.md` §1.6); the pepper rotates inside the DEK backfill (§11.3.2 D2) and needs an active pointer |
+| — (absent) | `BACKUP_AGE_RECIPIENT`, `BACKUP_BUCKET`, `BACKUP_ACCESS_KEY_ID`, `BACKUP_SECRET_ACCESS_KEY`, `BACKUP_DATABASE_URL` | the weekly off-provider dump (§4.5) is a real service with real credentials |
+| — (absent) | `CSP_REPORT_ONLY` | `SECURITY.md` §6.3 requires one report-only release before the policy is enforced |
+
+### 0.5 Reconciliation R-13 — the database roles are `DATA-MODEL.md` §1.8.1's six, not four
+
+An earlier draft of §4.4 described **four** roles and gave `ess_owner` `LOGIN`.
+`DATA-MODEL.md` §1.8.1 is canonical and now declares **six** — `ess_owner`, `ess_app`,
+`ess_job`, `ess_migrator`, `ess_readonly`, `ess_backup` — all `NOINHERIT`, with `ess_owner`
+**`NOLOGIN`**. `ess_backup` was referenced by §4.5, §7.2 (`BACKUP_DATABASE_URL`) and boot
+refusal 18 here while existing in no schema document; it is now declared there: `SELECT`-only
+on every table, `BYPASSRLS` (a backup that silently omitted rows is worse than no backup), and
+its credential present in exactly one process, the weekly backup cron. §4.4 below is rewritten
+to match. Two deployment-specific deviations are stated there and
+nowhere else:
+
+1. Render's managed PostgreSQL provisions the database with a **login** owner role, so on
+   this platform `ess_owner` carries `LOGIN`. It is compensated: the role appears in no
+   service's environment, its password lives only in the sealed envelope (§7.3), and the
+   boot-time privilege assertion refuses to start if the connected role is `ess_owner`.
+2. Because `ess_owner` can log in here, `ALTER TABLE … FORCE ROW LEVEL SECURITY`
+   (`DATA-MODEL.md` §1.8.1) stops being a nicety and becomes load-bearing: without it a
+   break-glass session silently bypasses every policy. The migration linter enforces it
+   (§4.6 rule 4).
+
+A third correction belongs with them. An earlier draft's boot assertion refused to start
+"if the connected role has `rolbypassrls`". `ess_job` **is** `BYPASSRLS` by design
+(`DATA-MODEL.md` §1.8.1), so that assertion would have refused to start the worker — the
+one service that cannot be allowed to fail silently. The assertion is **role-aware** in
+§4.4: `SERVICE_ROLE=api` must connect as a `NOBYPASSRLS` role, `SERVICE_ROLE=worker` must
+connect as `ess_job`, and neither may ever be `ess_owner` or `ess_migrator`.
+
+### 0.6 Reconciliation R-14 — the CSP report endpoint is `/api/v1/csp-report`
+
+`SECURITY.md` §6.3 and `FRONTEND.md` write the report URL as
+`https://api-ess.widedrop.com/csp-report`, with no version prefix. `API.md` §1.1 states that
+`/api/v1` is **the** base path. This document adopts **`/api/v1/csp-report`** and requires
+the same correction in `SECURITY.md` §6.3 (both the `report-uri` line and the
+`Reporting-Endpoints` example) and in `FRONTEND.md`. The same applies to `/healthz`,
+`/readyz` and `/metrics`, which `SECURITY.md` writes unprefixed and `API.md` §13 serves
+under `/api/v1`. `/.well-known/jwks.json` is the single deliberate exception and is served
+**unprefixed at the origin root**, because RFC 8615 fixes that path there; it is declared as
+such in the route table so the boot-time route assertion does not flag it.
+
+Two further corrections this forces into §2.3, both already mandated by `SECURITY.md` §6.3
+and omitted by the earlier generator:
+
+- the policy must carry `report-to csp` **and** the response must carry
+  `Reporting-Endpoints: csp="…"`, or `report-to` is inert and only the deprecated
+  `report-uri` path delivers — which is how a "clean" rollout is clean because nothing was
+  ever reported;
+- one release must ship `Content-Security-Policy-Report-Only` before the enforcing header,
+  gated by `CSP_REPORT_ONLY`.
+
+### 0.7 Reconciliation R-15 — persisted object names used by the runbooks
+
+Earlier drafts of §4.5, §11.2, §11.3 and §11.5 named objects that do not exist in
+`DATA-MODEL.md`. The canonical names, which the runbooks below now use:
+
+| Earlier draft                                | Canonical (`DATA-MODEL.md`)                                                             |
+| -------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `payroll_input_row`                          | `ess.payroll_input_batch` (the file) **+** `ess.payroll_input_item` (the row)           |
+| `payslip.input_digest`                       | `ess.payslip.input_sha256` (inputs) and `ess.payslip.amount_sha256` (decrypted amounts) |
+| attendance "batch sha256"                    | `ess.attendance_submission.payload_sha256`                                              |
+| "the 21 named jobs"                          | the **named-job list** of `DATA-MODEL.md` §17.5 — read the list, never quote a count    |
+| `ess_ops.background_job('worker-heartbeat')` | `worker-heartbeat` is **not** in that list; R-17 adds it                                |
+
+**R-18 is now RESOLVED.** `SECURITY.md` §7.2 called the key table `data_key` with purposes
+`PII`/`STATUTORY`/`BANK`/`MFA`/`TICKET`; `DATA-MODEL.md` §17.3 calls it
+`data_encryption_key` with purposes `FIELD_DEFAULT`/`PAYROLL`/`MFA`. **`data_encryption_key`
+wins**, with those three purposes and status `PENDING`/`ACTIVE`/`RETIRED`/`COMPROMISED`
+(`RETIRING` withdrawn). Read `data_key` in §4.5, §11.3 and §11.5 below as
+`data_encryption_key`, and read `data_encryption_key.purpose` as its three values; the runbooks still read
+the live purpose list from the schema rather than from prose, so a future purpose added by
+migration is picked up without editing a runbook. Minting a DEK per purpose under one name and
+rotating it under the other is exactly how a key rotation silently misses a column, which is
+why this could not stay open.
+
+### 0.8 Reconciliation R-16 — business time is `Asia/Kolkata`, and the container is UTC
+
+`DATA-MODEL.md` §1.2 interprets every `date` column in `organization.timezone`
+(`Asia/Kolkata`). Nothing in an earlier draft of this document set a timezone anywhere, and
+a container with no `TZ` runs in UTC — which puts every attendance day boundary, pay date,
+expense cut-off, SLA clock and "published outside the change window" alert 5 h 30 m out of
+step with the business. That produces **wrong numbers in the UI without any of them being
+invented**, which is the failure mode directive 2 is least able to detect. The rule,
+enforced at boot (§7.4 refusal 20):
+
+- every container sets `TZ=UTC`; the database runs `timezone = 'UTC'`; every stored instant
+  is `timestamptz`;
+- **no business date is ever derived from the process clock's local calendar.** A civil date
+  is `(instant AT TIME ZONE :org_tz)::date` in SQL, or an explicit `timeZone` option in
+  `Intl`/`Temporal` in application code. An ESLint rule bans `new Date().getDate()`,
+  `.getMonth()`, `.getFullYear()`, `.getDay()`, `.getHours()` and `toLocaleDateString()`
+  called without an explicit `timeZone`;
+- the SPA formats dates with `Intl.DateTimeFormat('en-IN', { timeZone: orgTimezone, … })`
+  using the timezone the API returns in the bootstrap payload — never the browser's zone,
+  so an employee travelling abroad does not see a different pay date;
+- schedules in `ess_ops.background_job` store an IANA zone alongside the expression: a job
+  that must run "02:00 IST" stores `Asia/Kolkata`, not a UTC offset, so it survives a future
+  rule change.
 
 ---
 
@@ -131,21 +250,21 @@ cannot express. §7 of this document is the canonical table. Required edits:
 
 ### 1.2 Component table
 
-| #   | Component         | Product / plan                                                           | Purpose                                                                | Holds persistent data?    | Reachable from the internet?            |
-| --- | ----------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------- | ------------------------- | --------------------------------------- |
-| 1   | Marketing site    | Netlify, existing free team                                              | `widedrop.com`                                                         | no                        | yes (unchanged)                         |
-| 2   | ESS SPA           | Netlify, **new dedicated site on a new team**                            | static React build at `ess.widedrop.com`                               | no                        | yes                                     |
-| 3   | ESS API           | Render Web Service (Docker), `singapore`, 2 instances                    | Fastify, all authorization, all business logic                         | no (stateless)            | yes, `api-ess.widedrop.com` only        |
-| 4   | ESS worker        | Render Background Worker (same image, `SERVICE_ROLE=worker`), 1 instance | `email-dispatch` + the 21 named jobs in `DATA-MODEL.md` §17.5          | no (state is in Postgres) | **no**                                  |
-| 5   | Connection pooler | Render Private Service, PgBouncer, transaction mode                      | multiplexes API connections onto Postgres                              | no                        | **no**                                  |
-| 6   | Malware scanner   | Render Private Service, `clamav/clamav:stable`, 2 GB                     | `clamd` INSTREAM scan of every upload (`SECURITY.md` §5.3.10)          | signature DB only         | **no**                                  |
-| 7   | Database          | Render Managed PostgreSQL 16, `singapore`                                | **the system of record**                                               | **yes**                   | **no** — private network + IP allowlist |
-| 8   | Object storage    | Cloudflare R2, `apac` location hint                                      | payslip PDFs, expense bills, policy PDFs, letters, payroll input files | **yes**                   | no public access; 120 s signed GET only |
-| 9   | Email             | Amazon SES, `ap-south-1`                                                 | help-desk dispatch, invites, resets, notifications                     | no                        | outbound; inbound SNS webhook only      |
-| 10  | CI/CD             | GitHub Actions + GHCR                                                    | build, test, scan, migrate, deploy                                     | build artifacts           | n/a                                     |
-| 11  | Logs              | Better Stack (or Grafana Cloud Loki)                                     | structured JSON log sink, 30 d hot / 180 d cold                        | logs (PII-redacted)       | no                                      |
-| 12  | Errors            | Sentry, PII scrubbing on                                                 | exception tracking                                                     | scrubbed events           | no                                      |
-| 13  | Uptime            | Better Stack Uptime (or Healthchecks.io)                                 | external probe of `/api/v1/healthz` and the SPA                        | no                        | n/a                                     |
+| #   | Component         | Product / plan                                                           | Purpose                                                                     | Holds persistent data?    | Reachable from the internet?            |
+| --- | ----------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------- | ------------------------- | --------------------------------------- |
+| 1   | Marketing site    | Netlify, existing free team                                              | `widedrop.com`                                                              | no                        | yes (unchanged)                         |
+| 2   | ESS SPA           | Netlify, **new dedicated site on a new team**                            | static React build at `ess.widedrop.com`                                    | no                        | yes                                     |
+| 3   | ESS API           | Render Web Service (Docker), `singapore`, 2 instances                    | Fastify, all authorization, all business logic                              | no (stateless)            | yes, `api-ess.widedrop.com` only        |
+| 4   | ESS worker        | Render Background Worker (same image, `SERVICE_ROLE=worker`), 1 instance | `email-dispatch` + every job in the named-job list of `DATA-MODEL.md` §17.5 | no (state is in Postgres) | **no**                                  |
+| 5   | Connection pooler | Render Private Service, PgBouncer, transaction mode                      | multiplexes API connections onto Postgres                                   | no                        | **no**                                  |
+| 6   | Malware scanner   | Render Private Service, `clamav/clamav:stable`, 2 GB                     | `clamd` INSTREAM scan of every upload (`SECURITY.md` §5.3.10)               | signature DB only         | **no**                                  |
+| 7   | Database          | Render Managed PostgreSQL 16, `singapore`                                | **the system of record**                                                    | **yes**                   | **no** — private network + IP allowlist |
+| 8   | Object storage    | Cloudflare R2, `apac` location hint                                      | payslip PDFs, expense bills, policy PDFs, letters, payroll input files      | **yes**                   | no public access; 120 s signed GET only |
+| 9   | Email             | Amazon SES, `ap-south-1`                                                 | help-desk dispatch, invites, resets, notifications                          | no                        | outbound; inbound SNS webhook only      |
+| 10  | CI/CD             | GitHub Actions + GHCR                                                    | build, test, scan, migrate, deploy                                          | build artifacts           | n/a                                     |
+| 11  | Logs              | Better Stack (or Grafana Cloud Loki)                                     | structured JSON log sink, 30 d hot / 180 d cold                             | logs (PII-redacted)       | no                                      |
+| 12  | Errors            | Sentry, PII scrubbing on                                                 | exception tracking                                                          | scrubbed events           | no                                      |
+| 13  | Uptime            | Better Stack Uptime (or Healthchecks.io)                                 | external probe of `/api/v1/healthz` and the SPA                             | no                        | n/a                                     |
 
 **What deliberately does not exist:** no Netlify Functions, no Netlify Edge Functions, no
 serverless function as a system of record, no CDN in front of the API, no public database
@@ -199,21 +318,33 @@ Three consequences the implementer must honour:
 
 ### 2.1 Site settings (create once, in the new team)
 
-| Setting                              | Value                                                                                                                       |
-| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
-| Site name                            | `widedrop-ess` (serves `widedrop-ess.netlify.app`)                                                                          |
-| Repository                           | connected **read-only for previews only**; production deploys arrive from CI (§2.5)                                         |
-| Base directory                       | `apps/web`                                                                                                                  |
-| Build command                        | `npm run build` (only used by deploy previews; production builds happen in CI)                                              |
-| Publish directory                    | `apps/web/dist`                                                                                                             |
-| Functions directory                  | **unset** — the ESS site runs no functions                                                                                  |
-| Node version                         | `22` (from `.nvmrc`, and pinned again in `netlify.toml`)                                                                    |
-| Custom domain                        | `ess.widedrop.com` (primary). No apex, no `www`.                                                                            |
-| HTTPS                                | Let's Encrypt, auto-renew; "Force HTTPS" **on**                                                                             |
-| Asset optimisation / post-processing | **off** — it rewrites markup and would break SRI and the no-inline-style guarantee (`SECURITY.md` §6.3)                     |
-| Branch deploys                       | `staging` only                                                                                                              |
-| Deploy previews                      | on, for PRs; they point at the **staging** API (§2.4)                                                                       |
-| Environment variables                | `VITE_API_BASE_URL`, `VITE_APP_ENV`, `VITE_BUILD_SHA`, `VITE_SENTRY_DSN` — all public build-time config, **never a secret** |
+| Setting                              | Value                                                                                                                                                                                                                                                                         |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Site name                            | `widedrop-ess` (serves `widedrop-ess.netlify.app`)                                                                                                                                                                                                                            |
+| Repository                           | connected **read-only for previews only**; production deploys arrive from CI (§2.5)                                                                                                                                                                                           |
+| Base directory                       | `apps/web`                                                                                                                                                                                                                                                                    |
+| Build command                        | `npm run build` (only used by deploy previews; production builds happen in CI)                                                                                                                                                                                                |
+| Publish directory                    | `apps/web/dist`                                                                                                                                                                                                                                                               |
+| Functions directory                  | **unset** — the ESS site runs no functions                                                                                                                                                                                                                                    |
+| Node version                         | `22` (from `.nvmrc`, and pinned again in `netlify.toml`)                                                                                                                                                                                                                      |
+| Custom domain                        | `ess.widedrop.com` (primary). No apex, no `www`.                                                                                                                                                                                                                              |
+| HTTPS                                | Let's Encrypt, auto-renew; "Force HTTPS" **on**                                                                                                                                                                                                                               |
+| Asset optimisation / post-processing | **off** — it rewrites markup and would break SRI and the no-inline-style guarantee (`SECURITY.md` §6.3)                                                                                                                                                                       |
+| Production branch                    | **set to the unused branch `netlify-prod-locked`, and "Builds" set to _stopped_.** See the note below — this is what keeps CI the only path to production.                                                                                                                    |
+| Branch deploys                       | `staging` only                                                                                                                                                                                                                                                                |
+| Deploy previews                      | on, for PRs; they point at the **staging** API (§2.4)                                                                                                                                                                                                                         |
+| Web fonts                            | **self-hosted** from `/fonts` (IBM Plex Sans / IBM Plex Mono, `design/DESIGN-SYSTEM.md` §2). No Google Fonts, no external stylesheet — `style-src 'self'` and `font-src 'self'` forbid it, and an external font host is an uncontrolled third party on an authenticated page. |
+| Environment variables                | `VITE_API_BASE_URL`, `VITE_APP_ENV`, `VITE_BUILD_SHA`, `VITE_SENTRY_DSN` — all public build-time config, **never a secret**                                                                                                                                                   |
+
+> **The production branch must not be `main`.** Netlify's default is to treat the repository's
+> default branch as the production branch and to build and publish it on every push. Left at
+> that default, a push to `main` would produce a **second, unreviewed production deploy** that
+> bypasses `ci.yml`, ignores the `production` environment's required reviewer, and spends
+> free-tier build minutes — defeating §2.5 and §8.3 simultaneously. Set the production branch
+> to `netlify-prod-locked` (a branch that does not exist), or use **Site configuration → Build
+> & deploy → Stop builds**, and verify with `netlify api getSite` that `build_settings.stop_builds`
+> is `true` or `build_settings.repo_branch` is not `main`. A CI check asserts this on every
+> deploy (§8.2, "Assert Netlify is not self-building").
 
 ### 2.2 `infra/netlify/netlify.toml` — committed, canonical
 
@@ -228,9 +359,13 @@ Netlify's merge semantics from emitting two conflicting `Content-Security-Policy
 # or set "Configuration file path" to infra/netlify/netlify.toml in the site UI.
 
 [build]
+  # `base` is resolved from the repository root; `publish` and `command` are then
+  # resolved RELATIVE TO `base`. Writing publish = "apps/web/dist" here would make
+  # Netlify look for apps/web/apps/web/dist and fail the deploy with "directory
+  # does not exist" — the single most common netlify.toml mistake in a monorepo.
   base    = "apps/web"
   command = "npm run build"
-  publish = "apps/web/dist"
+  publish = "dist"
 
 [build.environment]
   NODE_VERSION  = "22"
@@ -258,7 +393,23 @@ Netlify's merge semantics from emitting two conflicting `Content-Security-Policy
   VITE_APP_ENV      = "preview"
 
 # ---------------------------------------------------------------------------
-# SPA history fallback. Last rule, 200 (rewrite, not redirect) so deep links
+# ORDER IS SEMANTIC. Netlify evaluates redirect rules top to bottom and the
+# FIRST match wins, so every specific rule must precede the catch-all. An
+# earlier draft placed the /* fallback first, which made the /api/* rule below
+# unreachable: /api/anything would have been answered with index.html and a
+# 200, i.e. the SPA silently served in place of an API response.
+#
+# The SPA must never proxy the API. A Netlify rewrite to api-ess.widedrop.com
+# would make the API same-ORIGIN, defeating the CORS allowlist and putting an
+# uncontrolled CDN in front of authenticated responses. Explicitly refused:
+# ---------------------------------------------------------------------------
+[[redirects]]
+  from   = "/api/*"
+  to     = "/index.html"
+  status = 404
+
+# ---------------------------------------------------------------------------
+# SPA history fallback. LAST rule, 200 (rewrite, not redirect) so deep links
 # such as /payslips/<id> render the app instead of Netlify's 404 page.
 # force = false, so a real file on disk always wins over the fallback.
 # ---------------------------------------------------------------------------
@@ -267,14 +418,6 @@ Netlify's merge semantics from emitting two conflicting `Content-Security-Policy
   to     = "/index.html"
   status = 200
   force  = false
-
-# The SPA must never proxy the API. A Netlify rewrite to api-ess.widedrop.com
-# would make the API same-ORIGIN, defeating the CORS allowlist and putting an
-# uncontrolled CDN in front of authenticated responses. Explicitly refused:
-[[redirects]]
-  from   = "/api/*"
-  to     = "/index.html"
-  status = 404
 
 # ---------------------------------------------------------------------------
 # Security headers — everything EXCEPT Content-Security-Policy (see §2.3).
@@ -330,20 +473,56 @@ Its only variable input is `VITE_API_BASE_URL`, so a preview build gets the stag
 
 ```
 # apps/web/dist/_headers  — GENERATED, do not edit, do not commit
+# ${CSP_HEADER_NAME} is "Content-Security-Policy-Report-Only" when CSP_REPORT_ONLY=true
+# (exactly one release, per SECURITY.md §6.3), otherwise "Content-Security-Policy".
 /*
-  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'none'; style-src-elem 'self'; img-src 'self' blob:; font-src 'self'; connect-src 'self' ${VITE_API_BASE_URL}; manifest-src 'self'; worker-src 'self'; form-action 'none'; frame-ancestors 'none'; frame-src 'none'; base-uri 'none'; object-src 'none'; media-src 'none'; upgrade-insecure-requests; require-trusted-types-for 'script'; trusted-types default; report-uri ${VITE_API_BASE_URL}/api/v1/csp-report
+  ${CSP_HEADER_NAME}: default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'none'; style-src-elem 'self'; img-src 'self' blob:; font-src 'self'; connect-src 'self' ${VITE_API_BASE_URL}; manifest-src 'self'; worker-src 'self'; form-action 'none'; frame-ancestors 'none'; frame-src 'none'; base-uri 'none'; object-src 'none'; media-src 'none'; upgrade-insecure-requests; require-trusted-types-for 'script'; trusted-types default; report-uri ${VITE_API_BASE_URL}/api/v1/csp-report; report-to csp
+  Reporting-Endpoints: csp="${VITE_API_BASE_URL}/api/v1/csp-report"
 ```
+
+`Reporting-Endpoints` is generated here, not in `netlify.toml`, for the same reason the CSP
+is: its value contains `VITE_API_BASE_URL` and therefore varies by deploy context. It is the
+header `report-to csp` resolves against; without it the `report-to` directive is inert
+(R-14).
+
+**The report endpoint is cross-origin, and that is fine.** A CSP report is sent by the
+browser as an opaque `POST` that is not subject to `connect-src` and not preceded by a CORS
+preflight, so no allowlist entry is needed and none is added. `POST /api/v1/csp-report` is
+`public: true`, CSRF- and CORS-exempt (`SECURITY.md` §3.5 clause 7), accepts
+`application/csp-report` and `application/reports+json` through a **route-scoped**
+content-type parser, is capped at 8 KiB, rate-limited `ip` 60/min, sampled at 10 % into
+structured logs, and **never writes an `audit_event`**.
+
+> **Reconciliation R-19:** like the SES webhook (R-4), `POST /api/v1/csp-report` must appear
+> in `API.md` §13 with a `public: true` guard block and an entry in the boot-time route
+> assertion's public allowlist (`SECURITY.md` §4.8), or the "every route declares a
+> permission" check fails at boot.
 
 Build-time assertions in the same script, each failing the build:
 
 1. `VITE_API_BASE_URL` is an absolute `https://` origin with no path and no `*`.
-2. In the `production` context it equals exactly `https://api-ess.widedrop.com`.
+2. In the `production` context it equals exactly `https://api-ess.widedrop.com`, and
+   `CSP_REPORT_ONLY` is `false` unless the release is explicitly the one report-only release
+   (the flag is recorded in the deploy message so it cannot be left on by accident).
 3. No `VITE_*` variable name matches `/KEY|SECRET|TOKEN|PASSWORD|PEPPER/i`.
-4. `grep -c 'style="' dist/**/*.html` is `0`, and no emitted JS contains `.setAttribute('style'` —
-   the no-inline-style guarantee that lets `style-src 'self'` stand (`SECURITY.md` §6.3).
+4. `grep -c 'style="' dist/**/*.html` is `0`, and no emitted JS contains `.setAttribute('style'`
+   or `.innerHTML =` — the no-inline-style guarantee that lets `style-src 'self'` stand
+   (`SECURITY.md` §6.3). **This does not forbid React's `style` prop.** React assigns
+   individual properties through CSSOM (`node.style.color = …`), which no CSP directive
+   governs; `style-src-attr 'none'` blocks only the HTML `style` **attribute**. The
+   prototype's inline style objects — which carry most of its visual language
+   (`design/DESIGN-SYSTEM.md` §1–§3) — are therefore preserved unchanged. The assertion
+   exists to catch server-rendered or string-built markup, not to force a refactor of the
+   UI source of truth.
 5. `apps/web/public/_headers` and `apps/web/public/_redirects` **do not exist** (they would be
    copied into `dist` and merged with the generated file). _Amend `SECURITY.md` §6.4, which
    mentions `apps/web/public/_headers`: that file is not used._
+6. `dist/config.json` (if emitted) parses, contains only `apiBaseUrl`, `appEnv`, `buildSha`
+   and `sentryDsn`, and contains **no** key matching `/KEY|SECRET|TOKEN|PASSWORD|PEPPER/i`.
+   `netlify.toml` already marks it `no-store`; this asserts it is safe to serve at all.
+7. Every font referenced by the emitted CSS resolves to a file under `dist/fonts/`; no
+   `@import` or `<link>` points at an external host (`style-src 'self'`, `font-src 'self'`).
+8. The **fabrication gate** and the **design-token gate** of §2.8 both pass.
 
 ### 2.4 Deploy previews
 
@@ -352,6 +531,18 @@ Build-time assertions in the same script, each failing the build:
 - They point at `api-ess-staging.widedrop.com`, which has its **own** origin allowlist, its
   own database and no production data. `*.netlify.app` is **never** added to the production
   API's `ALLOWED_ORIGINS` (`SECURITY.md` §6.5).
+- **How a preview origin is allowed without a wildcard.** A deploy-preview host is
+  `deploy-preview-<n>--widedrop-ess.netlify.app`, and `<n>` is unbounded, so an exact-string
+  allowlist cannot enumerate them — while §7.4 refusal 7 rejects `*` outright. The
+  resolution, and it is the only place in the system where a pattern is permitted: the
+  staging API additionally reads `ALLOWED_ORIGIN_PATTERNS`, a comma-separated list of
+  **anchored** regular expressions, and the boot check refuses the variable entirely when
+  `NODE_ENV=production`. Staging sets exactly one:
+  `^https://deploy-preview-\d{1,6}--widedrop-ess\.netlify\.app$`. It is anchored at both
+  ends, the host label is fixed, and `\d{1,6}` cannot match a dot — so
+  `https://deploy-preview-1--widedrop-ess.netlify.app.evil.test` does not match. A unit test
+  asserts that and eight other near-miss strings. Production's `ALLOWED_ORIGIN_PATTERNS` is
+  unset, and the boot check treats a set value as a fatal misconfiguration, not a warning.
 - Because a preview origin is `*.netlify.app`, it is **cross-site** with the staging API, so
   the staging API sets `COOKIE_SAMESITE=none`. This is an accepted, staging-only relaxation;
   the boot check in §7.4 refuses `SameSite=None` when `NODE_ENV=production`.
@@ -371,9 +562,23 @@ npx netlify-cli@17 deploy \
   --message="ess-web ${GITHUB_SHA::7}"
 ```
 
-`netlify.toml` is still read from the repository base on a CLI deploy, so redirects and
-headers apply. The upload is an atomic, immutable deploy with its own permalink — which is
-what makes the one-click rollback in §8.6 instant.
+The CLI reads `netlify.toml` **from the current working directory**, not from the site's
+configured "Configuration file path" — that setting governs Netlify-side builds only. So the
+deploy job must place the file where the CLI will find it, as its first step:
+
+```bash
+cp infra/netlify/netlify.toml ./netlify.toml     # committed source of truth → CLI cwd
+node scripts/assert-netlify-config.mjs           # parses it; fails if publish != "dist",
+                                                 # if /api/* is not before /*, or if any
+                                                 # header name also appears in dist/_headers
+```
+
+With the file in place the redirects and headers apply to the uploaded deploy. The upload is
+atomic and immutable and gets its own permalink — which is what makes the one-click rollback
+in **§8.4** instant. (`dist/_headers` is merged by Netlify with `netlify.toml`'s headers;
+the assertion above is what enforces the §2.2 rule that no header name may appear in both,
+because a duplicate `Content-Security-Policy` is emitted twice and browsers then enforce the
+**intersection** — usually breaking the app in a way that only shows up in production.)
 
 ### 2.6 What is NOT changed on `widedrop.com`
 
@@ -387,8 +592,19 @@ what makes the one-click rollback in §8.6 instant.
 | Marketing site TLS certificate                                                        | **none**; `ess` gets its own certificate on its own site             |
 | Marketing site headers/CSP                                                            | **none**; Netlify headers are per-site, never inherited across sites |
 
-**The one shared resource is the DNS zone.** Two records are added to it, both leaf `CNAME`s
-on previously unused labels. Adding a subdomain record cannot affect apex resolution.
+**The one shared resource is the DNS zone.** Four records are added to it (two production,
+two staging), all leaf `CNAME`s on previously unused labels. Adding a subdomain record
+cannot affect apex resolution.
+
+**HSTS does not leak upward.** `Strict-Transport-Security … includeSubDomains` is served on
+`ess.widedrop.com`, and an HSTS policy applies to the **issuing host and its subdomains
+only** — `*.ess.widedrop.com`, which is an empty set here. It cannot reach `widedrop.com`,
+`www.widedrop.com` or any sibling label. This is why the header is safe to send from the ESS
+site without the marketing owner's involvement, and it is also why **`preload` is deliberately
+absent**: preloading is submitted per registrable domain and would pull the entire
+`widedrop.com` zone — including the marketing site and any legacy `http://` host — into the
+browser preload list irreversibly for months. Adding `preload` is a separate decision with
+the marketing owner, not part of the ESS rollout.
 
 ### 2.7 DNS records to add
 
@@ -432,6 +648,26 @@ curl -s https://api-ess.widedrop.com/api/v1/healthz   # {"status":"ok"}
 
 Capture `dig` output for the whole zone **before** the change into
 `infra/dns/widedrop.com.before.txt` and diff afterwards. The diff must contain only additions.
+
+### 2.8 Build-time gates that enforce directives 1, 2 and 9
+
+These are deployment controls, not style preferences: they are the only automated point at
+which "no invented data" and "the prototype is the source of truth" stop being intentions.
+All four run in `ci.yml` **and** again in `deploy.yml` before the upload, and each fails the
+build.
+
+| Gate                                | Script                                        | What it asserts                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ----------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Fabrication gate** (directive 2)  | `apps/web/scripts/assert-no-fixture-data.mjs` | The production bundle contains no sample dataset and no mocking layer. Concretely: no module under `apps/web/src/**` outside `**/__fixtures__/**` and `**/*.test.*` exports an array of operational-looking literals; the identifiers `PAYSLIPS`, `PROFILE`, `PEOPLE`, `ANN`, `BAL`, `EXP0`, `TK0`, `APR0`, `HIS0`, `LET0`, `DOCS`, `FORM16`, `TAXQ`, `BENEFITS`, `DEPENDENTS`, `HOL`, `LEAVES0`, `FAQ` and `POLICIES` do not appear in `dist/assets/*.js`; and `msw`, `@faker-js/faker`, `chance` and `casual` are not in the production dependency closure. The prototype's fixtures defined the layout and the copy tone; shipping one of them would put an invented rupee amount in front of an employee. |
+| **Empty-state gate** (directive 9)  | `apps/web/scripts/empty-state.spec.ts`        | Every screen renders against a **zero-row** API: the suite mounts each of the thirteen routes of `design/DESIGN-SYSTEM.md` §6 (plus the HR and Accounts routes) with every collection endpoint answering `{"data":[],"meta":{"total":0}}` and every scalar answering `null`, and asserts for each screen that it renders without throwing, renders the designed empty block of §8 (dashed border, glyph, headline, explanation), shows `—` in `--text-muted` for every metric tile, and contains **no digit** outside a date, a label or a legitimate zero. A screen that renders a blank box, a spinner that never resolves, or a number is a failure.                                                       |
+| **Design-token gate** (directive 1) | `apps/web/scripts/assert-design-tokens.mjs`   | Every hex colour, radius, sidebar width, breakpoint and font size emitted into `dist` is drawn from `design/DESIGN-SYSTEM.md`. The script parses that document's tables into the allowed set, scans the emitted CSS and JS for `#rrggbb` literals and for the six geometry constants (`248`, `72`, `880`, `820`, `66`, `40`), and fails on any value not in the set. It also asserts the nav group names and item order of §6 appear in the built navigation module in exactly that sequence.                                                                                                                                                                                                                 |
+| **Netlify-config gate**             | `scripts/assert-netlify-config.mjs`           | `publish` is `dist`; the `/api/*` rule precedes `/*`; no header name appears in both `netlify.toml` and `dist/_headers`; `dist/_headers` exists and its CSP `connect-src` equals `VITE_API_BASE_URL`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+
+The empty-state gate is the one that would otherwise be skipped, because an empty system is
+not what a developer looks at day to day. It is a **required status check** (§8.3) precisely
+for that reason, and §11.7 Q8 repeats it by hand each quarter against a real, freshly
+migrated database — the automated version proves the components, the manual version proves
+the whole deployed stack.
 
 ---
 
@@ -478,8 +714,14 @@ envVarGroups:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: TZ
+        value: UTC # R-16: containers are UTC; business dates resolve in organization.timezone
       - key: LOG_LEVEL
         value: info
+      - key: HOST
+        value: 0.0.0.0
+      - key: PRIVATE_PORT
+        value: '4001' # /readyz + /metrics listener; Render routes only PORT (§9.2)
       - key: API_PUBLIC_URL
         value: https://api-ess.widedrop.com
       - key: WEB_PUBLIC_URL
@@ -496,6 +738,18 @@ envVarGroups:
         value: strict
       - key: COOKIE_SECURE
         value: 'true'
+      - key: MFA_ISSUER_LABEL
+        value: Widedrop ESS
+      - key: HIBP_TIMEOUT_MS
+        value: '2000'
+      - key: PASSWORD_PEPPER_ACTIVE_VERSION
+        value: '1'
+      - key: AUDIT_CHAIN_ACTIVE_VERSION
+        value: '1'
+      - key: BLIND_INDEX_ACTIVE_VERSION
+        value: '1'
+      - key: DB_STATEMENT_TIMEOUT_MS
+        value: '15000'
       - key: RATE_LIMIT_STORE
         value: postgres
       - key: STORAGE_DRIVER
@@ -520,16 +774,31 @@ envVarGroups:
         value: helpdesk@widedroptech.com
       - key: MAIL_CONFIGURATION_SET
         value: ess-prod
+      - key: SES_SNS_TOPIC_ARN
+        value: arn:aws:sns:ap-south-1:<aws-account-id>:ess-prod-events
+      # sns.ap-south-1.amazonaws.com is NOT optional: §6.4 step 2 fetches the SNS
+      # SigningCertURL to verify the webhook signature, and an egress allowlist that
+      # omits it turns every bounce and complaint into a 403 the system reports as an
+      # attack. Omitting it was a real defect in an earlier draft.
       - key: OUTBOUND_ALLOWLIST
-        value: api.pwnedpasswords.com,email.ap-south-1.amazonaws.com,<r2-account-id>.r2.cloudflarestorage.com
+        value: api.pwnedpasswords.com,email.ap-south-1.amazonaws.com,sns.ap-south-1.amazonaws.com,<r2-account-id>.r2.cloudflarestorage.com
       - key: HIBP_ENABLED
         value: 'true'
       - key: CLAMAV_HOST
         value: ess-clamav # Render private-service DNS name
       - key: CLAMAV_PORT
         value: '3310'
+      # NOT a guess, and not left "confirm in the dashboard". The rate limiter, the
+      # lockout counter and every ip_hash key on this system are derived from the
+      # address this produces; a wrong value means an attacker supplies their own
+      # rate-limit bucket by prepending X-Forwarded-For. Determine it ONCE at
+      # bootstrap (§11.1 B5) by calling GET /api/v1/debug/forwarded (a staging-only
+      # route) through the real edge and reading back the full chain, then pin the
+      # observed proxy addresses here as exact CIDRs. Re-verify at each quarterly
+      # review (§11.7 Q6) and after any platform migration. `true`, `0.0.0.0/0` and
+      # a bare hop count are all refused at boot (§7.4 refusal 14).
       - key: TRUSTED_PROXY_CIDRS
-        value: 10.0.0.0/8 # Render's edge; confirm in the dashboard
+        value: 10.0.0.0/8 # placeholder until B5 records the observed value
       - key: ACCESS_TOKEN_TTL_SECONDS
         value: '600'
       - key: REFRESH_TOKEN_TTL_DAYS
@@ -568,6 +837,10 @@ envVarGroups:
         sync: false
       - key: STORAGE_SECRET_ACCESS_KEY
         sync: false
+      - key: SENTRY_TRACES_SAMPLE_RATE
+        value: '0.05'
+      - key: METRICS_ENABLED
+        value: 'true'
       - key: SENTRY_DSN
         sync: false
       - key: METRICS_BEARER_TOKEN
@@ -598,17 +871,35 @@ services:
         value: api
       - key: PORT
         value: '4000'
-      - key: DATABASE_URL # through PgBouncer, transaction pooling
-        value: postgresql://ess_app:__FROM_SECRET__@ess-pgbouncer:6432/widedrop_ess?pgbouncer=true&connection_limit=8&sslmode=disable&application_name=ess-api
-      - key: DIRECT_DATABASE_URL # straight to Postgres, session scope
-        fromDatabase:
-          name: ess-postgres
-          property: connectionString
-      - key: APP_VERSION
-        fromService:
-          type: web
-          name: ess-api
-          property: commitSha
+      # Both URLs are `sync: false` and typed into the dashboard in full, because
+      # they embed the ess_app password. An earlier draft wrote a literal
+      # `__FROM_SECRET__` placeholder into a synced `value:` — which would have been
+      # committed to git verbatim AND pushed to the service as the real password,
+      # failing the deploy in the best case and committing a credential shape in the
+      # worst. There is no interpolation syntax in a Render blueprint; a value is
+      # either literal or absent.
+      #
+      # DATABASE_URL  = postgresql://ess_app:<pw>@ess-pgbouncer:6432/widedrop_ess
+      #                 ?pgbouncer=true&connection_limit=8&pool_timeout=10
+      #                 &sslmode=disable&application_name=ess-api
+      #   sslmode=disable is the ONE documented exception of §7.4 refusal 6, recognised
+      #   by the ess-pgbouncer host; PgBouncer re-establishes TLS to Postgres itself.
+      - key: DATABASE_URL # through PgBouncer, transaction pooling, role ess_app
+        sync: false
+      # DIRECT_DATABASE_URL = postgresql://ess_app:<pw>@<pg-host>:5432/widedrop_ess
+      #                 ?sslmode=verify-full
+      #                 &sslrootcert=/etc/ssl/certs/render-postgres-ca.pem
+      #                 &connection_limit=2&application_name=ess-api-direct
+      #   NOT `fromDatabase.connectionString`: that property yields the OWNER
+      #   (ess_owner) credentials, which §4.4 forbids the application from ever
+      #   holding, and carries no sslmode, which §7.4 refusal 6 rejects at boot.
+      - key: DIRECT_DATABASE_URL # straight to Postgres, session scope, role ess_app
+        sync: false
+      # APP_VERSION is baked into the image by the Dockerfile's GIT_SHA build arg.
+      # `fromService … property: commitSha` is meaningless for a `runtime: image`
+      # service (there is no connected repository to take a commit from) and would
+      # clobber the correct value with an empty string, breaking GET /api/v1/version and the
+      # `version` field on every log line.
 
   # -------------------------------------------------------------- WORKER ---
   - type: worker
@@ -631,23 +922,43 @@ services:
         value: '15000'
       - key: WORKER_CONCURRENCY
         value: '4'
-      # The worker bypasses PgBouncer: pg_advisory_lock() is SESSION-scoped and
-      # does not survive transaction pooling (§4.3).
+      - key: TZ
+        value: UTC
+      # The worker bypasses PgBouncer: pg_advisory_lock() is SESSION-scoped and does
+      # not survive transaction pooling (§4.3). Both URLs are the SAME string and both
+      # are `sync: false`, typed in full:
+      #
+      #   postgresql://ess_job:<pw>@<pg-host>:5432/widedrop_ess
+      #     ?sslmode=verify-full
+      #     &sslrootcert=/etc/ssl/certs/render-postgres-ca.pem
+      #     &connection_limit=5&application_name=ess-worker
+      #
+      # role ess_job, NOT ess_app (jobs act system-wide and need BYPASSRLS, §4.4) and
+      # NOT `fromDatabase.connectionString` (that is ess_owner, forbidden at runtime,
+      # and carries no sslmode so §7.4 refusal 6 would refuse to boot the worker —
+      # the exact failure an earlier draft would have shipped).
       - key: DATABASE_URL
-        fromDatabase:
-          name: ess-postgres
-          property: connectionString
+        sync: false
       - key: DIRECT_DATABASE_URL
-        fromDatabase:
-          name: ess-postgres
-          property: connectionString
+        sync: false
 
   # ------------------------------------------------------------ PGBOUNCER ---
+  # NOT the stock upstream image. `SERVER_TLS_CA_FILE` must point at a file that
+  # exists INSIDE the pooler container, and `docker.io/edoburu/pgbouncer` does not
+  # ship the provider CA — an earlier draft pointed it at a path that only exists in
+  # the API image, so the pooler would have failed to start (or, worse, silently
+  # fallen back to an unverified server connection). CI therefore builds a four-line
+  # image, `infra/pgbouncer/Dockerfile`, from the upstream one plus:
+  #   COPY infra/certs/render-postgres-ca.pem /etc/pgbouncer/render-postgres-ca.pem
+  # and pushes it to ghcr.io/widedrop/ess-pgbouncer:<sha> alongside the API image.
   - type: pserv # private service: no public URL, ever
     name: ess-pgbouncer
     runtime: image
     image:
-      url: docker.io/edoburu/pgbouncer:1.23.1
+      url: ghcr.io/widedrop/ess-pgbouncer:REPLACED_BY_CI
+      creds:
+        fromRegistryCreds:
+          name: ghcr-widedrop
     plan: starter
     region: singapore
     numInstances: 1
@@ -662,18 +973,48 @@ services:
         value: transaction
       - key: MAX_CLIENT_CONN
         value: '400'
+      # DEFAULT_POOL_SIZE is per (user, database) PAIR, not per pooler. Two runtime
+      # roles could therefore reach 2 × 25 server connections; only ess_app connects
+      # through the pooler (§4.2), so the real figure is 25. MAX_DB_CONNECTIONS caps
+      # it regardless of how many roles appear later.
       - key: DEFAULT_POOL_SIZE
         value: '25'
+      - key: MAX_DB_CONNECTIONS
+        value: '40'
       - key: RESERVE_POOL_SIZE
         value: '5'
       - key: SERVER_TLS_SSLMODE
         value: verify-full
       - key: SERVER_TLS_CA_FILE
-        value: /etc/ssl/certs/render-postgres-ca.pem
+        value: /etc/pgbouncer/render-postgres-ca.pem
+      # Client-side auth. AUTH_TYPE alone is not enough: pgbouncer needs the userlist
+      # it authenticates clients against. AUTH_USER + AUTH_QUERY makes it look the
+      # hash up in Postgres itself, which avoids a second copy of the credential in a
+      # file — ess_auth is a dedicated NOLOGIN-adjacent role holding EXECUTE on one
+      # SECURITY DEFINER function that returns (usename, passwd) for ess_app only
+      # (§4.4). AUTH_TYPE=scram-sha-256 then verifies the client against that hash.
       - key: AUTH_TYPE
         value: scram-sha-256
+      - key: AUTH_USER
+        value: ess_auth
+      - key: AUTH_QUERY
+        value: SELECT usename, passwd FROM ess_ops.pgbouncer_get_auth($1)
+      - key: AUTH_DBNAME
+        value: widedrop_ess
+      - key: DATABASE_URL # the ess_auth credential the AUTH_QUERY runs as
+        sync: false
+      # Client→pooler TLS. The hop never leaves Render's private network, so plaintext
+      # here is the documented exception of §4.2/§7.4 refusal 6. Set CLIENT_TLS_SSLMODE
+      # to `require` (and the API URL to sslmode=require) if the team prefers no
+      # plaintext anywhere; the cost is a small CPU increase on a starter instance.
+      - key: CLIENT_TLS_SSLMODE
+        value: disable
       - key: IGNORE_STARTUP_PARAMETERS
         value: extra_float_digits,options,search_path
+      - key: SERVER_RESET_QUERY
+        value: DISCARD ALL # DATA-MODEL.md §1.8.2 depends on this
+      - key: QUERY_WAIT_TIMEOUT
+        value: '15' # fail fast rather than queue behind an exhausted pool
 
   # --------------------------------------------------------------- CLAMAV ---
   - type: pserv
@@ -684,11 +1025,51 @@ services:
     plan: standard # 2 GB — the signature database needs it
     region: singapore
     numInstances: 1
+    # Without a persistent disk the ~1.3 GB signature database is re-downloaded on
+    # every restart and deploy: several minutes during which CLAMAV_HOST answers but
+    # every upload lands QUARANTINED (§7.1, R-10). The disk makes a restart a restart.
+    disk:
+      name: clamav-db
+      mountPath: /var/lib/clamav
+      sizeGB: 5
     envVars:
       - key: CLAMAV_NO_MILTERD
         value: 'true'
       - key: FRESHCLAM_CHECKS
         value: '4'
+
+  # ---------------------------------------------------------- BACKUP CRON ---
+  # The weekly off-provider dump of §4.5. It is one of exactly TWO platform-cron
+  # jobs in the system (the other is the quarterly restore drill, §11.5); everything
+  # else is scheduled inside the worker (§3.5). It is a platform cron because it must
+  # keep running when the application cannot, and because it must not share the
+  # worker's credentials.
+  - type: cron
+    name: ess-backup-weekly
+    runtime: image
+    image:
+      url: ghcr.io/widedrop/ess-backup:REPLACED_BY_CI # pg_dump 16 + age + awscli
+      creds:
+        fromRegistryCreds:
+          name: ghcr-widedrop
+    plan: starter
+    region: singapore
+    schedule: '17 19 * * 0' # Sunday 19:17 UTC = Monday 00:47 IST, outside every window
+    envVars:
+      - key: TZ
+        value: UTC
+      - key: BACKUP_DATABASE_URL # role ess_backup, read-only, sslmode=verify-full
+        sync: false
+      - key: BACKUP_AGE_RECIPIENT # an age PUBLIC key — not a secret, but env-supplied
+        sync: false
+      - key: BACKUP_BUCKET
+        value: widedrop-ess-backup
+      - key: BACKUP_ENDPOINT
+        value: https://<backup-r2-account-id>.r2.cloudflarestorage.com
+      - key: BACKUP_ACCESS_KEY_ID # SECOND cloud account; cannot read the prod bucket
+        sync: false
+      - key: BACKUP_SECRET_ACCESS_KEY
+        sync: false
 ```
 
 ### 3.3 `apps/api/Dockerfile` — production
@@ -779,6 +1160,38 @@ ENTRYPOINT ["/usr/bin/tini","-g","--"]
 CMD ["node","apps/api/dist/entrypoint.js"]
 ```
 
+**`.dockerignore` is mandatory and is part of this specification.** Stage 2 runs `COPY . .`.
+Without a `.dockerignore` that copy pulls the build context wholesale into an image layer —
+including `.env` and `.env.local` if a developer ever builds locally, `.git` (every secret
+ever committed and force-pushed, per §7.6), `node_modules` (defeating the deps-stage cache),
+`.storage`, `.mail` and the whole `design/` and `docs/` tree. Stage 3 copies selectively, so
+none of it reaches the runtime image — but a build layer is still pushed to GHCR, and
+`docker history` reads it. The committed file at repository root:
+
+```gitignore
+.git
+.github
+node_modules
+**/node_modules
+**/dist
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+.storage
+.mail
+docs
+design
+infra/dns
+coverage
+*.log
+```
+
+A CI step asserts the file exists and that `docker build --no-cache` produces a context
+under 5 MiB; a context that suddenly grows is almost always a `.dockerignore` regression.
+
 `apps/api/dist/entrypoint.js` branches on `SERVICE_ROLE`, so one image serves both services:
 
 ```
@@ -831,14 +1244,23 @@ been load-tested with concurrent claimants.
 
 ### 3.5 Scheduling lives in the worker, not in the platform
 
-All 21 named jobs (`DATA-MODEL.md` §17.5) plus `email-dispatch` are scheduled _inside_ the
+Every job in the named-job list of `DATA-MODEL.md` §17.5 — including `email-dispatch`, and
+including the `worker-heartbeat` job that R-17 adds to that list — is scheduled _inside_ the
 worker process from a single table-driven timer, each claiming an `ess_ops.background_job`
 row by lease (`lease_owner`, `lease_expires_at`). Rationale: it is host-portable (moving to
 Fly.io changes nothing), it is testable in CI with no platform involved, a missed tick is
 visible as a `PENDING` row rather than vanishing, and the lease makes a duplicate run
-impossible even if a second worker is accidentally started. Platform cron (`type: cron` on
-Render) is used for exactly one thing — the quarterly restore drill in §11.5 — because that
-one must run _outside_ the application.
+impossible even if a second worker is accidentally started. Platform cron (`type: cron` on Render) is used for exactly **two** things, and both are
+things that must keep working when the application does not:
+
+| Platform cron       | Why it cannot live in the worker                                                                                                                                                                                                                        |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ess-backup-weekly` | The off-provider dump (§4.5) is the control that survives "the application, the worker, or the Render account is broken". A backup scheduled by the process it backs up is not a backup. It also runs as `ess_backup`, a role the worker must not hold. |
+| Restore-drill kick  | §11.5's quarterly drill must be initiated outside the system under test.                                                                                                                                                                                |
+
+Nothing else. Adding a third is a design change, not a configuration change, because every
+platform-cron job is invisible to `ess_ops.background_job` and therefore to the "a missed
+tick is a `PENDING` row" guarantee.
 
 ### 3.6 Deploy mechanics on Render
 
@@ -936,21 +1358,48 @@ part of the encryption AAD (`SECURITY.md` §7.2).
 
 ### 4.2 Connection URLs — there are two, and the distinction is load-bearing
 
-| Variable              | Points at            | Used by                                                                                                              | Pool mode   |
-| --------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------- |
-| `DATABASE_URL`        | `ess-pgbouncer:6432` | the **API**                                                                                                          | transaction |
-| `DIRECT_DATABASE_URL` | `ess-postgres:5432`  | the **worker**, `prisma migrate`, `prisma db execute`, the reference seeder, the bootstrap script, psql in a runbook | session     |
+**The role matters as much as the host.** An earlier draft gave every URL to `ess_app`; the
+worker needs `BYPASSRLS` (it acts system-wide with no actor context, `DATA-MODEL.md` §1.8.1)
+and therefore connects as `ess_job`, while the API must never hold a `BYPASSRLS` credential.
+
+| Variable                    | Role           | Points at            | Used by                                                                              | Pool mode   |
+| --------------------------- | -------------- | -------------------- | ------------------------------------------------------------------------------------ | ----------- |
+| `DATABASE_URL` (api)        | `ess_app`      | `ess-pgbouncer:6432` | the **API**                                                                          | transaction |
+| `DIRECT_DATABASE_URL` (api) | `ess_app`      | `<pg-host>:5432`     | the API's boot-time privilege and schema-guard assertions only                       | session     |
+| `DATABASE_URL` (worker)     | `ess_job`      | `<pg-host>:5432`     | the **worker** — identical string to its `DIRECT_DATABASE_URL`                       | session     |
+| `MIGRATE_DATABASE_URL`      | `ess_migrator` | `<pg-host>:5432`     | `prisma migrate`, `prisma db execute`, the schema guard — **the migration job only** | session     |
+| `BACKUP_DATABASE_URL`       | `ess_backup`   | `<pg-host>:5432`     | `pg_dump` in `ess-backup-weekly` (§4.5) — read-only                                  | session     |
+| _(bootstrap / psql)_        | `ess_owner`    | `<pg-host>:5432`     | break-glass only, from a Render one-off job, never from an env var (§11.1 B3)        | session     |
 
 ```
+# API
 DATABASE_URL=postgresql://ess_app:<pw>@ess-pgbouncer:6432/widedrop_ess
               ?pgbouncer=true&connection_limit=8&pool_timeout=10
               &application_name=ess-api&sslmode=disable
 DIRECT_DATABASE_URL=postgresql://ess_app:<pw>@<host>:5432/widedrop_ess
               ?sslmode=verify-full&sslrootcert=/etc/ssl/certs/render-postgres-ca.pem
+              &connection_limit=2&application_name=ess-api-direct
+
+# WORKER — ess_job, and both variables carry the SAME string
+DATABASE_URL=postgresql://ess_job:<pw>@<host>:5432/widedrop_ess
+              ?sslmode=verify-full&sslrootcert=/etc/ssl/certs/render-postgres-ca.pem
               &connection_limit=5&application_name=ess-worker
+DIRECT_DATABASE_URL=<identical to the line above>
+
+# MIGRATION JOB (exists only for the duration of that job)
 MIGRATE_DATABASE_URL=postgresql://ess_migrator:<pw>@<host>:5432/widedrop_ess
               ?sslmode=verify-full&sslrootcert=/etc/ssl/certs/render-postgres-ca.pem
+
+# BACKUP CRON
+BACKUP_DATABASE_URL=postgresql://ess_backup:<pw>@<host>:5432/widedrop_ess
+              ?sslmode=verify-full&sslrootcert=/etc/ssl/certs/render-postgres-ca.pem
+              &application_name=ess-backup
 ```
+
+Every one of these is typed into the platform in full as a `sync: false` value. **None is
+derived from Render's `fromDatabase … property: connectionString`**, which yields the
+database owner's credentials and carries no `sslmode` — so using it would both hand the
+application an owner credential (forbidden by §4.4) and trip §7.4 refusal 6 at boot.
 
 `sslmode=disable` on the first URL is **only** the API→PgBouncer hop, which never leaves the
 private network; PgBouncer itself connects to Postgres with `SERVER_TLS_SSLMODE=verify-full`,
@@ -984,10 +1433,35 @@ server connections, and a deploy overlap costs nothing. Consequences that must b
 1. **Prepared statements are disabled** by `pgbouncer=true`. This is correct and required —
    without it Prisma will emit `prepared statement "s0" already exists` under load.
 2. **`SET LOCAL` still works**, because it is transaction-scoped. This is what makes the RLS
-   context in `DATA-MODEL.md` §1.8 (`SET LOCAL ess.actor_user_id = …`) safe under transaction
-   pooling. **Plain `SET` must never be used** — it would leak one request's identity into
-   another request that happens to reuse the server connection. Add an ESLint/CI grep that
-   fails on `$executeRaw` containing `SET ` not preceded by `LOCAL`.
+   context in `DATA-MODEL.md` §1.8 safe under transaction pooling. **Plain `SET` must never
+   be used** — it would leak one request's identity into another request that happens to
+   reuse the server connection. Add an ESLint/CI grep that fails on `$executeRaw` containing
+   `SET ` not preceded by `LOCAL`.
+
+   **And the statement must be `set_config`, not `SET LOCAL`.** `DATA-MODEL.md` §1.8.2 writes
+   the context as `SET LOCAL ess.actor_user_id = $2`. PostgreSQL's `SET` is a utility
+   statement: it **cannot take a bind parameter**, so that line is not implementable as
+   written, and the only way to make it run is to interpolate the value into the SQL string —
+   which puts an attacker-influenced identity straight into a statement that governs every
+   RLS policy in the system. It is the highest-value injection point in the design, and it
+   would be introduced by following the schema document literally. The mandated form, which
+   is transaction-scoped in exactly the same way and **is** parameterisable:
+
+   ```ts
+   await tx.$executeRaw`
+     SELECT set_config('ess.organization_id',   ${orgId},      true),
+            set_config('ess.actor_user_id',     ${userId},     true),
+            set_config('ess.actor_employee_id', ${employeeId}, true),
+            set_config('ess.actor_persona',     ${persona},    true),
+            set_config('ess.scopes',            ${scopeCsv},   true);
+   `;
+   ```
+
+   The third argument `true` is `is_local` and is what makes it die with the transaction. A
+   Semgrep rule in `.semgrep/widedrop.yml` fails the build on any `SET LOCAL ess.` appearing
+   in a raw query, and on any `$executeRawUnsafe` anywhere in `apps/api/src/**`. Amend
+   `DATA-MODEL.md` §1.8.2 to show the `set_config` form (**R-20**).
+
 3. **Session-scoped advisory locks do not survive transaction pooling.** `WORKFLOWS.md` §1.7
    has the payroll calculation worker hold `pg_advisory_lock(hashtext('payroll:'||cycle_id))`
    for the whole run — a _session_ lock. Through a transaction pooler the lock would be taken
@@ -1014,31 +1488,47 @@ ALTER ROLE ess_migrator SET lock_timeout = '10s';       -- fail fast rather than
 
 ### 4.4 Least-privilege roles
 
-Four roles, created by the first migration and never merged. **The application never connects
-as the owner.**
+**Five roles**, matching `DATA-MODEL.md` §1.8.1 exactly (R-13), created by the first
+migration and never merged. **The application never connects as the owner, and the API never
+holds a `BYPASSRLS` credential.**
 
-| Role           | `LOGIN`                | Owns objects                         | Privileges                                                                                                                                                                                             | Used by                                               |
-| -------------- | ---------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
-| `ess_owner`    | yes (break-glass only) | **yes** — all schemas, tables, types | full                                                                                                                                                                                                   | nobody at runtime; credentials sealed offline (§11.6) |
-| `ess_migrator` | yes                    | no                                   | `CREATE` on `ess`, `ess_ops`; `ALTER`/`DROP` via ownership delegation; `BYPASSRLS`                                                                                                                     | the CI migration job **only**                         |
-| `ess_app`      | yes                    | no                                   | `SELECT, INSERT, UPDATE, DELETE` on `ess.*` and `ess_ops.*` **minus** the exclusions below; `USAGE` on schemas and sequences; **no** `BYPASSRLS`, **no** `CREATE`, **no** `TRUNCATE`, **no** superuser | the API                                               |
-| `ess_job`      | yes                    | no                                   | as `ess_app`, plus `BYPASSRLS` (jobs act system-wide across tenants and have no actor context)                                                                                                         | the worker                                            |
+| Role           | `LOGIN`                        | `BYPASSRLS` | Owns objects                         | Privileges                                                                                                                                                                                             | Used by                                               |
+| -------------- | ------------------------------ | ----------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
+| `ess_owner`    | **yes, on Render only** (R-13) | no          | **yes** — all schemas, tables, types | full, but every table is `FORCE ROW LEVEL SECURITY` so even the owner is subject to policy                                                                                                             | nobody at runtime; credentials sealed offline (§11.6) |
+| `ess_migrator` | yes                            | **yes**     | no — objects are reassigned (below)  | `CREATE` on `ess`, `ess_ops`; `ALTER`/`DROP` via membership of `ess_owner`                                                                                                                             | the CI/Render migration job **only**                  |
+| `ess_app`      | yes                            | **no**      | no                                   | `SELECT, INSERT, UPDATE, DELETE` on `ess.*` and `ess_ops.*` **minus** the exclusions below; `USAGE` on schemas and sequences; **no** `BYPASSRLS`, **no** `CREATE`, **no** `TRUNCATE`, **no** superuser | the API                                               |
+| `ess_job`      | yes                            | **yes**     | no                                   | as `ess_app`, plus `BYPASSRLS` (jobs act system-wide and have no actor context)                                                                                                                        | the worker                                            |
+| `ess_readonly` | yes                            | no          | no                                   | `SELECT` only, and on nothing in data class M1/M5 (`DATA-MODEL.md` §1.6)                                                                                                                               | the analytics replica; **never** the API or worker    |
+| `ess_backup`   | yes                            | **yes**     | no                                   | `SELECT` on everything (a dump must be complete); no DML, no DDL, no `CONNECT` from anywhere but the backup cron                                                                                       | `ess-backup-weekly` (§4.5) **only**                   |
+| `ess_auth`     | yes                            | no          | no                                   | `EXECUTE` on one `SECURITY DEFINER` function returning `(usename, passwd)` for `ess_app` alone                                                                                                         | PgBouncer's `AUTH_QUERY` (§3.2) **only**              |
 
 ```sql
--- Identity
-CREATE ROLE ess_migrator LOGIN PASSWORD :'migrator_pw' BYPASSRLS;
-CREATE ROLE ess_app      LOGIN PASSWORD :'app_pw'      NOBYPASSRLS;
-CREATE ROLE ess_job      LOGIN PASSWORD :'job_pw'      BYPASSRLS;
+-- Identity. NOINHERIT everywhere: a role must never pick up privileges implicitly.
+CREATE ROLE ess_migrator LOGIN PASSWORD :'migrator_pw' BYPASSRLS   NOINHERIT;
+CREATE ROLE ess_app      LOGIN PASSWORD :'app_pw'      NOBYPASSRLS NOINHERIT;
+CREATE ROLE ess_job      LOGIN PASSWORD :'job_pw'      BYPASSRLS   NOINHERIT;
+CREATE ROLE ess_readonly LOGIN PASSWORD :'ro_pw'       NOBYPASSRLS NOINHERIT;
+CREATE ROLE ess_backup   LOGIN PASSWORD :'backup_pw'   BYPASSRLS   NOINHERIT;
+CREATE ROLE ess_auth     LOGIN PASSWORD :'auth_pw'     NOBYPASSRLS NOINHERIT;
+
+-- Ownership. ess_migrator CREATEs the objects, so without this it would OWN them —
+-- contradicting "ess_owner owns all schemas, tables and types" and making the owner
+-- row in the table above false. Membership + REASSIGN is what keeps it true.
+GRANT ess_owner TO ess_migrator;                 -- NOINHERIT: it must SET ROLE explicitly
+ALTER ROLE ess_migrator SET role = ess_owner;    -- every migration session runs as owner
+
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 REVOKE ALL ON DATABASE widedrop_ess FROM PUBLIC;
-GRANT CONNECT ON DATABASE widedrop_ess TO ess_app, ess_job, ess_migrator;
-GRANT USAGE ON SCHEMA ess, ess_ops TO ess_app, ess_job;
+GRANT CONNECT ON DATABASE widedrop_ess
+  TO ess_app, ess_job, ess_migrator, ess_readonly, ess_backup, ess_auth;
+GRANT USAGE ON SCHEMA ess, ess_ops TO ess_app, ess_job, ess_readonly;
 
 -- Baseline DML
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES    IN SCHEMA ess, ess_ops TO ess_app, ess_job;
 GRANT USAGE, SELECT                  ON ALL SEQUENCES IN SCHEMA ess, ess_ops TO ess_app, ess_job;
+GRANT SELECT                         ON ALL TABLES    IN SCHEMA ess, ess_ops TO ess_backup;
 
--- The audit trail is append-only for everyone but the migrator (DATA-MODEL.md §17.4)
+-- The audit trail is append-only for everyone but the owner (DATA-MODEL.md §17.4)
 REVOKE UPDATE, DELETE, TRUNCATE ON ess.audit_event FROM ess_app, ess_job;
 
 -- No hard deletes on the tables whose lifecycle is a status column (DATA-MODEL.md §18.2)
@@ -1047,35 +1537,79 @@ REVOKE DELETE ON ess.payslip, ess.payroll_run, ess.payroll_cycle, ess.leave_requ
                  ess.helpdesk_ticket, ess.employee, ess.app_user, ess.file_object
   FROM ess_app, ess_job;
 
--- Accounts is scoped away from non-payroll PII at the SQL layer too (SECURITY.md §4.5)
-GRANT SELECT ON ess.payroll_employee_v TO ess_app;
+-- PgBouncer AUTH_QUERY: one function, one role, one user. SECURITY DEFINER so ess_auth
+-- itself needs no privilege on pg_authid, and it returns ess_app and nothing else — a
+-- generic `SELECT usename, passwd FROM pg_shadow` would hand the pooler every hash in
+-- the cluster, including ess_owner's.
+CREATE FUNCTION ess_ops.pgbouncer_get_auth(p_usename text)
+  RETURNS TABLE (usename text, passwd text)
+  LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$
+    SELECT rolname::text, rolpassword::text
+      FROM pg_authid WHERE rolname = p_usename AND rolname = 'ess_app'
+  $$;
+REVOKE EXECUTE ON FUNCTION ess_ops.pgbouncer_get_auth(text) FROM PUBLIC;
+GRANT  EXECUTE ON FUNCTION ess_ops.pgbouncer_get_auth(text) TO ess_auth;
 
--- Future tables created by a later migration inherit the same grants
+-- Future tables created by a later migration inherit the same grants.
+-- DELETE is deliberately NOT in this list. An earlier draft granted it by default,
+-- which silently re-granted DELETE on every future lifecycle table and defeated the
+-- REVOKE above for anything created after the first migration. A migration that
+-- creates a table needing DELETE grants it explicitly, and §4.6 rule 8 checks that
+-- a table in the no-delete class never receives one.
 ALTER DEFAULT PRIVILEGES FOR ROLE ess_migrator IN SCHEMA ess, ess_ops
-  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ess_app, ess_job;
+  GRANT SELECT, INSERT, UPDATE ON TABLES TO ess_app, ess_job;
 ALTER DEFAULT PRIVILEGES FOR ROLE ess_migrator IN SCHEMA ess, ess_ops
-  GRANT USAGE, SELECT ON SEQUENCES TO ess_app, ess_job;
+  GRANT SELECT              ON TABLES    TO ess_backup;
+ALTER DEFAULT PRIVILEGES FOR ROLE ess_migrator IN SCHEMA ess, ess_ops
+  GRANT USAGE, SELECT       ON SEQUENCES TO ess_app, ess_job;
 ```
 
+**What SQL grants cannot do, and the claim removed from this section.** An earlier draft
+carried `GRANT SELECT ON ess.payroll_employee_v TO ess_app` under the heading "Accounts is
+scoped away from non-payroll PII at the SQL layer too". That is not achievable with a grant
+and the line was misleading: **every persona — Employee, Manager, HR and Accounts — shares
+the single `ess_app` connection**, so a grant cannot distinguish them. Persona scoping is
+enforced by (1) the server-side permission check on every route (`SECURITY.md` §4), and
+(2) RLS policies that read `ess.actor_persona` and `ess.scopes` from the transaction context
+set by `set_config` (§4.3). The view still exists and is still the only shape Accounts-facing
+queries select from, but it is a **query-construction** control, not a privilege boundary.
+Saying otherwise would invite an implementer to skip the RLS policy that is actually doing
+the work.
 A boot-time assertion (`apps/api/src/db/assert-privileges.ts`) queries
-`information_schema.role_table_grants` and `pg_roles` and **refuses to start in production**
-if the connected role has `rolbypassrls`, any `TRUNCATE` grant, `UPDATE`/`DELETE` on
-`ess.audit_event`, or a `DELETE` grant on any table in the no-delete list. This turns a
-mis-provisioned database into a failed deploy rather than a silent loss of the audit
-guarantee. It is also asserted in the CI integration suite.
+`information_schema.role_table_grants`, `pg_roles` and `pg_tables` and **refuses to start in
+production** on any of the following. It turns a mis-provisioned database into a failed
+deploy rather than a silent loss of the audit guarantee, and it runs again in the CI
+integration suite.
+
+| #   | Refusal                                                                                                                                                                                               |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `current_user` is `ess_owner` or `ess_migrator` — neither is a runtime role                                                                                                                           |
+| 2   | `SERVICE_ROLE=api` **and** the connected role has `rolbypassrls`                                                                                                                                      |
+| 3   | `SERVICE_ROLE=worker` **and** the connected role is not `ess_job`                                                                                                                                     |
+| 4   | any `TRUNCATE` grant to the connected role                                                                                                                                                            |
+| 5   | `UPDATE` or `DELETE` on `ess.audit_event`                                                                                                                                                             |
+| 6   | a `DELETE` grant on any table in the no-delete list                                                                                                                                                   |
+| 7   | any table in `ess` without both `relrowsecurity` and `relforcerowsecurity` (`DATA-MODEL.md` §1.8.1) — a table with `ENABLE` but not `FORCE` is bypassed by its owner, which R-13 makes reachable here |
+| 8   | `current_setting('search_path')` is not the role-pinned `ess, ess_ops, pg_catalog`                                                                                                                    |
+| 9   | the connected role holds `CREATE` on `ess` or `ess_ops`                                                                                                                                               |
+
+Refusals 2 and 3 replace a single earlier rule that refused **any** `rolbypassrls` on the
+connected role. `ess_job` carries `BYPASSRLS` by design, so that rule would have refused to
+start the worker — taking down the outbox, the accruals and the payroll calculation on the
+first deploy, with an error message that pointed at the database rather than at itself.
 
 ### 4.5 Backups, PITR and the restore drill
 
-| Control                            | Value                                                                                                                                                                                                                                                                                                                                             |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Automated full backup              | daily, provider-managed, encrypted, 07 days retained on `standard` (extend to 30 on the next plan up if policy demands)                                                                                                                                                                                                                           |
-| PITR                               | continuous WAL archiving, any second within the retention window                                                                                                                                                                                                                                                                                  |
-| **RPO**                            | **≤ 5 minutes** (WAL shipping interval); ≤ 24 h in the catastrophic case where WAL is lost and only the daily full survives                                                                                                                                                                                                                       |
-| **RTO**                            | **≤ 2 hours** to a verified, serving system                                                                                                                                                                                                                                                                                                       |
-| Weekly off-provider copy           | `pg_dump -Fc` run by a Render **cron job** in the same private network, encrypted with `age` to an offline public key, written to an R2 bucket in a **different cloud account** with object-lock/immutability for 35 days. This is the control that survives "the Render account is compromised or closed" — a provider-internal backup does not. |
-| Backup integrity                   | the weekly copy is restored into a throwaway database by the same cron job, `pg_restore --list` is diffed against the expected table set, `SELECT count(*)` is compared against the source for six anchor tables, and the result is appended to `docs/runbooks/dr-drill-log.md`. A failure pages.                                                 |
-| Encryption of the dump             | `pg_dump -Fc                                                                                                                                                                                                                                                                                                                                      | age -r <recipient> > ess-<date>.dump.age`; the age identity is in the sealed offline escrow with the KEK (§11.6). **The dump contains ciphertext columns, not plaintext PII** — the envelope encryption means a stolen dump without the KEK yields no PAN, Aadhaar, bank account or address. |
-| What a backup does **not** contain | object storage. R2 has its own versioning + lifecycle (§5). A restore is therefore a _pair_ of restores, and the drill covers both.                                                                                                                                                                                                               |
+| Control                            | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Automated full backup              | daily, provider-managed, encrypted, 07 days retained on `standard` (extend to 30 on the next plan up if policy demands)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| PITR                               | continuous WAL archiving, any second within the retention window                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| **RPO**                            | **≤ 5 minutes** (WAL shipping interval); ≤ 24 h in the catastrophic case where WAL is lost and only the daily full survives                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **RTO**                            | **≤ 2 hours** to a verified, serving system                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Weekly off-provider copy           | `pg_dump -Fc` run by the `ess-backup-weekly` Render **cron service** (§3.2) on the private network **as the read-only `ess_backup` role**, encrypted with `age` to an offline public key (`BACKUP_AGE_RECIPIENT`), written with a **second cloud account's** credentials to an R2 bucket with object-lock for 35 days. This is the control that survives "the Render account is compromised or closed" — a provider-internal backup does not. The cron never holds a write credential to the production bucket, so a compromised backup job cannot corrupt what it backs up.                                                                                                                                                                                                                                                                                                                                                 |
+| Backup integrity                   | the weekly copy is restored into a throwaway database by the same cron job, `pg_restore --list` is diffed against the expected table set, `SELECT count(*)` is compared against the source for six anchor tables, and the result is appended to `docs/runbooks/dr-drill-log.md`. A failure pages.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Encryption of the dump             | `pg_dump -Fc \| age -r $BACKUP_AGE_RECIPIENT > ess-<date>.dump.age`; the matching age **identity** (the private half) is in the sealed offline escrow with the KEK (§11.6), so the cron can write a backup it cannot read. **Be precise about what this protects.** Envelope-encrypted columns (PAN, Aadhaar, UAN, bank account, addresses, personal contact details, ticket bodies, payslip amounts — data classes M1/M5 of `DATA-MODEL.md` §1.6) are ciphertext in the dump and are worthless without the KEK. **Everything else is plaintext**: names, employee codes, work emails, designations, departments, org-level aggregates, `password_hash` (Argon2id + pepper), every blind index, and every `last4`/masked column. `age` is therefore not belt-and-braces — it is the **only** thing protecting that plaintext, which is why the recipient key is offline and the bucket is object-locked in a second account. |
+| What a backup does **not** contain | object storage. R2 has its own versioning + lifecycle (§5). A restore is therefore a _pair_ of restores, and the drill covers both.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 **Quarterly restore drill — the written procedure.** Owner: the on-call engineer. Target:
 complete in under the 2 h RTO. Recorded in `docs/runbooks/dr-drill-log.md` with the real
@@ -1095,8 +1629,10 @@ D6.  Integrity gate — all five must pass, else the drill FAILS and is escalate
        c. SELECT count(*) FROM ess.payslip WHERE status='PUBLISHED';  → matches production
           within the write volume of the 30-minute gap
        d. node apps/api/dist/tools/verify-payslip-digests.js --sample 50
-          → every payslip.input_digest recomputes from its persisted inputs (D3 traceability)
-       e. decrypt one canary row per data_key.purpose with the production KEK
+          → for every sampled payslip, payslip.input_sha256 recomputes from its
+            persisted payroll_input_item / attendance rows and payslip.amount_sha256
+            recomputes from its decrypted payslip_line rows (directive 6 traceability)
+       e. decrypt one canary row per data_encryption_key.purpose with the production KEK
           → proves the KEK escrow and the ciphertexts still agree (SECURITY.md §7.3)
 D7.  Restore the object-storage side: verify 20 sampled file_object rows resolve to a live
      R2 object whose sha256 matches file_object.sha256.
@@ -1115,7 +1651,7 @@ instance _and_ the deploy is frozen (`environment: production` protection is set
 repointed at the restored instance and both services are redeployed; and step D10 is
 replaced by retaining the _old_ instance untouched for 14 days as forensic evidence.
 Any restore that rewinds past a published payroll run additionally requires the §11.2
-reconciliation: re-verify every `payslip.input_digest` and notify Accounts, because a
+reconciliation: re-verify every `payslip.input_sha256` / `amount_sha256` and notify Accounts, because a
 rewind can un-publish a payslip an employee has already seen.
 
 ### 4.6 Migration strategy
@@ -1146,9 +1682,21 @@ Rules the CI migration linter (`scripts/lint-migration.mjs`) enforces by failing
 4. Every new table declares `ENABLE ROW LEVEL SECURITY` plus a tenancy policy in the same
    migration (`DATA-MODEL.md` §1.8), or the linter fails.
 5. `ALTER TYPE … ADD VALUE` is alone in its file and never in the same transaction as a use.
-6. No `GRANT` to `ess_app` that the §4.4 revoke list forbids.
+6. No `GRANT` to `ess_app` or `ess_job` that the §4.4 revoke list forbids, **and** no
+   `ALTER DEFAULT PRIVILEGES … GRANT … DELETE`. A default privilege is invisible in review
+   and applies to every table a later migration creates, so it is the one way the no-delete
+   guarantee can be lost without anyone writing `GRANT DELETE`.
 7. Migration SQL contains no literal credential, no `COPY … FROM PROGRAM`, no `CREATE
-EXTENSION` outside the allowlist.
+EXTENSION` outside the allowlist, and no `SECURITY DEFINER` function that this document or
+   `DATA-MODEL.md` §1.8.1 does not name.
+8. A migration that creates a table named in the no-delete list of §4.4 must contain the
+   matching `REVOKE DELETE` in the same file.
+9. Every new `timestamp` column is `timestamptz` (R-16); a bare `timestamp` fails the lint.
+10. No migration writes an operational row — no `INSERT` into `employee`, `payslip`,
+    `leave_request`, `expense_claim`, `helpdesk_ticket`, `notification`, `announcement` or
+    any balance table. Reference data is seeded by `db:seed:reference` (§11.1 B6), which is
+    audited as `actor_kind='MIGRATION'`; a migration that quietly inserts a row is how a
+    fabricated number reaches the UI with a schema change as its cover.
 
 **How migrations run in the pipeline** (the job between "image pushed" and "API deployed"):
 
@@ -1184,12 +1732,12 @@ EXTENSION` outside the allowlist.
 | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Migration job fails before applying anything                                                                                                           | deploy pipeline stops; **the running API is untouched** and keeps serving                                           | fix forward, re-run                                                                                                                                                                                                                          |
 | Migration partially applied (Postgres DDL is transactional, so this only happens for a multi-statement file with `CONCURRENTLY` or a mid-file failure) | Prisma records the migration as `failed` in `_prisma_migrations`; all later `migrate deploy` runs refuse to proceed | a human inspects, repairs by hand on `DIRECT_DATABASE_URL`, then runs `prisma migrate resolve --applied <name>` (repair completed) or `--rolled-back <name>` (repair reverted); the incident is written up before the next deploy is allowed |
-| Migration applied but the new API fails its health check                                                                                               | Render leaves the previous instances serving and marks the deploy failed                                            | roll the API image back (§8.6). **This is safe precisely because of expand/contract**: the expand-phase schema is always compatible with the previous image.                                                                                 |
+| Migration applied but the new API fails its health check                                                                                               | Render leaves the previous instances serving and marks the deploy failed                                            | roll the API image back (§8.5). **This is safe precisely because of expand/contract**: the expand-phase schema is always compatible with the previous image.                                                                                 |
 | Migration applied, API healthy, data corruption discovered                                                                                             | out of scope for a deploy rollback: PITR restore (§4.5) to the recorded pre-migration LSN, then forward-fix         | incident                                                                                                                                                                                                                                     |
 
 Because expand/contract guarantees schema(N+1) works with app(N), **the API image can always
 be rolled back one version without touching the database.** That is the entire point of the
-discipline, and it is what makes §8.6 a 60-second operation instead of a restore.
+discipline, and it is what makes §8.5 a 60-second operation instead of a restore.
 
 ---
 
@@ -1213,11 +1761,26 @@ Key layout is exactly `SECURITY.md` §5.3.11 — server-generated, no user input
 component:
 
 ```
-ess/<env>/<context>/<yyyy>/<mm>/<uuidv7>.<canonical-ext>
+ess/<env>/<state>/<context>/<yyyy>/<mm>/<uuidv7>.<canonical-ext>
 
-contexts: payslip · form16 · expense-bill · policy-document · letter ·
-          employee-document · payroll-input · ticket-attachment · bank-proof
+<env>     : prod | staging | dev          (exactly these three tokens — NOT the
+                                           NODE_ENV spellings "production"/"development",
+                                           because the lifecycle rules in §5.4 match on
+                                           this literal prefix)
+<state>   : live | quarantine             (an object is written to .../quarantine/...
+                                           and MOVED to .../live/... only when
+                                           file_object.scan_status becomes CLEAN; a
+                                           signed URL is never minted for a quarantine
+                                           key, and §5.4's 30-day rule can only see
+                                           objects that never got promoted)
+<context> : payslip · form16 · expense-bill · policy-document · letter ·
+            employee-document · payroll-input · ticket-attachment · bank-proof
 ```
+
+`file_object.storage_key` persists the **current** key, and the promotion from `quarantine`
+to `live` is a copy-then-delete inside the same transaction that sets `scan_status='CLEAN'`,
+with the new key written back to the row. An earlier draft's layout had no `<state>`
+segment, which left §5.4's `ess/prod/*/quarantine/` lifecycle rule matching nothing.
 
 `file_object.storage_bucket` and `storage_key` persist the location; `sha256`, `byte_size`,
 the sniffed `content_type` and `retention_until` persist alongside (`DATA-MODEL.md` §17.4).
@@ -1225,17 +1788,48 @@ Nothing in the UI ever renders a storage key.
 
 ### 5.2 Access model — private, always, with no exceptions
 
-| Control                   | Setting                                                                                                                                                                                                                                                                                                                                                                                             |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Public access             | **disabled**. No `r2.dev` public development URL, no custom public domain, no public bucket policy. A bucket that is public cannot be made safe by obscure keys.                                                                                                                                                                                                                                    |
-| Credentials               | one R2 API token per environment, scoped to **one bucket**, with `Object Read & Write` only — never `Admin`, never account-wide. Production and staging tokens are different and neither can see the other's bucket.                                                                                                                                                                                |
-| Who holds credentials     | the API and the worker only. **Not CI, not the SPA, not a browser.**                                                                                                                                                                                                                                                                                                                                |
-| Browser → bucket writes   | **do not exist.** Every upload is `multipart/form-data` to the API, which authorizes, validates the magic bytes, re-encodes images, strips EXIF, scans with ClamAV and only then `PutObject`s (`SECURITY.md` §5.3). There is no presigned-PUT path to leave unguarded.                                                                                                                              |
-| Browser → bucket reads    | **only** a presigned `GET`, minted by the API after the entity-level authorization check in `API.md` §11.1, **120 seconds**, single object, `GET` only, no wildcard, with `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox` and `Cache-Control: private, no-store` baked into the signature                              |
-| Pre-signing preconditions | the API mints a URL only when `file_object.scan_status = 'CLEAN'`, `deleted_at IS NULL`, and the re-read `sha256` matches the persisted one; the `audit_event` is written **before** the URL is returned                                                                                                                                                                                            |
-| Encryption at rest        | R2 encrypts every object server-side with AES-256 by default (SSE-managed). On AWS S3 the equivalent is `SSE-KMS` with a customer-managed key and `"s3:x-amz-server-side-encryption": "aws:kms"` enforced by bucket policy. `file_object.is_encrypted_at_rest` records this.                                                                                                                        |
-| Encryption in transit     | HTTPS only; the endpoint is in `OUTBOUND_ALLOWLIST` (`SECURITY.md` §5.5)                                                                                                                                                                                                                                                                                                                            |
-| Second layer              | payslip PDFs and bank proofs are additionally **application-encrypted before upload** with the `BANK`/`STATUTORY` DEK, so a storage compromise alone yields ciphertext. The 120-second signed URL therefore serves a decrypt-on-read stream from the API for those two contexts rather than a direct redirect — the implementer must keep `API.md` §11.2's `?mode=json` shape identical either way. |
+| Control                   | Setting                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Public access             | **disabled**. No `r2.dev` public development URL, no custom public domain, no public bucket policy. A bucket that is public cannot be made safe by obscure keys.                                                                                                                                                                                                       |
+| Credentials               | one R2 API token per environment, scoped to **one bucket**, with `Object Read & Write` only — never `Admin`, never account-wide. Production and staging tokens are different and neither can see the other's bucket.                                                                                                                                                   |
+| Who holds credentials     | the API and the worker only. **Not CI, not the SPA, not a browser.**                                                                                                                                                                                                                                                                                                   |
+| Browser → bucket writes   | **do not exist.** Every upload is `multipart/form-data` to the API, which authorizes, validates the magic bytes, re-encodes images, strips EXIF, scans with ClamAV and only then `PutObject`s (`SECURITY.md` §5.3). There is no presigned-PUT path to leave unguarded.                                                                                                 |
+| Browser → bucket reads    | **only** a presigned `GET`, minted by the API after the entity-level authorization check in `API.md` §11.1, **120 seconds**, single object, `GET` only, no wildcard, with `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox` and `Cache-Control: private, no-store` baked into the signature |
+| Pre-signing preconditions | the API mints a URL only when `file_object.scan_status = 'CLEAN'`, `deleted_at IS NULL`, and the re-read `sha256` matches the persisted one; the `audit_event` is written **before** the URL is returned                                                                                                                                                               |
+| Encryption at rest        | R2 encrypts every object server-side with AES-256 by default (SSE-managed). On AWS S3 the equivalent is `SSE-KMS` with a customer-managed key and `"s3:x-amz-server-side-encryption": "aws:kms"` enforced by bucket policy. `file_object.is_encrypted_at_rest` records this.                                                                                           |
+| Encryption in transit     | HTTPS only; the endpoint is in `OUTBOUND_ALLOWLIST` (`SECURITY.md` §5.5)                                                                                                                                                                                                                                                                                               |
+| Second layer              | payslip PDFs and bank proofs are additionally **application-encrypted before upload** with the `BANK`/`STATUTORY` DEK, so a storage compromise alone yields ciphertext. See the two download paths below — for these contexts there is **no presigned URL at all**.                                                                                                    |
+
+**There are exactly two download paths, and an earlier draft conflated them.** A presigned
+URL points at R2 and is served by R2; R2 cannot decrypt an application-encrypted object, so
+"a 120-second signed URL that serves a decrypt-on-read stream from the API" describes nothing
+that can exist. The two real paths:
+
+| Path                         | Contexts                                                                                                         | Mechanism                                                                                                                                                                                                                                                                                                   |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **A — presigned redirect**   | `expense-bill`, `policy-document`, `letter`, `employee-document`, `form16`, `ticket-attachment`, `payroll-input` | The API authorizes, writes the `audit_event`, then returns `302` to a 120 s presigned `GET` (or the URL itself under `?mode=json`, `API.md` §11.2). `SIGNED_URL_TTL_SECONDS` governs this path.                                                                                                             |
+| **B — API-streamed decrypt** | `payslip`, `bank-proof`                                                                                          | The API authorizes, writes the `audit_event`, fetches the ciphertext object server-side, unwraps the DEK, and **streams plaintext in its own response body**. No presigned URL is minted, `SIGNED_URL_TTL_SECONDS` does not apply, and the object never leaves R2 in a form a browser could fetch directly. |
+
+`API.md` §11.2's response shape is identical for both so the client does not branch on
+context; under `?mode=json` path B returns `{"mode":"stream","href":"/api/v1/files/<id>/content"}`
+and path A returns `{"mode":"redirect","href":"https://…r2…?X-Amz-…","expiresAt":…}`.
+
+**How a download authenticates, since the access token is a Bearer in memory.** A plain
+`<a href download>` or a `window.open` is a top-level navigation and carries **no
+`Authorization` header**, so neither path works that way — and the refresh cookie is
+`__Host-`/`HttpOnly` and is accepted only by `/auth/refresh`, so it cannot stand in for one.
+Every download in the SPA is therefore:
+
+```
+fetch(url, { credentials: 'include', headers: { Authorization: `Bearer ${accessToken}` } })
+  → Response.blob()  → URL.createObjectURL(blob)  → <a download> click  → revokeObjectURL
+```
+
+That is why `img-src` allows `blob:` (§2.3) and why the bucket CORS document of §5.3 exists
+at all: path A's second hop is a cross-origin `fetch` to R2 and needs `GET`/`HEAD` allowed
+from the SPA origin. It also satisfies `Cross-Origin-Embedder-Policy: require-corp`, because
+a CORS-mode `fetch` is a valid CORP source — a bare `<img src="https://…r2…">` would not be,
+and is not used anywhere.
 
 ### 5.3 CORS
 
@@ -1269,13 +1863,28 @@ worker job deletes the object, sets `file_object.deleted_at` and writes an audit
 the fact of deletion is itself auditable. Bucket lifecycle rules exist only as a safety net
 for things the application is not the owner of:
 
-| Rule                             | Prefix                   | Action                                                                                                                                              |
-| -------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Abandoned multipart uploads      | `*`                      | abort after 1 day                                                                                                                                   |
-| Quarantined files never promoted | `ess/prod/*/quarantine/` | delete after 30 days                                                                                                                                |
-| Non-current object versions      | `*`                      | expire 90 days after becoming non-current (a window to undo an accidental overwrite, bounded so it is not an indefinite shadow copy of deleted PII) |
-| Staging bucket                   | `*`                      | delete after 30 days                                                                                                                                |
-| Backup bucket                    | `*`                      | object-lock retain 35 days, then delete                                                                                                             |
+| Rule                             | Prefix                 | Action                                                                                                                                              |
+| -------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Abandoned multipart uploads      | `*`                    | abort after 1 day                                                                                                                                   |
+| Quarantined files never promoted | `ess/prod/quarantine/` | delete after 30 days (matches the `<state>` segment of §5.1)                                                                                        |
+| Non-current object versions      | `*`                    | expire 90 days after becoming non-current (a window to undo an accidental overwrite, bounded so it is not an indefinite shadow copy of deleted PII) |
+| Staging bucket                   | `*`                    | delete after 30 days                                                                                                                                |
+| Backup bucket                    | `*`                    | object-lock retain 35 days, then delete                                                                                                             |
+
+**Verify the provider supports each rule before relying on it.** R2's lifecycle
+implementation has historically covered multipart-upload abort and object expiry but has
+lagged S3 on **non-current version expiration**, and Object Lock is a
+bucket-creation-time-only setting. Two consequences, both to be checked at bootstrap (§11.1
+B1) and re-checked at each quarterly review (§11.7 Q6):
+
+- if non-current version expiry is unavailable, the `file-retention-purge` job issues an
+  explicit `DeleteObjectVersion` for versions older than 90 days as part of its run, so the
+  bound is enforced by the application rather than silently absent;
+- if Object Lock cannot be enabled on `widedrop-ess-backup` at creation, that bucket moves
+  to **AWS S3 `ap-south-1` with Object Lock in compliance mode**. Immutability is the whole
+  point of the off-provider copy; a mutable backup bucket in a second account is a copy, not
+  a control. The extra egress is a few dollars a year because it is only read during a
+  drill.
 
 There is **no** blanket "delete objects older than N years" rule: an 8-year statutory
 retention must not be defeated by a bucket policy, and an early deletion must not be
@@ -1324,6 +1933,13 @@ All of these are in the **`widedroptech.com`** zone. **Nothing here touches `wid
 | `_dmarc`                                      | `TXT`        | `v=DMARC1; p=reject; rua=…; adkim=s; aspf=s`                                                                             | **Week 4+**, the target state                                                                                                                                                           |
 | `mail` (MAIL FROM)                            | `MX` + `TXT` | `10 feedback-smtp.ap-south-1.amazonses.com` / `v=spf1 include:amazonses.com -all`                                        | Custom MAIL FROM domain, so SPF aligns for DMARC rather than relying on DKIM alone                                                                                                      |
 | `_bimi`                                       | —            | —                                                                                                                        | not configured; noted as optional once `p=reject` has held for 30 days                                                                                                                  |
+
+**Exactly one `_dmarc` TXT record exists at any moment.** The three rows above are the three
+successive _values_ of that one record, not three records: a domain publishing two `_dmarc`
+TXT records has **no** valid DMARC policy at all, and every receiver falls back to none.
+Each step is an edit of the existing record, and `dig +short _dmarc.widedroptech.com TXT`
+must return exactly one string after each edit. The same is true of the SPF record on the
+apex, which is why the note there insists on merging rather than adding.
 
 **Escalate `p=none → quarantine → reject` on the schedule above, not immediately** — going
 straight to `reject` before the aggregate reports confirm alignment is how a real
@@ -1460,10 +2076,22 @@ Enforced structurally, not by convention:
 | Mail                 | Mailpit on `localhost:1025`, or the `file` driver writing `.eml`                      | SES with `MAIL_TO_OVERRIDE` to one test mailbox                                      | SES, real recipients                                   |
 | ClamAV               | optional; unavailable ⇒ uploads land `QUARANTINED`, which is the documented behaviour | required                                                                             | required                                               |
 | MFA                  | required for privileged roles, TOTP against a local authenticator                     | same as production                                                                   | same                                                   |
-| Cookies              | `SameSite=Lax`, `Secure=false` (localhost is a secure context exception)              | `SameSite=None; Secure` (deploy previews are cross-site)                             | `SameSite=Strict; Secure`, `__Host-` prefix            |
+| Cookies              | `SameSite=Lax`, `Secure=false`, cookie named **`wd_rt`** — see the note below         | `SameSite=None; Secure`, `__Host-wd_rt`                                              | `SameSite=Strict; Secure`, `__Host-wd_rt`              |
 | `LOG_LEVEL`          | `debug`                                                                               | `info`                                                                               | `info` — `debug` is **refused** at boot                |
 | Deploys              | n/a                                                                                   | auto on merge to `main`, no approval                                                 | manual approval in the `production` GitHub environment |
 | Who can reach the DB | the developer                                                                         | two engineers                                                                        | nobody interactively; break-glass only (§11.6)         |
+
+**The refresh cookie loses its `__Host-` prefix in development, and only there.** The
+`__Host-` prefix is not decoration: a browser **rejects** a `__Host-`-prefixed cookie that
+lacks `Secure`, and `localhost` being a secure _context_ does not make a cookie `Secure`
+without the attribute. Setting `__Host-wd_rt` with `Secure=false`, as an earlier draft's
+matrix implied, means the cookie is silently discarded and every developer's session dies at
+the first refresh — a failure that looks like a bug in the auth code. So: the cookie name is
+`COOKIE_SECURE ? '__Host-wd_rt' : 'wd_rt'`, and §7.4 refusal 21 makes the prefixed name
+mandatory whenever `COOKIE_SECURE=true`. The alternative — running local development over
+HTTPS with `mkcert` — is supported and preferred if the team wants byte-identical cookie
+behaviour everywhere; in that case set `COOKIE_SECURE=true` locally and the prefix returns
+by itself.
 
 **Staging never holds production data.** Not a masked copy, not a subset. A restore drill
 (§4.5) uses a throwaway instance that is destroyed, never staging. This is what keeps the
@@ -1476,19 +2104,23 @@ Legend — **S** = secret (never logged, never in git, never in a `VITE_` name);
 
 #### Core runtime
 
-| Variable              | Purpose                                                        | Example / placeholder          | dev | stg | prod | S   |
-| --------------------- | -------------------------------------------------------------- | ------------------------------ | --- | --- | ---- | --- |
-| `NODE_ENV`            | mode switch; gates every production-only check                 | `production`                   | R   | R   | R    |     |
-| `SERVICE_ROLE`        | `api` \| `worker`; selects the entrypoint branch               | `api`                          | R   | R   | R    |     |
-| `PORT`                | HTTP listen port                                               | `4000`                         | R   | R   | R    |     |
-| `HOST`                | bind address                                                   | `0.0.0.0`                      | R   | R   | R    |     |
-| `LOG_LEVEL`           | pino level; `debug`/`trace` refused when `NODE_ENV=production` | `info`                         | R   | R   | R    |     |
-| `APP_VERSION`         | git SHA, surfaced by `GET /version` and on every log line      | `a1b2c3d`                      |     | R   | R    |     |
-| `BUILT_AT`            | image build timestamp, surfaced by `GET /version`              | `2026-09-29T10:00:00Z`         |     | R   | R    |     |
-| `API_PUBLIC_URL`      | absolute origin of the API; builds absolute links              | `https://api-ess.widedrop.com` | R   | R   | R    |     |
-| `WEB_PUBLIC_URL`      | absolute origin of the SPA; deep links in outbound mail        | `https://ess.widedrop.com`     | R   | R   | R    |     |
-| `ALLOWED_ORIGINS`     | exact CORS allowlist, comma-separated; rejects `*`             | `https://ess.widedrop.com`     | R   | R   | R    |     |
-| `TRUSTED_PROXY_CIDRS` | exact proxy CIDRs for Fastify `trustProxy`; **never `true`**   | `10.0.0.0/8`                   |     | R   | R    |     |
+| Variable                  | Purpose                                                                              | Example / placeholder                                          | dev | stg | prod | S   |
+| ------------------------- | ------------------------------------------------------------------------------------ | -------------------------------------------------------------- | --- | --- | ---- | --- |
+| `NODE_ENV`                | mode switch; gates every production-only check                                       | `production`                                                   | R   | R   | R    |     |
+| `SERVICE_ROLE`            | `api` \| `worker`; selects the entrypoint branch                                     | `api`                                                          | R   | R   | R    |     |
+| `PORT`                    | HTTP listen port                                                                     | `4000`                                                         | R   | R   | R    |     |
+| `HOST`                    | bind address                                                                         | `0.0.0.0`                                                      | R   | R   | R    |     |
+| `LOG_LEVEL`               | pino level; `debug`/`trace` refused when `NODE_ENV=production`                       | `info`                                                         | R   | R   | R    |     |
+| `APP_VERSION`             | git SHA, surfaced by `GET /api/v1/version` (internal listener) and on every log line | `a1b2c3d`                                                      |     | R   | R    |     |
+| `BUILT_AT`                | image build timestamp, surfaced by `GET /api/v1/version`                             | `2026-09-29T10:00:00Z`                                         |     | R   | R    |     |
+| `API_PUBLIC_URL`          | absolute origin of the API; builds absolute links                                    | `https://api-ess.widedrop.com`                                 | R   | R   | R    |     |
+| `WEB_PUBLIC_URL`          | absolute origin of the SPA; deep links in outbound mail                              | `https://ess.widedrop.com`                                     | R   | R   | R    |     |
+| `ALLOWED_ORIGINS`         | exact CORS allowlist, comma-separated; rejects `*`                                   | `https://ess.widedrop.com`                                     | R   | R   | R    |     |
+| `TRUSTED_PROXY_CIDRS`     | exact proxy CIDRs for Fastify `trustProxy`; **never `true`**                         | `10.0.0.0/8`                                                   |     | R   | R    |
+| `PRIVATE_PORT`            | second listener for `/readyz` + `/metrics`; not routed (§9.2)                        | `4001`                                                         |     | R   | R    |
+| `TZ`                      | container timezone; **must be `UTC`** (R-16)                                         | `UTC`                                                          | R   | R   | R    |
+| `ORG_TIMEZONE_FALLBACK`   | used only until the `organization` row exists (§11.1 B8)                             | `Asia/Kolkata`                                                 | R   | R   | R    |
+| `ALLOWED_ORIGIN_PATTERNS` | anchored regexes for deploy-preview origins; **refused in production** (§2.4)        | `^https://deploy-preview-\d{1,6}--widedrop-ess\.netlify\.app$` | —   | R   | —    |     |
 
 #### Database
 
@@ -1496,7 +2128,8 @@ Legend — **S** = secret (never logged, never in git, never in a `VITE_` name);
 | ------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | --- | --- | ---- | ----- |
 | `DATABASE_URL`            | API → PgBouncer (transaction pooling); worker → direct              | `postgresql://ess_app:…@ess-pgbouncer:6432/widedrop_ess?pgbouncer=true&connection_limit=8` | R   | R   | R    | **S** |
 | `DIRECT_DATABASE_URL`     | session-scoped connection: worker advisory locks, migrations, tools | `postgresql://ess_app:…@host:5432/widedrop_ess?sslmode=verify-full`                        | R   | R   | R    | **S** |
-| `MIGRATE_DATABASE_URL`    | `ess_migrator` credentials; exists **only** in the CI migration job | `postgresql://ess_migrator:…@host:5432/…`                                                  | —   | R   | R    | **S** |
+| `MIGRATE_DATABASE_URL`    | `ess_migrator` credentials; exists **only** in the migration job    | `postgresql://ess_migrator:…@host:5432/…`                                                  | —   | R   | R    | **S** |
+| `BACKUP_DATABASE_URL`     | `ess_backup`, read-only; exists **only** in `ess-backup-weekly`     | `postgresql://ess_backup:…@host:5432/…?sslmode=verify-full`                                | —   | —   | R    | **S** |
 | `DB_POOL_MAX`             | Prisma `connection_limit` override if not in the URL                | `8`                                                                                        |     |     |      |       |
 | `DB_STATEMENT_TIMEOUT_MS` | client-side guard mirroring the server-side `statement_timeout`     | `15000`                                                                                    |     | R   | R    |       |
 
@@ -1511,10 +2144,10 @@ Legend — **S** = secret (never logged, never in git, never in a `VITE_` name);
 | `JWT_PUBLIC_KEY_<kid>`           | matching SPKI PEM; published at the JWKS endpoint               | `REPLACE_ME`                                     | R   | R   | R    |       |
 | `ACCESS_TOKEN_TTL_SECONDS`       | 60–900                                                          | `600`                                            | R   | R   | R    |       |
 | `REFRESH_TOKEN_TTL_DAYS`         | idle TTL of a refresh token, 1–30                               | `7`                                              | R   | R   | R    |       |
-| `REFRESH_FAMILY_MAX_DAYS`        | absolute lifetime of a refresh family, 1–60                     | `30`                                             | R   | R   | R    |       |
+| `REFRESH_FAMILY_MAX_DAYS`        | absolute lifetime of a refresh family, 1–**14**                 | `14`                                             | R   | R   | R    |       |
 | `PASSWORD_PEPPER_V1`             | HMAC-SHA512 pepper pre-hashed into Argon2id; base64 ≥ 32 B      | `REPLACE_ME__openssl rand -base64 48`            | R   | R   | R    | **S** |
 | `PASSWORD_PEPPER_ACTIVE_VERSION` | which pepper new hashes use during rotation                     | `1`                                              | R   | R   | R    |       |
-| `COOKIE_SAMESITE`                | `strict` prod, `none` staging, `lax` dev                        | `strict`                                         | R   | R   | R    |       |
+| `COOKIE_SAMESITE`                | **`strict` in staging and production**, `lax` dev only          | `strict`                                         | R   | R   | R    |       |
 | `COOKIE_SECURE`                  | must be `true` outside dev                                      | `true`                                           | R   | R   | R    |       |
 | `COOKIE_DOMAIN`                  | **must be empty everywhere**; `__Host-` forbids `Domain` (§1.4) | _(empty)_                                        |     |     |      |       |
 | `MFA_ISSUER_LABEL`               | the label shown in the authenticator app                        | `Widedrop ESS`                                   | R   | R   | R    |       |
@@ -1523,31 +2156,36 @@ Legend — **S** = secret (never logged, never in git, never in a `VITE_` name);
 
 #### Encryption and integrity keys
 
-| Variable                     | Purpose                                                         | Example / placeholder                 | dev | stg | prod | S     |
-| ---------------------------- | --------------------------------------------------------------- | ------------------------------------- | --- | --- | ---- | ----- |
-| `MASTER_KEK_V1` (+ `_V2`…)   | wraps every DEK; base64, **exactly 32 bytes**                   | `REPLACE_ME__openssl rand -base64 32` | R   | R   | R    | **S** |
-| `MASTER_KEK_ACTIVE_VERSION`  | which KEK wraps new DEKs; both stay resident during rotation    | `1`                                   | R   | R   | R    |       |
-| `BLIND_INDEX_KEY_V1`         | HMAC key for `*_bidx` exact-match lookup; base64 ≥ 32 B         | `REPLACE_ME__openssl rand -base64 48` | R   | R   | R    | **S** |
-| `AUDIT_CHAIN_KEY_V1`         | HMAC key sealing the audit hash chain; base64 ≥ 32 B            | `REPLACE_ME`                          | R   | R   | R    | **S** |
-| `AUDIT_CHAIN_ACTIVE_VERSION` | new rows only; history is never re-keyed                        | `1`                                   | R   | R   | R    |       |
-| `CSRF_KEY`                   | HMAC binding the double-submit token to the session             | `REPLACE_ME`                          | R   | R   | R    | **S** |
-| `LOG_HASH_KEY`               | HMAC for `ip_hash` / `user_agent_hash` / rate-limit bucket keys | `REPLACE_ME`                          | R   | R   | R    | **S** |
-| `RECOVERY_CODE_KEY`          | HMAC over MFA recovery codes                                    | `REPLACE_ME`                          | R   | R   | R    | **S** |
-| `CURSOR_HMAC_KEY`            | signs pagination cursors, bound to `sub`                        | `REPLACE_ME`                          | R   | R   | R    | **S** |
+| Variable                     | Purpose                                                                                                                                                                                      | Example / placeholder                 | dev | stg | prod | S     |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- | --- | --- | ---- | ----- |
+| `MASTER_KEK_V1` (+ `_V2`…)   | wraps every DEK; base64, **exactly 32 bytes**                                                                                                                                                | `REPLACE_ME__openssl rand -base64 32` | R   | R   | R    | **S** |
+| `MASTER_KEK_ACTIVE_VERSION`  | which KEK wraps new DEKs; both stay resident during rotation                                                                                                                                 | `1`                                   | R   | R   | R    |       |
+| `BLIND_INDEX_KEY_V1`         | HMAC pepper for the `*_fpr` blind indexes (`DATA-MODEL.md` §1.6 — the suffix is `_fpr`, the value is the full 32 bytes, and each column carries `<field>_fpr_pepper_version`); base64 ≥ 32 B | `REPLACE_ME__openssl rand -base64 48` | R   | R   | R    | **S** |
+| `AUDIT_CHAIN_KEY_V1`         | HMAC key sealing the audit hash chain; base64 ≥ 32 B                                                                                                                                         | `REPLACE_ME`                          | R   | R   | R    | **S** |
+| `AUDIT_CHAIN_ACTIVE_VERSION` | new rows only; history is never re-keyed                                                                                                                                                     | `1`                                   | R   | R   | R    |       |
+| `CSRF_KEY`                   | HMAC binding the double-submit token to the session                                                                                                                                          | `REPLACE_ME`                          | R   | R   | R    | **S** |
+| `LOG_HASH_KEY`               | HMAC for `ip_hash` / `user_agent_hash` / rate-limit bucket keys                                                                                                                              | `REPLACE_ME`                          | R   | R   | R    | **S** |
+| `RECOVERY_CODE_KEY`          | HMAC over MFA recovery codes                                                                                                                                                                 | `REPLACE_ME`                          | R   | R   | R    | **S** |
+| `CURSOR_HMAC_KEY`            | signs pagination cursors, bound to `sub`                                                                                                                                                     | `REPLACE_ME`                          | R   | R   | R    | **S** |
 
 #### Object storage
 
-| Variable                    | Purpose                                                      | Example / placeholder                     | dev | stg | prod | S     |
-| --------------------------- | ------------------------------------------------------------ | ----------------------------------------- | --- | --- | ---- | ----- |
-| `STORAGE_DRIVER`            | `filesystem` \| `s3`; `filesystem` **refused** in production | `s3`                                      | R   | R   | R    |       |
-| `STORAGE_ENDPOINT`          | S3-compatible endpoint; must be `https://`                   | `https://<acct>.r2.cloudflarestorage.com` | —   | R   | R    |       |
-| `STORAGE_REGION`            | `auto` for R2, `ap-south-1` for S3                           | `auto`                                    | —   | R   | R    |       |
-| `STORAGE_BUCKET`            | one bucket per environment                                   | `widedrop-ess-prod`                       | —   | R   | R    |       |
-| `STORAGE_ACCESS_KEY_ID`     | bucket-scoped token id                                       | `REPLACE_ME`                              | —   | R   | R    | **S** |
-| `STORAGE_SECRET_ACCESS_KEY` | bucket-scoped token secret                                   | `REPLACE_ME`                              | —   | R   | R    | **S** |
-| `STORAGE_FORCE_PATH_STYLE`  | `true` for R2                                                | `true`                                    | —   | R   | R    |       |
-| `STORAGE_LOCAL_PATH`        | dev only, filesystem driver root                             | `./.storage`                              | R   | —   | —    |       |
-| `SIGNED_URL_TTL_SECONDS`    | 30–3600; **120** per `API.md` §11.2                          | `120`                                     | R   | R   | R    |       |
+| Variable                    | Purpose                                                                  | Example / placeholder                      | dev | stg | prod | S     |
+| --------------------------- | ------------------------------------------------------------------------ | ------------------------------------------ | --- | --- | ---- | ----- |
+| `STORAGE_DRIVER`            | `filesystem` \| `s3`; `filesystem` **refused** in production             | `s3`                                       | R   | R   | R    |       |
+| `STORAGE_ENDPOINT`          | S3-compatible endpoint; must be `https://`                               | `https://<acct>.r2.cloudflarestorage.com`  | —   | R   | R    |       |
+| `STORAGE_REGION`            | `auto` for R2, `ap-south-1` for S3                                       | `auto`                                     | —   | R   | R    |       |
+| `STORAGE_BUCKET`            | one bucket per environment                                               | `widedrop-ess-prod`                        | —   | R   | R    |       |
+| `STORAGE_ACCESS_KEY_ID`     | bucket-scoped token id                                                   | `REPLACE_ME`                               | —   | R   | R    | **S** |
+| `STORAGE_SECRET_ACCESS_KEY` | bucket-scoped token secret                                               | `REPLACE_ME`                               | —   | R   | R    | **S** |
+| `STORAGE_FORCE_PATH_STYLE`  | `true` for R2                                                            | `true`                                     | —   | R   | R    |       |
+| `STORAGE_LOCAL_PATH`        | dev only, filesystem driver root                                         | `./.storage`                               | R   | —   | —    |       |
+| `SIGNED_URL_TTL_SECONDS`    | 30–3600; **120** per `API.md` §11.2. Governs download path A only (§5.2) | `120`                                      | R   | R   | R    |       |
+| `BACKUP_AGE_RECIPIENT`      | `age` **public** key the weekly dump is encrypted to (§4.5)              | `age1…`                                    | —   | —   | R    |       |
+| `BACKUP_BUCKET`             | second-account bucket for the off-provider dump                          | `widedrop-ess-backup`                      | —   | —   | R    |       |
+| `BACKUP_ENDPOINT`           | second-account S3 endpoint                                               | `https://<acct2>.r2.cloudflarestorage.com` | —   | —   | R    |       |
+| `BACKUP_ACCESS_KEY_ID`      | second-account token id; cannot read the prod bucket                     | `REPLACE_ME`                               | —   | —   | R    | **S** |
+| `BACKUP_SECRET_ACCESS_KEY`  | second-account token secret                                              | `REPLACE_ME`                               | —   | —   | R    | **S** |
 
 #### Email
 
@@ -1567,14 +2205,14 @@ Legend — **S** = secret (never logged, never in git, never in a `VITE_` name);
 
 #### Workers, limits, scanning, outbound
 
-| Variable                      | Purpose                                                           | Example / placeholder                                                                                                | dev | stg | prod | S     |
-| ----------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | --- | --- | ---- | ----- |
-| `WORKER_POLL_INTERVAL_MS`     | job loop tick, 1 000–300 000                                      | `15000`                                                                                                              | R   | R   | R    |       |
-| `WORKER_CONCURRENCY`          | parallel jobs per worker instance                                 | `4`                                                                                                                  | R   | R   | R    |       |
-| `RATE_LIMIT_STORE`            | `postgres` (default, per `SECURITY.md` §9.3) \| `redis`           | `postgres`                                                                                                           | R   | R   | R    |       |
-| `REDIS_URL`                   | only when `RATE_LIMIT_STORE=redis`; TLS required in production    | `rediss://…`                                                                                                         |     |     |      | **S** |
-| `CLAMAV_HOST` / `CLAMAV_PORT` | `clamd` INSTREAM target; required in staging and production       | `ess-clamav` / `3310`                                                                                                |     | R   | R    |       |
-| `OUTBOUND_ALLOWLIST`          | the only hostnames the process may egress to (`SECURITY.md` §5.5) | `api.pwnedpasswords.com,email.ap-south-1.amazonaws.com,<acct>.r2.cloudflarestorage.com,sns.ap-south-1.amazonaws.com` | R   | R   | R    |       |
+| Variable                      | Purpose                                                                                                                                                                                                                   | Example / placeholder                                                                                                | dev | stg | prod | S     |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | --- | --- | ---- | ----- |
+| `WORKER_POLL_INTERVAL_MS`     | job loop tick, 1 000–300 000                                                                                                                                                                                              | `15000`                                                                                                              | R   | R   | R    |       |
+| `WORKER_CONCURRENCY`          | parallel jobs per worker instance                                                                                                                                                                                         | `4`                                                                                                                  | R   | R   | R    |       |
+| `RATE_LIMIT_STORE`            | `redis` (**default**, per `SECURITY.md` §9.3) \| `postgres`                                                                                                                                                               | `redis`                                                                                                              | R   | R   | R    |       |
+| `REDIS_URL`                   | **required in staging and production**; `rediss://` (TLS) enforced in production; private network + `requirepass`. Postgres `ess_ops.rate_limit_counter` is the durable **fallback**, used only when Redis is unreachable | `rediss://…`                                                                                                         | —   | R   | R    | **S** |
+| `CLAMAV_HOST` / `CLAMAV_PORT` | `clamd` INSTREAM target; required in staging and production                                                                                                                                                               | `ess-clamav` / `3310`                                                                                                |     | R   | R    |       |
+| `OUTBOUND_ALLOWLIST`          | the only hostnames the process may egress to (`SECURITY.md` §5.5)                                                                                                                                                         | `api.pwnedpasswords.com,email.ap-south-1.amazonaws.com,<acct>.r2.cloudflarestorage.com,sns.ap-south-1.amazonaws.com` | R   | R   | R    |       |
 
 #### Observability
 
@@ -1588,12 +2226,13 @@ Legend — **S** = secret (never logged, never in git, never in a `VITE_` name);
 
 #### Web build-time (all public, all non-secret, all baked into the bundle)
 
-| Variable            | Purpose                                                            | Example                        |
-| ------------------- | ------------------------------------------------------------------ | ------------------------------ |
-| `VITE_API_BASE_URL` | the API origin; also the CSP `connect-src` value (§2.3)            | `https://api-ess.widedrop.com` |
-| `VITE_APP_ENV`      | `production` \| `staging` \| `preview` \| `development`            | `production`                   |
-| `VITE_BUILD_SHA`    | shown in the About panel; correlates a client report to a build    | `a1b2c3d`                      |
-| `VITE_SENTRY_DSN`   | browser DSN — a public value by design, and rate-limited at Sentry | `https://…`                    |
+| Variable            | Purpose                                                             | Example                        |
+| ------------------- | ------------------------------------------------------------------- | ------------------------------ |
+| `VITE_API_BASE_URL` | the API origin; also the CSP `connect-src` value (§2.3)             | `https://api-ess.widedrop.com` |
+| `VITE_APP_ENV`      | `production` \| `staging` \| `preview` \| `development`             | `production`                   |
+| `VITE_BUILD_SHA`    | shown in the About panel; correlates a client report to a build     | `a1b2c3d`                      |
+| `VITE_SENTRY_DSN`   | browser DSN — a public value by design, and rate-limited at Sentry  | `https://…`                    |
+| `CSP_REPORT_ONLY`   | `true` for the single report-only release (§2.3); `false` otherwise | `false`                        |
 
 A CI check fails the build if any `VITE_*` name matches `/KEY|SECRET|TOKEN|PASSWORD|PEPPER/i`.
 A bundled secret is a published secret.
@@ -1619,25 +2258,36 @@ failure prints the offending **variable names and the rule** — never a value �
 In addition to the per-variable types in §7.2, these cross-cutting refusals apply when
 `NODE_ENV=production`:
 
-| #   | Refusal                                                                                                                                                                   |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Any secret shorter than its minimum decoded length, or a KEK that is not exactly 32 bytes                                                                                 |
-| 2   | Any secret whose value appears in the committed `.env.example`                                                                                                            |
-| 3   | Any secret matching a known placeholder (`changeme`, `dev-secret`, `REPLACE_ME`, all-zero, 32 identical bytes)                                                            |
-| 4   | Any secret with Shannon entropy below 3.5 bits/byte over its decoded form                                                                                                 |
-| 5   | **The same value reused across two different variables**                                                                                                                  |
-| 6   | `DATABASE_URL`/`DIRECT_DATABASE_URL` without `sslmode=verify-full` (the private PgBouncer hop is the single documented exception, recognised by the `ess-pgbouncer` host) |
-| 7   | `ALLOWED_ORIGINS` containing `*`, `http://`, or an entry that is not an exact absolute origin                                                                             |
-| 8   | `COOKIE_SECURE=false`, `COOKIE_SAMESITE=none`, or `COOKIE_DOMAIN` set to anything non-empty                                                                               |
-| 9   | `LOG_LEVEL` of `debug` or `trace`                                                                                                                                         |
-| 10  | `STORAGE_DRIVER=filesystem` (a container filesystem is ephemeral — payslips would vanish on redeploy)                                                                     |
-| 11  | `MAIL_PROVIDER` of `file`/`noop`/`smtp`, or `MAIL_TO_OVERRIDE` set                                                                                                        |
-| 12  | `MAIL_FROM` not ending `@widedroptech.com`                                                                                                                                |
-| 13  | `CLAMAV_HOST` unset                                                                                                                                                       |
-| 14  | `TRUSTED_PROXY_CIDRS` unset, or set to `true`/`0.0.0.0/0`                                                                                                                 |
-| 15  | `JWT_ACTIVE_KID` with no matching `JWT_SIGNING_KEY_<kid>`, or a key that fails to parse as Ed25519 PKCS#8                                                                 |
-| 16  | `MASTER_KEK_ACTIVE_VERSION` with no matching `MASTER_KEK_V<n>`                                                                                                            |
-| 17  | A `SERVICE_ROLE` other than `api` or `worker`                                                                                                                             |
+| #   | Refusal                                                                                                                                                                                                                                                                                                                                                 |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Any secret shorter than its minimum decoded length, or a KEK that is not exactly 32 bytes                                                                                                                                                                                                                                                               |
+| 2   | Any secret whose value appears in the committed `.env.example`                                                                                                                                                                                                                                                                                          |
+| 3   | Any secret matching a known placeholder (`changeme`, `dev-secret`, `REPLACE_ME`, all-zero, 32 identical bytes)                                                                                                                                                                                                                                          |
+| 4   | Any secret with Shannon entropy below 3.5 bits/byte over its decoded form                                                                                                                                                                                                                                                                               |
+| 5   | **The same value reused across two different variables**                                                                                                                                                                                                                                                                                                |
+| 6   | `DATABASE_URL`/`DIRECT_DATABASE_URL` without `sslmode=verify-full` (the private PgBouncer hop is the single documented exception, recognised by the `ess-pgbouncer` host)                                                                                                                                                                               |
+| 7   | `ALLOWED_ORIGINS` containing `*`, `http://`, or an entry that is not an exact absolute origin                                                                                                                                                                                                                                                           |
+| 8   | `COOKIE_SECURE=false`, `COOKIE_SAMESITE=none`, or `COOKIE_DOMAIN` set to anything non-empty                                                                                                                                                                                                                                                             |
+| 9   | `LOG_LEVEL` of `debug` or `trace`                                                                                                                                                                                                                                                                                                                       |
+| 10  | `STORAGE_DRIVER=filesystem` (a container filesystem is ephemeral — payslips would vanish on redeploy)                                                                                                                                                                                                                                                   |
+| 11  | `MAIL_PROVIDER` of `file`/`noop`/`smtp`, or `MAIL_TO_OVERRIDE` set                                                                                                                                                                                                                                                                                      |
+| 12  | `MAIL_FROM` not ending `@widedroptech.com`                                                                                                                                                                                                                                                                                                              |
+| 13  | `CLAMAV_HOST` unset                                                                                                                                                                                                                                                                                                                                     |
+| 14  | `TRUSTED_PROXY_CIDRS` unset, or set to `true`/`0.0.0.0/0`                                                                                                                                                                                                                                                                                               |
+| 15  | `JWT_ACTIVE_KID` with no matching `JWT_SIGNING_KEY_<kid>`, or a key that fails to parse as Ed25519 PKCS#8                                                                                                                                                                                                                                               |
+| 16  | `MASTER_KEK_ACTIVE_VERSION` with no matching `MASTER_KEK_V<n>`                                                                                                                                                                                                                                                                                          |
+| 17  | A `SERVICE_ROLE` other than `api` or `worker`                                                                                                                                                                                                                                                                                                           |
+| 18  | `SERVICE_ROLE=api` with a `DATABASE_URL` whose role is not `ess_app`, or `SERVICE_ROLE=worker` with one whose role is not `ess_job` (§4.2); either being `ess_owner`, `ess_migrator` or `ess_backup` is fatal in every environment, including development                                                                                               |
+| 19  | `PRIVATE_PORT` unset, equal to `PORT`, or below 1024                                                                                                                                                                                                                                                                                                    |
+| 20  | `TZ` not exactly `UTC`, or unset (R-16) — an unset `TZ` is the dangerous case, because it defaults to UTC and therefore _looks_ correct until the host changes                                                                                                                                                                                          |
+| 21  | `COOKIE_SECURE=true` while the refresh cookie name lacks the `__Host-` prefix, or `COOKIE_SECURE=false` while it carries one (§7.1)                                                                                                                                                                                                                     |
+| 22  | `ALLOWED_ORIGIN_PATTERNS` set at all; and in any environment, a pattern that is not anchored with `^` and `$`                                                                                                                                                                                                                                           |
+| 23  | `HELPDESK_EMAIL_FALLBACK` unset, not a syntactically valid address, or not ending `@widedroptech.com` — directive 8 names a specific recipient and a typo there loses tickets silently                                                                                                                                                                  |
+| 24  | `SES_SNS_TOPIC_ARN` unset, or not matching `^arn:aws:sns:[a-z0-9-]+:\d{12}:[A-Za-z0-9_-]+$`                                                                                                                                                                                                                                                             |
+| 25  | `OUTBOUND_ALLOWLIST` missing any host the configuration implies it needs: the `STORAGE_ENDPOINT` host, `email.<MAIL_REGION>.amazonaws.com`, `sns.<MAIL_REGION>.amazonaws.com` when the webhook is enabled, and `api.pwnedpasswords.com` when `HIBP_ENABLED=true`. This is derived, not typed, so the list cannot drift from the configuration it guards |
+| 26  | `SENTRY_TRACES_SAMPLE_RATE` outside `0.0`–`1.0`, or above `0.2` in production                                                                                                                                                                                                                                                                           |
+| 27  | `CSP_REPORT_ONLY=true` on a deploy whose message does not carry the `csp-report-only` marker — the flag must be a deliberate, recorded release, never a leftover                                                                                                                                                                                        |
+| 28  | any `BACKUP_*` variable present on a service other than the backup cron, or `MIGRATE_DATABASE_URL` present on the API or the worker — a credential in the wrong process is a privilege escalation waiting for a bug                                                                                                                                     |
 
 Two further assertions run after the database connection opens, and also exit non-zero:
 the **privilege assertion** of §4.4, and the **schema-guard check** — `ess_ops.schema_guard`'s
@@ -1746,9 +2396,16 @@ jobs:
       - run: npm run db:seed:reference -w @widedrop/api
       - run: npm test # vitest: api (Fastify inject) + web
       - run: npm run build # api tsc + web vite build
+      - run: node apps/web/scripts/gen-csp-headers.mjs
       - run: node apps/web/scripts/assert-no-inline-styles.mjs
+      # The three directive gates of §2.8 — each fails the job.
+      - run: node apps/web/scripts/assert-no-fixture-data.mjs # directive 2
+      - run: node apps/web/scripts/assert-design-tokens.mjs # directive 1
+      - run: npx vitest run apps/web/scripts/empty-state.spec.ts # directive 9
+      - run: node scripts/assert-netlify-config.mjs
+      # This exact directory is what deploy.yml publishes; it is never rebuilt.
       - uses: actions/upload-artifact@<sha>
-        with: { name: web-dist, path: apps/web/dist, retention-days: 7 }
+        with: { name: web-dist, path: apps/web/dist, retention-days: 30 }
 
   security:
     runs-on: ubuntu-latest
@@ -1780,20 +2437,35 @@ jobs:
     uses: ./.github/workflows/codeql.yml
 ```
 
-Two integration tests are treated as **release gates**, not ordinary tests, and are named
-explicitly in the required-checks list:
+Five integration tests are treated as **release gates**, not ordinary tests, and are named
+explicitly in the required-checks list. Each maps to a product directive that has no other
+automated defender:
 
-- `payroll-visibility.spec.ts` — walks the full six-step workflow and asserts `404` on every
-  employee-facing payslip route at each earlier step (`SECURITY.md` Appendix A.3).
-- `outbox.spec.ts` — the help-desk email-failure test of §6.5.
+| Gate                             | Directive | Asserts                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| -------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `payroll-visibility.spec.ts`     | 6         | Walks the full six-step workflow and asserts `404` on every employee-facing payslip route at each earlier step, **and** asserts `SELECT count(*) FROM ess.payslip` is `0` until P6 — visibility and existence are separate claims and both are made (`SECURITY.md` Appendix A.3). It additionally attempts each out-of-order transition directly against the service layer, bypassing the HTTP routes, and asserts the state machine refuses each one. |
+| `outbox.spec.ts`                 | 8         | The help-desk email-failure test of §6.5: ticket persists, outbox reaches `FAILED`, HR is notified, and no response ever claimed delivery.                                                                                                                                                                                                                                                                                                             |
+| `rbac-matrix.spec.ts`            | 3         | Every route in `API.md` §13 × every persona (Employee, Manager, HR, Accounts, unauthenticated) — asserts the expected `200`/`403`/`404`, and that a route added without a declared permission fails the suite rather than defaulting to open.                                                                                                                                                                                                          |
+| `audit-completeness.spec.ts`     | 5         | Every state transition and every sensitive read named in `SECURITY.md` §8 writes an `audit_event`, the chain verifies after the run, and the suite fails if a new mutating route appears with no audit assertion.                                                                                                                                                                                                                                      |
+| `policy-acknowledgement.spec.ts` | 7         | A new `policy_version` resets acknowledgement for every assigned employee; an acknowledgement stores employee + version + status + timestamp; acknowledging version _n_ never satisfies version _n+1_; the count on the Policies screen equals `SELECT count(*)` over unacknowledged assignments.                                                                                                                                                      |
+
+Plus the four build gates of §2.8, which run in the `test` job.
 
 ### 8.2 On merge to `main` — `.github/workflows/deploy.yml`
 
 ```yaml
 name: Deploy
+# `workflow_run` and NOT `push`. An earlier draft triggered on `push: branches: [main]`,
+# which starts the deploy in parallel with `ci.yml` rather than after it: required status
+# checks gate the PULL REQUEST, not the push event, so an admin merge, a direct push, or a
+# merge queue bypass would have deployed code whose tests had not finished — including the
+# five release gates above. `workflow_run` with the conclusion check makes a green CI run
+# the only way into production.
 on:
-  push:
+  workflow_run:
+    workflows: ['CI']
     branches: [main]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -1806,8 +2478,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # ---------------------------------------------------------------- 0 ----
+  gate:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - run: echo "CI ${{ github.event.workflow_run.id }} passed on ${{ github.sha }}"
+
   # ---------------------------------------------------------------- 1 ----
   build-image:
+    needs: gate
     runs-on: ubuntu-latest
     outputs:
       digest: ${{ steps.push.outputs.digest }}
@@ -1873,13 +2555,18 @@ jobs:
     needs: [build-image, migrate-production]
     environment: production
     runs-on: ubuntu-latest
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
     steps:
       - uses: actions/checkout@<sha>
       # API first, then worker, each polled to `live`; a health-check failure
       # leaves the previous instances serving and fails the job.
+      # `env:` is declared at JOB level, not on the second step. Attached to the
+      # second `- run:` alone — as an earlier draft had it — the first step runs
+      # with no RENDER_API_KEY and the API is never deployed, while the worker is:
+      # a split-version production, which expand/contract does not protect against.
       - run: node scripts/render-deploy.mjs --service ess-api    --digest ${{ needs.build-image.outputs.digest }} --wait
       - run: node scripts/render-deploy.mjs --service ess-worker --digest ${{ needs.build-image.outputs.digest }} --wait
-        env: { RENDER_API_KEY: '${{ secrets.RENDER_API_KEY }}' }
       - name: Post-deploy verification
         run: |
           node scripts/smoke.mjs https://api-ess.widedrop.com
@@ -1895,20 +2582,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@<sha>
-      - uses: actions/setup-node@<sha>
-        with: { node-version: '22', cache: npm }
-      - run: npm ci --ignore-scripts
-      - run: npm run build -w @widedrop/shared
-      - run: npm run build -w @widedrop/web
+      # Publish the EXACT directory the `test` job verified. Rebuilding here would
+      # ship an artifact that no gate in §2.8 has ever seen — a different bundle
+      # from the one the empty-state, fabrication and design-token gates passed.
+      - uses: actions/download-artifact@<sha>
+        with:
+          name: web-dist
+          path: apps/web/dist
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Assert the artifact is the right build
+        run: |
+          grep -q 'data-build-sha="${{ github.sha }}"' apps/web/dist/index.html
+          test -f apps/web/dist/_headers
+          node scripts/assert-netlify-config.mjs
+      - name: Assert Netlify is not self-building
+        run: node scripts/assert-netlify-not-building.mjs # §2.1 production-branch lock
         env:
-          VITE_API_BASE_URL: https://api-ess.widedrop.com
-          VITE_APP_ENV: production
-          VITE_BUILD_SHA: ${{ github.sha }}
-          VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
-      - run: node apps/web/scripts/gen-csp-headers.mjs # writes dist/_headers (§2.3)
-      - run: node apps/web/scripts/assert-no-inline-styles.mjs
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
       - name: Deploy to Netlify (no Netlify build minutes consumed)
         run: |
+          cp infra/netlify/netlify.toml ./netlify.toml   # the CLI reads cwd (§2.5)
           npx netlify-cli@17 deploy --prod --no-build \
             --dir=apps/web/dist --site="$NETLIFY_SITE_ID" --auth="$NETLIFY_AUTH_TOKEN" \
             --message="ess-web ${GITHUB_SHA::7}" --json > deploy.json
@@ -1918,6 +2613,9 @@ jobs:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
       - name: Verify headers reached the edge
         run: node scripts/assert-headers.mjs https://ess.widedrop.com
+      - name: Record the deploy in the audit trail
+        run: node scripts/record-deploy-audit.mjs --sha ${{ github.sha }} --approver "${{ github.actor }}"
+        env: { DEPLOY_AUDIT_TOKEN: '${{ secrets.DEPLOY_AUDIT_TOKEN }}' }
 ```
 
 **Deploy order is API → worker → SPA, and it is not arbitrary.** The schema is always ahead
@@ -1925,17 +2623,61 @@ of the API (expand/contract), the API is always ahead of the SPA, and the SPA is
 component a user's browser caches — so at no instant does a client call an endpoint that does
 not exist.
 
+#### 8.2.1 The pipeline scripts — contracts, so none of this is left to invent
+
+Every script named above lives in `scripts/` (or `apps/web/scripts/`), is a plain Node ESM
+module, reads configuration from flags and environment only, writes machine-readable JSON to
+stdout and human text to stderr, and **exits non-zero on any failure with no partial effect**.
+None of them ever prints a secret, and each one masks any value it received from a `secrets.*`
+context before logging.
+
+| Script                            | Inputs                                                                                      | Does                                                                                                                                                                                                                                                              | Exit non-zero when                                                                                               |
+| --------------------------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `render-deploy.mjs`               | `--service <name>` \| `--env <staging\|production>`, `--digest`, `--wait`, `RENDER_API_KEY` | Resolves the service name to its id from `RENDER_SERVICE_IDS` (a JSON map in a repo variable, **not** a secret), `POST`s a deploy with `imageUrl: <repo>@<digest>`, polls every 10 s up to 15 min                                                                 | the deploy reports `build_failed`/`canceled`/`deactivated`, the health check never passes, or the poll times out |
+| `run-migration-job.mjs`           | `--env`, `--wait`, `RENDER_API_KEY`                                                         | Creates a Render **one-off job** on the API service running `prisma migrate status && prisma migrate deploy && record-schema-guard && assert-privileges`; streams its log; **no database credential touches the runner**                                          | the job exits non-zero, or `prisma migrate status` reports a `failed` migration                                  |
+| `record-recovery-point.mjs`       | `RENDER_API_KEY`                                                                            | Writes the current LSN and the latest provider backup id as a Markdown block for `$GITHUB_STEP_SUMMARY`; this is the PITR target §8.6 and §11.5 refer to                                                                                                          | the provider API is unreachable — a deploy must not proceed without a recorded undo point                        |
+| `smoke.mjs <base-url>`            | base URL, `SMOKE_TOKEN`                                                                     | `GET /api/v1/healthz` (expects `{"status":"ok"}`), `GET /api/v1/version` with the probe credential, and one authenticated read that returns an **empty** collection; asserts CORS rejects a foreign `Origin`                                                      | any check fails, or `/api/v1/version` reports a `gitSha` other than the one deployed                             |
+| `assert-headers.mjs <url>`        | url                                                                                         | Fetches `/` and one `/assets/*` file; asserts every header of §2.2 is present with the exact value, that exactly **one** `Content-Security-Policy` header is returned, that its `connect-src` names the production API, and that `Reporting-Endpoints` is present | any header missing, duplicated, or different                                                                     |
+| `record-netlify-deploy.mjs`       | `deploy.json`                                                                               | Appends the deploy id, permalink and commit to the job summary — this is the list §8.4's rollback picks from                                                                                                                                                      | the JSON has no `deploy_id`                                                                                      |
+| `assert-netlify-not-building.mjs` | `NETLIFY_SITE_ID`, `NETLIFY_AUTH_TOKEN`                                                     | `getSite`; asserts `build_settings.stop_builds === true` **or** `build_settings.repo_branch !== 'main'` (§2.1)                                                                                                                                                    | the site would build `main` itself                                                                               |
+| `assert-netlify-config.mjs`       | `infra/netlify/netlify.toml`, `apps/web/dist/_headers`                                      | The §2.8 Netlify-config gate                                                                                                                                                                                                                                      | publish path wrong, redirect order wrong, or a header name in both files                                         |
+| `record-deploy-audit.mjs`         | `--sha`, `--approver`, `DEPLOY_AUDIT_TOKEN`                                                 | `POST /api/v1/admin/deploys` so the deploy lands in `ess.audit_event` as `ADMIN.DEPLOYED` with the approving GitHub identity (§8.3)                                                                                                                               | the API rejects it — a deploy that cannot be audited is reported as a failed deploy                              |
+
+**`SMOKE_TOKEN` and `DEPLOY_AUDIT_TOKEN` are not personal credentials**, and leaving them
+undefined would have been the largest hole in this pipeline: a static bearer that can
+authenticate to production, of unstated scope, held by CI. Each is the credential of a
+dedicated `app_user` of kind `SERVICE` with:
+
+- **no `employee` row**, so it can never be a subject of payroll, leave or policy data;
+- exactly one permission each — `auth:login` + `health:read` for the smoke probe,
+  `admin:deploy:record` for the audit poster — and **no** read permission over any employee
+  record, payslip, ticket or document;
+- MFA not applicable (it is not interactive) but **IP-bound** to the CI egress ranges and
+  rate-limited to 60 requests/hour, so a leaked token is useless from anywhere else;
+- a 90-day expiry enforced by the `session-sweep` job, listed in `docs/secret-inventory.md`,
+  and rotated by §11.6 C3 like any other application secret;
+- every use written to `ess.audit_event` with `actor_kind='SERVICE'`, so "CI read production"
+  is a query, not an assumption.
+
+The same treatment applies to the **synthetic-login probe account** of §9.4: it is a real
+`app_user` with an `employee` row in a dedicated `Monitoring` department, holds only the
+Employee persona, owns no payroll data (it never appears in a `payroll_cycle`), and its
+dashboard is legitimately empty — which is also a continuous, production-side test of
+directive 9.
+
 ### 8.3 Environment protection and required checks
 
-| Control                         | Setting                                                                                                                                                                                                                           |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Branch protection on `main`     | linear history; no force-push; no deletion; **required reviewers 1** (2 for anything under `apps/api/src/auth/**`, `apps/api/src/crypto/**`, `prisma/migrations/**`, `infra/**`, `.github/workflows/**` via `CODEOWNERS`)         |
-| Required status checks          | `quality`, `test`, `security`, `codeql`, `payroll-visibility`, `outbox` — all must pass, and the branch must be up to date                                                                                                        |
-| GitHub environment `staging`    | no reviewer; secrets scoped to staging                                                                                                                                                                                            |
-| GitHub environment `production` | **required reviewer** (a named ops owner, who may not be the PR author), a 10-minute wait timer, deployment branch restricted to `main` only, secrets scoped to production                                                        |
-| Secrets in CI                   | no long-lived cloud credentials: OIDC to GHCR; `RENDER_API_KEY` scoped to deploy-only; Netlify token scoped to the ESS site. CI never receives a database URL, a KEK, a JWT key or a mail credential.                             |
-| Actions hygiene                 | all actions pinned to a full SHA; `permissions:` least-privilege per job; `npm ci --ignore-scripts`; Dependabot on `npm`, `docker` and `github-actions`                                                                           |
-| Audit                           | every production deploy writes an `audit_event` of kind `ADMIN.DEPLOYED` (actor = the approving GitHub user, from the workflow's OIDC claims) via the post-deploy step, so a deploy is in the same trail as a payroll publication |
+| Control                         | Setting                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Branch protection on `main`     | linear history; no force-push; no deletion; **required reviewers 1** (2 for anything under `apps/api/src/auth/**`, `apps/api/src/crypto/**`, `prisma/migrations/**`, `infra/**`, `.github/workflows/**` via `CODEOWNERS`)                                                                                                                                                                                           |
+| Required status checks          | `quality`, `test`, `security`, `codeql`, and the five release gates `payroll-visibility`, `outbox`, `rbac-matrix`, `audit-completeness`, `policy-acknowledgement`, plus the four build gates `fixture-data`, `empty-state`, `design-tokens`, `netlify-config` (§2.8) — all must pass, and the branch must be up to date                                                                                             |
+| GitHub environment `staging`    | no reviewer; secrets scoped to staging                                                                                                                                                                                                                                                                                                                                                                              |
+| GitHub environment `production` | **required reviewer** (a named ops owner, who may not be the PR author), a 10-minute wait timer, deployment branch restricted to `main` only, secrets scoped to production                                                                                                                                                                                                                                          |
+| Secrets in CI                   | no long-lived cloud credentials: OIDC to GHCR; `RENDER_API_KEY` scoped to deploy-only; Netlify token scoped to the ESS site. CI never receives a database URL, a KEK, a JWT key or a mail credential.                                                                                                                                                                                                               |
+| Actions hygiene                 | all actions pinned to a full SHA; `permissions:` least-privilege per job; `npm ci --ignore-scripts`; Dependabot on `npm`, `docker` and `github-actions`                                                                                                                                                                                                                                                             |
+| Image retention                 | GHCR keeps **every digest deployed to production for 180 days and never fewer than the last 20**, because §8.5's rollback is a redeploy of a previous digest and a pruned image is an unavailable rollback. The cleanup workflow deletes only untagged digests older than 30 days that were never deployed, and reads the deployed set from `ess.audit_event` (`ADMIN.DEPLOYED`) rather than from a tag convention. |
+| Merge queue / admin merges      | branch protection applies to administrators (`enforce_admins: true`); there is no bypass list. This matters because `deploy.yml` now triggers on a successful `CI` run — an unprotected direct push would simply never deploy, which is the correct failure, but an admin bypass with `CI` green would.                                                                                                             |
+| Audit                           | every production deploy writes an `audit_event` of kind `ADMIN.DEPLOYED` (actor = the approving GitHub user, from the workflow's OIDC claims) via the post-deploy step, so a deploy is in the same trail as a payroll publication                                                                                                                                                                                   |
 
 ### 8.4 Rollback — the SPA
 
@@ -2039,12 +2781,40 @@ Retention: **30 days hot, 180 days cold, then deleted.** Logs are an operational
 
 ### 9.2 Health, readiness and version endpoints
 
-| Endpoint              | Exposure                                          | Semantics                                                                                                                                                                                                                                                                                                                                                                                   |
-| --------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/v1/healthz` | public, `ip` 60/min, `Cache-Control: no-store`    | **Liveness only, touching no dependency** — `200 {"status":"ok"}`. Wired to the container `HEALTHCHECK` and to Render's `healthCheckPath`. A Postgres blip must not restart-loop the API.                                                                                                                                                                                                   |
-| `GET /api/v1/readyz`  | **private interface only, not internet-routable** | `200 {"status":"ready","checks":{"db":"ok","objectStorage":"ok","kms":"ok","rateLimitStore":"ok","mailProvider":"degraded"}}` or `503`. `db`, `kms` and `rateLimitStore` failing ⇒ not ready. **`mailProvider: "degraded"` does not fail readiness** — the outbox absorbs it (§6.5). Flips to `503` immediately on `SIGTERM` so the platform drains the instance before it stops accepting. |
-| `GET /api/v1/version` | requires `auth:login`                             | `{"apiVersion","gitSha","builtAt","schemaSha256","payrollEngineVersion"}`. No dependency versions, no hostnames, no env names — a version endpoint is reconnaissance surface.                                                                                                                                                                                                               |
-| `GET /api/v1/metrics` | private interface **and** `METRICS_BEARER_TOKEN`  | Prometheus exposition (§9.3)                                                                                                                                                                                                                                                                                                                                                                |
+| Endpoint              | Exposure                                               | Semantics                                                                                                                                                                                                                                                                                                                                                                                   |
+| --------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/v1/healthz` | public, `ip` 60/min, `Cache-Control: no-store`         | **Liveness only, touching no dependency** — `200 {"status":"ok"}`. Wired to the container `HEALTHCHECK` and to Render's `healthCheckPath`. A Postgres blip must not restart-loop the API.                                                                                                                                                                                                   |
+| `GET /api/v1/readyz`  | **`PRIVATE_PORT` listener only** (see below)           | `200 {"status":"ready","checks":{"db":"ok","objectStorage":"ok","kms":"ok","rateLimitStore":"ok","mailProvider":"degraded"}}` or `503`. `db`, `kms` and `rateLimitStore` failing ⇒ not ready. **`mailProvider: "degraded"` does not fail readiness** — the outbox absorbs it (§6.5). Flips to `503` immediately on `SIGTERM` so the platform drains the instance before it stops accepting. |
+| `GET /api/v1/version` | requires `auth:login`                                  | `{"apiVersion","gitSha","builtAt","schemaSha256","payrollEngineVersion"}`. No dependency versions, no hostnames, no env names — a version endpoint is reconnaissance surface.                                                                                                                                                                                                               |
+| `GET /api/v1/metrics` | **`PRIVATE_PORT` listener** and `METRICS_BEARER_TOKEN` | Prometheus exposition (§9.3)                                                                                                                                                                                                                                                                                                                                                                |
+
+**What "private interface" actually means here, because a Render web service has exactly one
+public port.** There is no separate network interface to bind to; saying "internal only"
+without a mechanism is how an endpoint that leaks authentication-failure counts and
+dependency health ends up on the internet. The mechanism:
+
+- the API process starts **two** Fastify instances: the public one on `PORT` (4000) carrying
+  every business route, and a second on `PRIVATE_PORT` (4001) carrying **only**
+  `/api/v1/readyz` and `/api/v1/metrics`;
+- Render routes `PORT` and nothing else, so 4001 is reachable only from inside the Render
+  private network, at `http://ess-api:4001` — which is where the metrics agent and the
+  readiness prober point;
+- the public instance **does not register those two routes at all**. It is not a 403 on the
+  public port; the routes do not exist there, and the boot-time route assertion asserts that
+  (`SECURITY.md` §4.8, `config: { internal: true }`);
+- `/api/v1/metrics` additionally requires `Authorization: Bearer $METRICS_BEARER_TOKEN`,
+  compared in constant time, so a compromised neighbour on the private network still cannot
+  read it;
+- `HOST` binds `0.0.0.0` for both, because the private network requires it; the isolation
+  comes from the platform's routing, not from the bind address, and that distinction is
+  written down here so nobody "hardens" it to `127.0.0.1` and breaks the scraper.
+
+If the platform ever routes a second port, the fallback is the same two-instance split plus
+a source-IP check against the private CIDR — never a change to the route's permission alone.
+
+**Path consistency.** All four endpoints live under `/api/v1` (R-14). `SECURITY.md` writes
+them unprefixed (`/healthz`, `/readyz`, `/metrics`) as shorthand; `API.md` §13 is canonical
+and prefixes them. `/.well-known/jwks.json` is the single unprefixed route in the system.
 
 ### 9.3 Metrics worth collecting
 
@@ -2069,14 +2839,14 @@ never from an estimate.
 
 ### 9.4 Uptime checks
 
-| Check            | Target                                                                                                                                         | Interval | From                             | Fails after   |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | -------- | -------------------------------- | ------------- |
-| API liveness     | `GET https://api-ess.widedrop.com/api/v1/healthz` expecting `200` and `"ok"`                                                                   | 60 s     | 3 regions incl. Mumbai/Singapore | 2 consecutive |
-| SPA availability | `GET https://ess.widedrop.com/` expecting `200` and the `Strict-Transport-Security` header                                                     | 60 s     | 3 regions                        | 2 consecutive |
-| Synthetic login  | scripted `login → MFA → GET /me/dashboard` with a dedicated, least-privileged probe account                                                    | 15 min   | 1 region                         | 2 consecutive |
-| TLS expiry       | both hosts                                                                                                                                     | daily    | —                                | < 21 days     |
-| Worker heartbeat | the worker writes `ess_ops.background_job('worker-heartbeat')` every minute; a dead-man check alerts if the newest row is older than 5 minutes | 60 s     | —                                | 5 min         |
-| DNS drift        | `ess`, `api-ess`, and the apex/`www`/`MX` of `widedrop.com` compared against `infra/dns/*.before.txt`                                          | daily    | —                                | any diff      |
+| Check            | Target                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Interval | From                             | Fails after   |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- | -------------------------------- | ------------- |
+| API liveness     | `GET https://api-ess.widedrop.com/api/v1/healthz` expecting `200` and `"ok"`                                                                                                                                                                                                                                                                                                                                                                                 | 60 s     | 3 regions incl. Mumbai/Singapore | 2 consecutive |
+| SPA availability | `GET https://ess.widedrop.com/` expecting `200` and the `Strict-Transport-Security` header                                                                                                                                                                                                                                                                                                                                                                   | 60 s     | 3 regions                        | 2 consecutive |
+| Synthetic login  | scripted `login → MFA → GET /me/dashboard` with a dedicated, least-privileged probe account                                                                                                                                                                                                                                                                                                                                                                  | 15 min   | 1 region                         | 2 consecutive |
+| TLS expiry       | both hosts                                                                                                                                                                                                                                                                                                                                                                                                                                                   | daily    | —                                | < 21 days     |
+| Worker heartbeat | the worker completes an `ess_ops.background_job` row with `job_name='worker-heartbeat'` every minute, setting `finished_at = now()`; a dead-man check alerts if `max(finished_at)` for that job name is older than 5 minutes. **R-17: `worker-heartbeat` is not in the named-job list of `DATA-MODEL.md` §17.5 and must be added there**, or the job-name check constraint rejects every heartbeat row and the alert fires permanently from the first deploy | 60 s     | —                                | 5 min         |
+| DNS drift        | `ess`, `api-ess`, and the apex/`www`/`MX` of `widedrop.com` compared against `infra/dns/*.before.txt`                                                                                                                                                                                                                                                                                                                                                        | daily    | —                                | any diff      |
 
 The worker heartbeat matters more than it looks: a worker that dies silently stops the
 outbox, the SLA escalations, the leave accruals and the payroll calculation, and **nothing in
@@ -2160,6 +2930,7 @@ re-verify before committing — the ratios matter more than the absolutes.**
 | Staging (API + worker + DB) | Render                          | Starter × 2 + Postgres Basic                         | 33        |
 | Object storage              | Cloudflare R2                   | 20 GB stored, ~200k Class-A/B ops, **zero egress**   | 2         |
 | Off-provider backup bucket  | R2 in a second account          | 20 GB, object-lock                                   | 1         |
+| Backup cron                 | Render Cron Job × 1             | Starter, weekly `pg_dump` + `age` + upload (§4.5)    | 1         |
 | Email                       | Amazon SES `ap-south-1`         | ~8 000 messages                                      | 1         |
 | Error tracking              | Sentry Team                     | 50k events, 90-day retention                         | 26        |
 | Logs                        | Better Stack / Grafana Cloud    | ~10 GB ingest, 30 d hot                              | 25        |
@@ -2167,7 +2938,7 @@ re-verify before committing — the ratios matter more than the absolutes.**
 | DNS                         | existing registrar / Cloudflare | 2 records added                                      | 0         |
 | Container registry          | GHCR                            | under the free private allowance                     | 0         |
 | CI                          | GitHub Actions                  | ~600 min/mo on a private repo (2 000 free)           | 0         |
-|                             |                                 | **Total**                                            | **≈ 280** |
+|                             |                                 | **Total**                                            | **≈ 281** |
 
 Roughly **$2.30 per employee per month**, all-in, for a system that holds payroll.
 
@@ -2257,13 +3028,36 @@ B1.  Apply the blueprint: create ess-postgres, ess-pgbouncer, ess-clamav, ess-ap
 B2.  Seal the break-glass envelope: MASTER_KEK_V1, the age backup identity and the
      ess_owner password, split between two officers (§7.3). Record in secret-inventory.md.
      Do this BEFORE any data exists — a KEK lost after go-live is unrecoverable ciphertext.
-B3.  Create the database roles (§4.4) as ess_owner, with fresh passwords. Apply the
-     statement/lock timeouts. Then close the ess_owner session and do not reopen it.
+B3.  Create the database roles (§4.4) as ess_owner, with fresh passwords, and apply the
+     statement/lock timeouts. HOW: the database has no public endpoint (ipAllowList: []),
+     so there is no psql from a laptop. Run it as a Render ONE-OFF JOB on the private
+     network:
+       render jobs create --service ess-api --command \
+         "psql \"$ESS_OWNER_URL\" -v ON_ERROR_STOP=1 \
+            -v migrator_pw=... -v app_pw=... -v job_pw=... -v ro_pw=... \
+            -v backup_pw=... -v auth_pw=... -f apps/api/prisma/sql/roles.sql"
+     ESS_OWNER_URL is supplied to that one job as a one-off environment override and is
+     REMOVED from the service immediately afterwards; it is never in the environment group
+     and never in git. Verify with `render env list` that it is gone, then close the
+     ess_owner session and do not reopen it outside §11.6.
 B4.  Run the migration job: prisma migrate deploy → record-schema-guard → assert-privileges.
      assert-privileges MUST pass; if it does not, stop — the grants are wrong.
-B5.  Deploy ess-api and ess-worker on the first image digest. /healthz green,
-     /readyz all "ok" except mailProvider (which may be "degraded" until B7).
-B6.  Seed reference data: npm run db:seed:reference.
+B5.  Deploy ess-api and ess-worker on the first image digest. /healthz green on PORT;
+     /readyz on PRIVATE_PORT (curl it from another private service — it is not routed,
+     §9.2) reporting all "ok" except mailProvider, which may be "degraded" until B7.
+     Then PIN TRUSTED_PROXY_CIDRS to the observed value: call the staging-only route
+     GET /api/v1/debug/forwarded through the real edge, read back the full
+     X-Forwarded-For chain and the socket address, and record the platform's proxy
+     addresses as exact CIDRs in the environment group. Record them in
+     infra/dns/proxy-cidrs.txt with the date. Every rate limit, lockout counter and
+     ip_hash on this system is keyed on the address this setting produces; leaving the
+     placeholder means a client can prepend its own X-Forwarded-For and choose its own
+     rate-limit bucket.
+B6.  Seed reference data: npm run db:seed:reference.  (Run as a one-off job, role
+     ess_migrator. `db:seed:demo` is a DIFFERENT script and REFUSES to run when
+     NODE_ENV=production or when the target database answers to the production host —
+     it is the only thing in the repository that can manufacture an operational row, so
+     it is refused twice, at the script and at the package.json level.)
      This writes ONLY configuration — leave types and schemes, holiday calendar, document
      types, ticket categories, expense categories, notification kinds, permission and role
      rows, tax slabs for the FY. It creates NO employee, NO payslip, NO ticket, NO
@@ -2275,9 +3069,19 @@ B6.  Seed reference data: npm run db:seed:reference.
 B7.  Verify SES: DKIM CNAMEs resolving, SPF/DMARC published, the domain "Verified" in the
      SES console, MAIL_FROM domain verified. Send one test to helpdesk@widedroptech.com and
      confirm the SNS Delivery event reaches /api/v1/webhooks/ses.
-B8.  Create the organisation row and its settings (legal name, PAN/TAN, address, financial
-     year start = April, pay-day rule, business hours, helpdesk_email =
-     helpdesk@widedroptech.com) via the bootstrap tool, audited as ADMIN.ORG_CREATED.
+B8.  Create the organisation row and its settings via the bootstrap tool, audited as
+     ADMIN.ORG_CREATED: legal name, PAN/TAN, registered address, financial year start =
+     April, timezone = Asia/Kolkata (R-16 — every date in the product resolves through
+     this value), locale = en-IN, currency = INR, pay-day rule, business hours, and
+     helpdesk_email = helpdesk@widedroptech.com (directive 8; HELPDESK_EMAIL_FALLBACK is
+     only used until this row exists).
+     NOTE — reconcile with DATA-MODEL.md §18.1, which lists `organization` among the rows
+     written by db:seed:reference. Exactly one of the two must own it. This document's
+     position: the seeder writes NOTHING organisation-specific, because seeding is
+     idempotent-by-natural-key and an organisation's PAN/TAN is not reference data. B8
+     owns it, and §18.1's `organization` row should be struck (**R-21**). Whichever is
+     chosen, it must be one of them: two writers means a re-seed silently reverts an HR
+     edit to the legal address.
 B9.  CREATE THE FIRST ADMINISTRATOR — no password is involved at any point:
 
        render jobs create --service ess-api --command \
@@ -2304,11 +3108,18 @@ B10. The administrator opens the emailed link at https://ess.widedrop.com/activa
      sets their own password (checked against HIBP, Argon2id + pepper), and is FORCED
      through TOTP enrolment before the account can reach ACTIVE — HR and ACCOUNTS have no
      MFA grace period (SECURITY.md §2.7). Recovery codes are shown once and stored by them.
-B11. Verify the bootstrap left nothing behind:
+B11. Verify the bootstrap left nothing behind, and that the EMPTY system is correct:
        SELECT id,status,password_hash IS NULL AS no_pw FROM ess.app_user;   → 1 row, ACTIVE
        SELECT count(*) FROM ess.user_invitation WHERE consumed_at IS NULL;  → 0
        grep -ri "password" prisma/seed*.ts                                  → no credential
      If --print-link was used, purge that job's log from the platform now.
+     Then walk every screen as that administrator, with zero operational rows, and
+     confirm directive 9 holds end to end on the real deployment: every list shows its
+     designed empty block, every metric tile shows an em dash with an explanatory
+     sub-label, no chart renders an axis with invented ticks, and no screen throws. This
+     is the same check §11.7 Q8 repeats quarterly and the §2.8 empty-state gate proves
+     per-component — this is the only time it is proved against the real stack before
+     anyone has data to hide a defect behind.
 B12. Second administrator: the first admin invites them through the UI (HR employee:create).
      Granting HR or ACCOUNTS requires a second HR approver (SECURITY.md §4.9), so the org
      is never one person away from being locked out — and never one compromised account
@@ -2346,10 +3157,12 @@ P1.  CYCLE OPEN (job payroll-cycle-open, or Accounts via POST /payroll/cycles)
 
 P2.  ACCOUNTS UPLOAD PAYROLL DATA  →  cycle INPUTS_UPLOADED
      Accounts uploads the input file(s) (CSV/XLSX, ≤ 25 MiB). Every accepted row is
-     persisted to payroll_input_row with row_number and source_file_id; formulas are never
-     evaluated; the file's sha256 and the batch are recorded (ux_pib__cycle_file_sha makes
-     a re-upload of the same bytes idempotent).
-     Verify: the Payroll screen's counts come from payroll_input_row, not from the file.
+     persisted as payroll_input_item rows (row_number, source_file_id) under one
+     payroll_input_batch; formulas are never evaluated; the file's sha256 and the batch are
+     recorded (ux_pib__cycle_file_sha makes a re-upload of the same bytes idempotent).
+     Verify: the Payroll screen's counts come from
+       SELECT count(*) FROM ess.payroll_input_item WHERE batch_id = :b;
+     — never from a parse of the file and never from the uploader's own row count.
      Rejected rows are listed with their row numbers — fix and re-upload the corrected file.
 
 P3.  HR SUBMITS ATTENDANCE  →  attendance_period SUBMITTED
@@ -2377,9 +3190,12 @@ P5.  VALIDATION  →  cycle VALIDATED  (system, on demand from Accounts)
      THIS IS THE GATE. Until it passes, no payslip row exists anywhere in the database.
 
 P6.  GENERATION  →  cycle CALCULATING → CALCULATED
-     One worker task takes pg_advisory_lock('payroll:'||cycle_id) on a DIRECT connection
-     (§4.3) and holds it for the whole run. Each payslip records payroll_engine_version and
-     input_digest = SHA-256 over the canonical JSON of its inputs (SECURITY.md §7.4).
+     One worker task takes pg_advisory_lock(hashtext('payroll:'||cycle_id)) on a DIRECT
+     connection (§4.3) and holds it for the whole run. Each payslip records
+     payroll_engine_version, input_sha256 (SHA-256 over jsonb_canonical of its persisted
+     inputs) and amount_sha256 (over the canonical serialisation of the decrypted amounts)
+     — DATA-MODEL.md §10, SECURITY.md §7.4. Both are the traceability anchor directive 6
+     requires, and both are recomputable from persisted rows alone.
      Watch: payroll_cycle_duration_seconds{phase="calculating"}, background_job_failures_total.
      Payslips exist now but are NOT visible: no payslip_publication row exists, and the
      employee-facing routes return 404 (API.md §11.1, enforced in SQL by the publication
@@ -2389,6 +3205,8 @@ P7.  REVIEW  (Accounts, and HR for headcount)
      Compare the run's totals against the previous cycle; investigate any employee whose net
      moved more than a configured threshold. Re-verify a sample:
        node apps/api/dist/tools/verify-payslip-digests.js --cycle <id> --sample 25
+       # recomputes input_sha256 and amount_sha256 for the sample and diffs against
+       # the persisted values; any mismatch blocks P8.
      A correction at this stage is a re-run (WORKFLOWS.md §1.10), not an edit: the run is
      superseded and both remain in the audit trail.
 
@@ -2422,7 +3240,16 @@ is never fixed by editing a payslip — it is an off-cycle correction run (`WORK
 
 ### 11.3 Rotating the encryption key
 
-Two distinct operations. **Rehearse both in staging first** — the staging database has the
+Two distinct operations. **Read R-15/R-18 first**: `SECURITY.md` §7.2 names the key table
+`data_key` with purposes `PII`/`STATUTORY`/`BANK`/`MFA`/`TICKET`, while `DATA-MODEL.md` §17.3
+names it `data_encryption_key` with purposes `FIELD_DEFAULT`/`PAYROLL`/`MFA`. **R-18 resolved this in
+favour of `data_encryption_key` and the three-purpose list** (§0.7); the commands
+below use the `SECURITY.md` spelling; substitute whichever the schema settles on, and read
+the purpose list from the schema rather than from this page — a rotation that iterates the
+wrong purpose list leaves a column encrypted under a retired key, and D6's completion check
+is the only thing that would catch it.
+
+**Rehearse both in staging first** — the staging database has the
 same schema and synthetic data, so a rehearsal proves the scripts, the timings and the
 verification queries.
 
@@ -2435,14 +3262,14 @@ K1.  Mint the new KEK:  openssl rand -base64 32   → MASTER_KEK_V2
      Add it to the Render environment group ALONGSIDE MASTER_KEK_V1. Do not remove V1.
      Add V2 to the sealed break-glass envelope before proceeding (§7.3).
 K2.  Set MASTER_KEK_ACTIVE_VERSION=2 and redeploy. Both KEKs are now resident: the app
-     unwraps with whichever kek_version each data_key row names, and wraps new DEKs with V2.
+     unwraps with whichever kek_version each data_encryption_key row names, and wraps new DEKs with V2.
 K3.  Re-wrap, as a one-off job:
        node apps/api/dist/tools/rewrap-deks.js --from 1 --to 2
-     For each data_key row, in a transaction: unwrap with V1, re-wrap with V2, set
+     For each data_encryption_key row, in a transaction: unwrap with V1, re-wrap with V2, set
      kek_version=2. There are single-digit rows (one per purpose), so this is seconds.
      Emits SECURITY.KEY_ROTATION_STARTED / _COMPLETED with counts.
 K4.  Verify:
-       SELECT purpose, kek_version, status FROM ess.data_key ORDER BY purpose;
+       SELECT purpose, kek_version, status FROM ess.data_encryption_key ORDER BY purpose;
          → every live row kek_version = 2
        node apps/api/dist/tools/decrypt-canary.js --all-purposes   → all OK
 K5.  Smoke: read one masked profile, one unmasked statutory id (step-up), one bank last4,
@@ -2461,9 +3288,9 @@ Per `purpose` (`PII`, `STATUTORY`, `BANK`, `MFA`, `TICKET`). Run **outside** a p
 ```
 D1.  Schedule: not during a payroll cycle (§11.2 P1–P8), not during month-end.
      Announce a 5 % database CPU uplift for the duration.
-D2.  If BLIND_INDEX_KEY is rotating too, add BLIND_INDEX_KEY_V2 now — the *_bidx values are
+D2.  If BLIND_INDEX_KEY is rotating too, add BLIND_INDEX_KEY_V2 now — the *_fpr values are
      recomputed in the SAME backfill pass, so rotating them separately would mean two scans.
-D3.  Insert the new data_key row as PENDING, wrapped under the current KEK; flip it ACTIVE
+D3.  Insert the new data_encryption_key row as PENDING, wrapped under the current KEK; flip it ACTIVE
      and the previous one RETIRING:
        node apps/api/dist/tools/rotate-dek.js --purpose BANK --begin
      From this moment new writes use the new DEK and reads still decrypt with whichever
@@ -2472,7 +3299,7 @@ D3.  Insert the new data_key row as PENDING, wrapped under the current KEK; flip
 D4.  Backfill:
        node apps/api/dist/tools/reencrypt-worker.js --purpose BANK --batch 500
      Walks each affected table in id order, 500 rows per transaction,
-     SELECT … FOR UPDATE SKIP LOCKED, decrypt-old → encrypt-new (recomputing *_bidx when
+     SELECT … FOR UPDATE SKIP LOCKED, decrypt-old → encrypt-new (recomputing *_fpr when
      the index key rotated). Progress is checkpointed in reencryption_job(purpose,
      table_name, last_id, rows_done, …) so it is resumable after any interruption.
      Throttle to ≤ 5 % database CPU; pause with --stop, resume with the same command.
@@ -2546,7 +3373,8 @@ R4.  RESTORE TO A NEW INSTANCE, never in place. Provider PITR → ess-postgres-r
 R5.  Create the four roles (§4.4) with FRESH passwords. Apply the role timeouts.
 R6.  INTEGRITY GATE — all must pass before any traffic is pointed at it:
        a. verify-audit-chain --full            → intact, no gaps, no fork
-       b. verify-payslip-digests --sample 100  → every input_digest recomputes
+       b. verify-payslip-digests --sample 100  → every input_sha256 AND amount_sha256
+                                                  recomputes from persisted rows
        c. decrypt-canary --all-purposes        → the KEK still opens the ciphertext
        d. anchor counts vs. the last known-good figures: employee, app_user, payslip
           (PUBLISHED), leave_request, expense_claim, helpdesk_ticket, audit_event
@@ -2680,7 +3508,12 @@ Q4.  Restore drill (§4.5). Record the elapsed time; compare against the 2 h RTO
 Q5.  Alert review: which alerts fired, which were actioned, which were noise. Delete or fix
      any alert that fired more than twice without action.
 Q6.  Dependency and image review: outstanding Dependabot PRs, Trivy findings, Node 22 LTS
-     patch level, Postgres 16 minor version, the pinned action SHAs.
+     patch level, Postgres 16 minor version, the pinned action SHAs, and the
+     render-postgres-ca.pem expiry (R-6 — fail the review if under 90 days).
+     Re-verify TRUSTED_PROXY_CIDRS against the live edge (§11.1 B5) and re-verify that
+     the object-storage lifecycle rules of §5.4 are actually in force at the provider
+     (R-24) — both are settings that drift silently and whose failure is invisible until
+     it matters.
 Q7.  Cost review against §10, and a check that staging has not silently grown production-like
      data (it must contain no real employee).
 Q8.  Confirm the empty-state guarantee still holds: point a scratch API at a freshly migrated,
@@ -2693,17 +3526,31 @@ Q8.  Confirm the empty-state guarantee still holds: point a scratch API at a fre
 
 ## 12. Open risks and reconciliations
 
-| #    | Item                                                                                                                                                      | Impact                                                                            | Proposed resolution                                                                                                                                                                                                        |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R-1  | API hostname: this document, `SECURITY.md` and `API.md` use `api-ess.widedrop.com`; the task brief proposed `api.ess.widedrop.com`                        | none technically; a documentation inconsistency if left unstated                  | §0.2. Confirm with the domain owner, then the string is fixed in four places.                                                                                                                                              |
-| R-2  | `SECURITY.md` §10.2 requires `MAIL_FROM` to end `@widedrop.com`, but the mandated help-desk address and the `WORKFLOWS.md` sender are `@widedroptech.com` | the boot check would reject a correct configuration                               | Amend `SECURITY.md` §10.2 to `@widedroptech.com`. Keeps all mail DNS out of the `widedrop.com` zone.                                                                                                                       |
-| R-3  | `apps/api/src/config/env.ts` uses single-version key names                                                                                                | rotation procedures in `SECURITY.md` §3.2/§7.3 cannot be executed                 | §0.4 rename table, before any production secret is minted.                                                                                                                                                                 |
-| R-4  | `POST /api/v1/webhooks/ses` (bounce/complaint) is not in `API.md` §13                                                                                     | delivery state would be `SENT` forever and bounces invisible                      | Add the route with the §6.4 guard block, plus its `public: true` allowlist entry.                                                                                                                                          |
-| R-5  | `SECURITY.md` §6.4 names `apps/web/public/_headers` as a header source                                                                                    | duplicate/conflicting `Content-Security-Policy` headers at the edge               | §2.3: `netlify.toml` owns all headers except CSP; CSP is generated into `dist/_headers`; a build assertion fails if `public/_headers` exists.                                                                              |
-| R-6  | `infra/certs/render-postgres-ca.pem` is referenced by the Dockerfile but does not exist in the repo                                                       | the image build fails, or `sslmode=verify-full` cannot be used                    | Download the provider CA at bootstrap, commit it (a public certificate, not a secret), and add a CI check that it is not expiring within 90 days.                                                                          |
-| R-7  | Render has no India region; Postgres and the API sit in Singapore                                                                                         | a future contract or policy may require in-country storage                        | Documented in `docs/PROCESSORS.md`; §3.7 gives the Fly.io `bom` + `ap-south-1` Postgres path. The migration is a restore plus a DNS change, not a rewrite.                                                                 |
-| R-8  | SES has no provider-side idempotency key, which `WORKFLOWS.md` §6.3 assumes                                                                               | a crash between send and status write could duplicate one message                 | §6.1: `Message-ID` derived from `email_outbox.id` plus the `SENDING` claim and 10-minute sweep bound it. Switch `MAIL_PROVIDER` to Resend if strict idempotency becomes a requirement.                                     |
-| R-9  | Single worker instance                                                                                                                                    | the outbox, SLA escalations, accruals and payroll calculation all stop if it dies | Mitigated by the heartbeat dead-man alert (§9.4) rather than by redundancy, because the lease design makes a restart safe and a second instance adds cost without removing the failure mode. Revisit above ~500 employees. |
-| R-10 | ClamAV unavailable ⇒ uploads land `QUARANTINED`                                                                                                           | expense claims and tickets accept files that nobody can then read                 | Correct and deliberate (`SECURITY.md` §5.3.10), but the UI must say so honestly; the P3 alert (§9.5) exists so it is noticed within 30 minutes rather than at month-end.                                                   |
-| R-11 | `ess_owner` credentials exist in a sealed envelope                                                                                                        | a two-person offline process is a real operational dependency                     | Test it during the quarterly review (Q3) — an escrow nobody has ever opened is not an escrow.                                                                                                                              |
-| R-12 | Netlify free tier has no SLA                                                                                                                              | an outage takes the SPA down while the API stays up                               | Accepted: the SPA is static and the API's data is unaffected. If an SLA is required, the ESS site moves to a paid Netlify plan (~$19) or to Cloudflare Pages, changing only §2 and the CSP `connect-src` consumer.         |
+| #    | Item                                                                                                                                                                            | Impact                                                                                                                                                                          | Proposed resolution                                                                                                                                                                                                        |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R-1  | API hostname: this document, `SECURITY.md` and `API.md` use `api-ess.widedrop.com`; the task brief proposed `api.ess.widedrop.com`                                              | none technically; a documentation inconsistency if left unstated                                                                                                                | §0.2. Confirm with the domain owner, then the string is fixed in four places.                                                                                                                                              |
+| R-2  | `SECURITY.md` §10.2 requires `MAIL_FROM` to end `@widedrop.com`, but the mandated help-desk address and the `WORKFLOWS.md` sender are `@widedroptech.com`                       | the boot check would reject a correct configuration                                                                                                                             | Amend `SECURITY.md` §10.2 to `@widedroptech.com`. Keeps all mail DNS out of the `widedrop.com` zone.                                                                                                                       |
+| R-3  | `apps/api/src/config/env.ts` uses single-version key names                                                                                                                      | rotation procedures in `SECURITY.md` §3.2/§7.3 cannot be executed                                                                                                               | §0.4 rename table, before any production secret is minted.                                                                                                                                                                 |
+| R-4  | `POST /api/v1/webhooks/ses` (bounce/complaint) is not in `API.md` §13                                                                                                           | delivery state would be `SENT` forever and bounces invisible                                                                                                                    | Add the route with the §6.4 guard block, plus its `public: true` allowlist entry.                                                                                                                                          |
+| R-5  | `SECURITY.md` §6.4 names `apps/web/public/_headers` as a header source                                                                                                          | duplicate/conflicting `Content-Security-Policy` headers at the edge                                                                                                             | §2.3: `netlify.toml` owns all headers except CSP; CSP is generated into `dist/_headers`; a build assertion fails if `public/_headers` exists.                                                                              |
+| R-6  | `infra/certs/render-postgres-ca.pem` is referenced by the Dockerfile but does not exist in the repo                                                                             | the image build fails, or `sslmode=verify-full` cannot be used                                                                                                                  | Download the provider CA at bootstrap, commit it (a public certificate, not a secret), and add a CI check that it is not expiring within 90 days.                                                                          |
+| R-7  | Render has no India region; Postgres and the API sit in Singapore                                                                                                               | a future contract or policy may require in-country storage                                                                                                                      | Documented in `docs/PROCESSORS.md`; §3.7 gives the Fly.io `bom` + `ap-south-1` Postgres path. The migration is a restore plus a DNS change, not a rewrite.                                                                 |
+| R-8  | SES has no provider-side idempotency key, which `WORKFLOWS.md` §6.3 assumes                                                                                                     | a crash between send and status write could duplicate one message                                                                                                               | §6.1: `Message-ID` derived from `email_outbox.id` plus the `SENDING` claim and 10-minute sweep bound it. Switch `MAIL_PROVIDER` to Resend if strict idempotency becomes a requirement.                                     |
+| R-9  | Single worker instance                                                                                                                                                          | the outbox, SLA escalations, accruals and payroll calculation all stop if it dies                                                                                               | Mitigated by the heartbeat dead-man alert (§9.4) rather than by redundancy, because the lease design makes a restart safe and a second instance adds cost without removing the failure mode. Revisit above ~500 employees. |
+| R-10 | ClamAV unavailable ⇒ uploads land `QUARANTINED`                                                                                                                                 | expense claims and tickets accept files that nobody can then read                                                                                                               | Correct and deliberate (`SECURITY.md` §5.3.10), but the UI must say so honestly; the P3 alert (§9.5) exists so it is noticed within 30 minutes rather than at month-end.                                                   |
+| R-11 | `ess_owner` credentials exist in a sealed envelope                                                                                                                              | a two-person offline process is a real operational dependency                                                                                                                   | Test it during the quarterly review (Q3) — an escrow nobody has ever opened is not an escrow.                                                                                                                              |
+| R-12 | Netlify free tier has no SLA                                                                                                                                                    | an outage takes the SPA down while the API stays up                                                                                                                             | Accepted: the SPA is static and the API's data is unaffected. If an SLA is required, the ESS site moves to a paid Netlify plan (~$19) or to Cloudflare Pages, changing only §2 and the CSP `connect-src` consumer.         |
+| R-13 | `DEPLOYMENT.md` §4.4 described four database roles with a `LOGIN` `ess_owner`; `DATA-MODEL.md` §1.8.1 declares five with `ess_owner` `NOLOGIN`                                  | privilege model diverges from the schema; the worker's `BYPASSRLS` role would have failed the boot assertion                                                                    | §0.5 + the rewritten §4.4: five roles (plus `ess_backup`, `ess_auth`), owner `LOGIN` only because Render requires it, role-aware privilege assertion, `FORCE ROW LEVEL SECURITY` asserted at boot.                         |
+| R-14 | CSP report URL: `SECURITY.md`/`FRONTEND.md` say `/csp-report`, `API.md` §1.1 says everything lives under `/api/v1`; `report-to` and `Reporting-Endpoints` were missing entirely | reports silently delivered nowhere; a clean report-only rollout that reported nothing                                                                                           | §0.6 + §2.3. Adopt `/api/v1/csp-report`, emit `report-to csp` **and** `Reporting-Endpoints` from the generated `_headers`, add `CSP_REPORT_ONLY`. Amend `SECURITY.md` §6.3 and `FRONTEND.md`.                              |
+| R-15 | Runbooks referenced `payroll_input_row`, `payslip.input_digest` and "21 named jobs", none of which exist in `DATA-MODEL.md`                                                     | a runbook that cannot be executed, and digest verification against a column that is not there                                                                                   | §0.7 name table; §4.5, §11.2, §11.5 corrected to `payroll_input_batch`/`payroll_input_item`, `input_sha256`/`amount_sha256`, and to reading the job list rather than a count.                                              |
+| R-16 | No timezone anywhere in the deployment, while `DATA-MODEL.md` §1.2 resolves every `date` in `Asia/Kolkata`                                                                      | every attendance day, pay date, cut-off and SLA clock 5 h 30 m out of step — wrong numbers that are not invented numbers, so directive 2's usual defences miss them             | §0.8: `TZ=UTC` everywhere, database `timezone=UTC`, all civil dates via `AT TIME ZONE org.timezone`, lint against unzoned `Date` accessors, IANA zone stored with every schedule.                                          |
+| R-17 | `worker-heartbeat` (§9.4) is not in `DATA-MODEL.md` §17.5's named-job list                                                                                                      | the dead-man alert fires permanently, or the job-name constraint rejects every heartbeat                                                                                        | Add `worker-heartbeat` to §17.5. Until then the alert is knowingly broken, which is worse than absent.                                                                                                                     |
+| R-18 | `SECURITY.md` §7.2 `data_key` (purposes `PII`/`STATUTORY`/`BANK`/`MFA`/`TICKET`) vs `DATA-MODEL.md` §17.3 `data_encryption_key` (`FIELD_DEFAULT`/`PAYROLL`/`MFA`)               | a key rotation that iterates the wrong purpose list leaves a column under a retired key                                                                                         | **RESOLVED (§0.7): `data_encryption_key`, purposes `FIELD_DEFAULT`/`PAYROLL`/`MFA`, status `PENDING`/`ACTIVE`/`RETIRED`/`COMPROMISED`.** §11.3 still reads the live purpose list from the schema, not from prose.          |
+| R-19 | `POST /api/v1/csp-report` is not in `API.md` §13                                                                                                                                | boot-time route assertion fails, or the endpoint ships undeclared and unguarded                                                                                                 | Add it as `public: true` with the §2.3 guard block and a public-allowlist entry, exactly as R-4 does for the SES webhook.                                                                                                  |
+| R-20 | `DATA-MODEL.md` §1.8.2 writes the RLS context as `SET LOCAL ess.actor_user_id = $2`, which PostgreSQL cannot bind                                                               | the only implementable reading is string interpolation of the actor identity into the statement that governs every RLS policy — the highest-value injection point in the design | §4.3: mandate `SELECT set_config('ess.…', $n, true)`; Semgrep fails the build on `SET LOCAL ess.` in a raw query and on any `$executeRawUnsafe`. Amend `DATA-MODEL.md` §1.8.2.                                             |
+| R-21 | `DATA-MODEL.md` §18.1 seeds the `organization` row; §11.1 B8 creates it                                                                                                         | two writers; a re-seed silently reverts an HR edit to the legal address or the helpdesk email                                                                                   | One owner. This document's position: B8 owns it and §18.1's `organization` entry is struck. Decide before the first production seed.                                                                                       |
+| R-22 | Netlify's production branch defaults to `main` and would build and publish it                                                                                                   | a second, unreviewed production deploy path that bypasses CI, the required reviewer and §2.5's zero-build-minute property                                                       | §2.1: production branch set to `netlify-prod-locked` or builds stopped, asserted on every deploy by `assert-netlify-not-building.mjs`.                                                                                     |
+| R-23 | Deploy previews are `deploy-preview-<n>--…netlify.app`, an unbounded origin set, while §7.4 refuses `*`                                                                         | either a wildcard CORS allowlist or previews that cannot call the API at all                                                                                                    | §2.4: `ALLOWED_ORIGIN_PATTERNS`, anchored regex, **refused outright when `NODE_ENV=production`**, with near-miss unit tests.                                                                                               |
+| R-24 | R2's lifecycle support for non-current version expiry, and Object Lock's create-time-only constraint                                                                            | a retention bound that silently does not exist, or a mutable off-provider backup                                                                                                | §5.4: verify at bootstrap; fall back to application-issued `DeleteObjectVersion`, and move the backup bucket to S3 `ap-south-1` with compliance-mode Object Lock if R2 cannot lock it.                                     |
+| R-25 | `SMOKE_TOKEN` / `DEPLOY_AUDIT_TOKEN` were named but never defined                                                                                                               | a long-lived, unscoped production bearer held by CI                                                                                                                             | §8.2.1: `SERVICE`-kind users, one permission each, no `employee` row, IP-bound to CI egress, 60 req/h, 90-day expiry, every use audited.                                                                                   |
+| R-26 | "Private interface" for `/readyz` and `/metrics` has no meaning on a single-port platform                                                                                       | authentication-failure counts and dependency health exposed on the internet                                                                                                     | §9.2: a second Fastify instance on `PRIVATE_PORT=4001` that the platform does not route; the routes are **not registered** on the public instance; `/metrics` additionally bearer-gated.                                   |

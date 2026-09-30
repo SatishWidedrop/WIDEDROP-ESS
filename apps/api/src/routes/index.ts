@@ -4,6 +4,17 @@ import { authenticatePlugin } from '../plugins/authenticate.js';
 import { healthRoutes } from './health.js';
 import { authRoutes } from './v1/auth.routes.js';
 import { meRoutes } from './v1/me.js';
+import { payslipRoutes } from './v1/payslips.js';
+import { leaveRoutes } from './v1/leave.js';
+import { expenseRoutes } from './v1/expenses.js';
+import { policyRoutes } from './v1/policies.js';
+import { helpdeskRoutes } from './v1/helpdesk.js';
+import { directoryRoutes } from './v1/directory.js';
+import { announcementRoutes } from './v1/announcements.js';
+import { documentRoutes } from './v1/documents.js';
+import { profileRoutes } from './v1/profile.js';
+import { taxRoutes } from './v1/tax.js';
+import { benefitRoutes } from './v1/benefits.js';
 
 /**
  * Route registration.
@@ -43,4 +54,15 @@ export async function registerRoutes(app: App): Promise<void> {
   await app.register(healthRoutes);
   await app.register(authRoutes, { keys });
   await app.register(meRoutes);
+  await app.register(payslipRoutes);
+  await app.register(profileRoutes);
+  await app.register(leaveRoutes);
+  await app.register(taxRoutes);
+  await app.register(benefitRoutes);
+  await app.register(expenseRoutes);
+  await app.register(documentRoutes);
+  await app.register(policyRoutes);
+  await app.register(directoryRoutes);
+  await app.register(announcementRoutes);
+  await app.register(helpdeskRoutes);
 }

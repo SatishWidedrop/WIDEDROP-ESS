@@ -8,6 +8,16 @@ Manager Approvals) plus the HR and Accounts back-office surfaces that the payrol
 workflow requires.
 **Target:** PostgreSQL 16, accessed through Prisma 5 from Fastify 5 / Node 22.
 
+> ### Canonical reference
+>
+> **`docs/ARCHITECTURE.md` is the system index and the single source of truth for every
+> entity name, enum value, permission string, state name and workflow-stage name.** Where
+> this document and any sibling disagree on a _name_, `ARCHITECTURE.md` §4 (Canonical
+> glossary) wins and the divergent spelling is a defect to be corrected here. Where they
+> disagree on a _control_, the stricter of the two wins and `ARCHITECTURE.md` §4 records
+> which that is. No document may introduce a name, enum value or permission code that
+> `ARCHITECTURE.md` §4 does not carry.
+
 > **Data-integrity rule (overrides the prototype).** The prototype's `PAYSLIPS`,
 > `PROFILE`, `PEOPLE`, `ANN`, `BAL`, `YTD`, `TAXQ`, `EXP0`, `TK0`, `APR0` … literals
 > exist only to fix layout and copy tone. Section 20 maps **every** number the
@@ -221,7 +231,7 @@ anything without a live KMS grant.
 | `payslip_line`                  | `amount_minor` (as decimal string)                                                                                                                     | —                                           |
 | `payslip`                       | `gross_earnings_minor`, `total_deductions_minor`, `net_pay_minor`, `employer_pf_minor`, `tds_minor` (as decimal strings)                               | —                                           |
 | `mfa_credential`                | `totp_secret`                                                                                                                                          | —                                           |
-| `mfa_recovery_code`             | _(not encrypted — Argon2id hashed, see §6.3)_                                                                                                          | —                                           |
+| `mfa_recovery_code`             | _(not encrypted — `code_hmac = HMAC-SHA256(RECOVERY_CODE_KEY, code)`, SECURITY.md §2.7)_                                                               | —                                           |
 
 > **Why salary amounts are encrypted.** Payroll amounts are the highest-value target in
 > an ESS. Encrypting them at the application layer means a stolen database dump, a
@@ -297,6 +307,7 @@ CREATE ROLE ess_app       LOGIN   NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRL
 CREATE ROLE ess_job       LOGIN   NOSUPERUSER NOCREATEDB NOCREATEROLE BYPASSRLS     NOINHERIT;
 CREATE ROLE ess_migrator  LOGIN   NOSUPERUSER NOCREATEDB NOCREATEROLE BYPASSRLS     NOINHERIT;
 CREATE ROLE ess_readonly  LOGIN   NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
+CREATE ROLE ess_backup    LOGIN   NOSUPERUSER NOCREATEDB NOCREATEROLE BYPASSRLS     NOINHERIT;
 
 ALTER SCHEMA ess OWNER TO ess_owner;  ALTER SCHEMA ess_ops OWNER TO ess_owner;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;          -- no unqualified object creation
@@ -318,6 +329,12 @@ ALTER ROLE ess_migrator SET search_path = ess, ess_ops, pg_catalog;
   migration or psql session run as the owner.
 - `ess_readonly` exists for the analytics replica only; it holds `SELECT` on nothing in
   class M1/M5 (§1.6) and is not `BYPASSRLS`.
+- `ess_backup` exists **only** for the weekly off-provider logical dump
+  (`DEPLOYMENT.md` §4.5). It is `SELECT`-only on every table, `BYPASSRLS` (a backup that
+  silently omitted rows would be worse than no backup), and its credential exists in exactly
+  one place: the `BACKUP_DATABASE_URL` of the backup cron job. Boot refuses to start any
+  other service under it. **There are therefore six roles, not five**; `DEPLOYMENT.md` §0.5
+  is corrected to match.
 - Every `LANGUAGE sql` / `plpgsql` function and every trigger function in this schema is
   created with `SET search_path = ess, pg_catalog` attached, and none is
   `SECURITY DEFINER` unless this document names it as such (only
@@ -562,7 +579,14 @@ forward-only migration (`ALTER TYPE … ADD VALUE`); removing a value is forbidd
 | `ess_attendance_lop_source`          | `DERIVED`, `HR_OVERRIDE`, `PAYROLL_INPUT_OVERRIDE`                                                                                                                                                                                                                                                                                                        |
 
 > `ess_user_status` above is **extended** (forward-only `ALTER TYPE … ADD VALUE`) to
-> `INVITED`, `PENDING_MFA`, `ACTIVE`, `LOCKED`, `SUSPENDED`, `DISABLED`, `OFFBOARDED`.
+> `INVITED`, `PENDING_MFA`, `ACTIVE`, `LOCKED`, `SUSPENDED`, `EX_EMPLOYEE`, `DISABLED`,
+> `OFFBOARDED`. **`EX_EMPLOYEE` is required by SECURITY.md §2.5** — the post-exit retrieval
+> window during which a departed employee may still authenticate (password + TOTP, no grace,
+> no remembered device) and reach only the fixed `EX_EMPLOYEE_ALLOWLIST` of read permissions.
+> It is a _status_, not a fifth persona, so D2 (exactly four personas) is preserved.
+> `LOCKED` remains in the enum for compatibility but is **never written**: a lock is the
+> transient overlay `app_user.locked_until`, so an `INVITED` account being brute-forced is
+> still `INVITED` when the lock expires.
 > SECURITY.md §2.7 requires `PENDING_MFA` (a role grant to a user without active MFA
 > parks them there) and §2.5 requires `SUSPENDED`/`OFFBOARDED` to be distinct from an
 > administrative `DISABLED`, because they carry different session-revocation and
@@ -630,6 +654,8 @@ unguarded status column.** The complete index:
 | `approval_task`                                                 | §19.2      |
 | `profile_change_request`                                        | §5.11      |
 | `app_user` (account lifecycle)                                  | §5.1.1     |
+| `employee` (employment lifecycle)                               | §5.2       |
+| `role_grant_request` (maker-checker role grants)                | §3.5       |
 | `session`                                                       | §6.6       |
 
 A `state_transition` row whose `machine` is not in this table, or a `status` column whose
@@ -662,7 +688,18 @@ CONSTRAINT ck_permission__code_matches_parts CHECK (
       || CASE WHEN scope = 'global' THEN '' ELSE ':' || scope::text END)
 ```
 
-New enum `ess_permission_scope` = `self`, `team`, `any`, `finance`, `global`.
+New enum `ess_permission_scope` = `self`, `team`, `skip_level`, `any`, `finance`, `global`.
+`skip_level` is required by the seeded code `expense:claim:approve:skip_level`; without it
+`ck_permission__code_matches_parts` rejects that row. **This six-value list is the complete
+scope vocabulary of the permission _string_.** SECURITY.md §4.3's draft grammar additionally
+listed `chain`, `queue`, `full` and `masked`; those are withdrawn — `chain` is spelled
+`skip_level` here, `queue` is an _attribute predicate_ (help-desk queue membership, §16.4)
+and never a scope, and `full`/`masked` are two different permissions (`…:read:self` returns
+the mask, `…:read_sensitive:any` returns the plaintext), never two scopes of one permission.
+The permission-string scope is **not** the ABAC scope: the mapping is `self`→`SELF`,
+`team`→`REPORTING_CHAIN` (closure `depth >= 1`), `skip_level`→`REPORTING_CHAIN`
+(`depth >= 2`), `any`/`finance`/`global`→`ORG`. `emergency_contact:read:team` is the single
+exception and resolves to `DIRECT_REPORTS` (closure `depth = 1`), matching §1.8.3.
 Not tenant-scoped (global reference data; no `organization_id`).
 
 > **Why these are stored columns and not generated ones.** The previous definition —
@@ -734,7 +771,34 @@ role:read                          role:assign                       role:manage
 audit:read                         audit:export                      security:session:revoke
 security:mfa:reset                 file:download:self                file:download:any
 report:payroll:read                report:leave:read                 report:expense:read
+
+# --- added by the cross-document reconciliation (ARCHITECTURE.md §4.3). Each was used by
+# --- SECURITY.md §4.4 and had no seeded code, which meant a route could not declare it.
+emergency_contact:read:self        emergency_contact:write:self      emergency_contact:read:team
+emergency_contact:read:any
+bank_account:read:self             bank_account:read_sensitive:any
+bank_account:change_request:create:self                              bank_account:change_request:verify
+statutory_identity:read:self       statutory_identity:read_sensitive:any
+payroll:salary_structure:read:self payroll:validation_issue:read     payroll:export
+expense:policy_limit:read          benefit:enrol:approve             benefit:deduction:read:any
+policy:ack:read:self               policy:archive                    announcement:pin
+faq:read                           faq:manage                        ticket:close:self
+audit:verify                       security:account:unlock
 ```
+
+**The four codes SECURITY.md §4.3.1 mapped to names that do not exist here are renamed, not
+added** — the spelling on the right is canonical everywhere:
+
+| SECURITY.md §4.3.1 wrote         | Canonical seeded code                                                      |
+| -------------------------------- | -------------------------------------------------------------------------- |
+| `profile:change_request:approve` | `profile:change_request:decide`                                            |
+| `expense:claim:approve:chain`    | `expense:claim:approve:skip_level`                                         |
+| `directory:reporting_line:read`  | `directory:read` (the reporting-line widget is part of the directory read) |
+| `payslip:read:any` for HR        | not granted at all (HR never sees an amount, §3.3)                         |
+
+`profile:read_sensitive:*` remains the code for unmasking _profile_ fields;
+`bank_account:read_sensitive:any` and `statutory_identity:read_sensitive:any` are **separate**
+codes precisely because HR holds the first and must not hold the other two (§3.3).
 
 `is_sensitive = true` for: `profile:read_sensitive:*`, `payslip:read:any`,
 `payslip:download:any`, `payroll:salary_structure:read:any`,
@@ -849,6 +913,43 @@ Every insert/delete writes an `audit_event` with `action` `PERMISSION_GRANT` /
   cannot create the employee whose payroll it runs, nor grant itself a second Accounts
   identity to satisfy dual control.
 
+**Grants for the codes added by the cross-document reconciliation** (`ARCHITECTURE.md` §4.3 is
+the consolidated table; no code is an orphan, §21 rule 14):
+
+- **EMPLOYEE** (and therefore every persona) additionally holds
+  `emergency_contact:{read,write}:self`, `bank_account:read:self` (the mask only),
+  `bank_account:change_request:create:self` (step-up, requires a cancelled-cheque upload),
+  `statutory_identity:read:self` (the mask only), `payroll:salary_structure:read:self`
+  (readable only once a payslip has been published — D3), `policy:ack:read:self`,
+  `expense:policy_limit:read` (the Expenses screen renders "Within ₹1,500 cap" from
+  `expense_limit`, so the number is persisted rather than hardcoded), `ticket:close:self` and
+  `faq:read`.
+- **MANAGER** additionally holds `emergency_contact:read:team` — and **only** at
+  `depth = 1` (§1.8.3), implementing the persisted policy note "Emergency contacts are visible
+  only to People Ops and your manager" — plus `expense:claim:approve:skip_level` for the
+  escalation band defined by `expense_limit.escalation_amount_minor`. A Manager still holds no
+  `:read:any` code of any kind.
+- **HR** additionally holds `emergency_contact:read:any`, `benefit:enrol:approve`,
+  `policy:archive`, `announcement:pin`, `faq:manage`, `audit:verify`,
+  `security:account:unlock` (§2.6 could create locks with no administrative way to clear them),
+  and `payroll:validation_issue:read` — narrowed by the DTO to the results whose
+  `owner_role = 'HR'` (chiefly `PAY_ATTENDANCE_MISSING`), because HR cannot act on a blocker it
+  cannot see. HR does **not** gain any money-bearing payroll code.
+- **ACCOUNTS** additionally holds `bank_account:read_sensitive:any` and
+  `bank_account:change_request:verify` (both step-up, both audited with the subject employee
+  id — **HR does not hold either**, so the persona that edits the employee record cannot read
+  or redirect the account salary is paid into), `statutory_identity:read_sensitive:any` (for
+  statutory filing and Form 16 only), `benefit:deduction:read:any` (the payroll-affecting
+  amount per employee per period — never the plan, the dependants or the medical context),
+  `payroll:validation_issue:read`, `payroll:export` and `faq:read`.
+- **ACCOUNTS also holds the payroll and expense help-desk queues**:
+  `ticket:{read:any,comment:any,assign,resolve}`, bounded by an **attribute predicate** on
+  `ticket_category.queue` — Accounts holds `PAYROLL_TAX` and `EXPENSES`, HR holds `HR`,
+  `BENEFITS`, `IT_ACCESS`, `GENERAL` and `DATA_REQUEST`. A ticket outside the actor's queues is
+  invisible (`404`). Queue membership is a predicate, never a scope, and it is what makes
+  directive 8's routing work: a payroll query raised from the portal reaches the people who can
+  answer it without handing Accounts the HR queue's contents.
+
 > **Dual control.** `payroll:approve` and `payroll:publish` are held by ACCOUNTS, but
 > the guard `payroll.distinct_approver` (§10.2) forbids the same `app_user` from being
 > both `calculated_by_user_id` and `approved_by_user_id` on a cycle, **and**
@@ -861,10 +962,19 @@ Every insert/delete writes an `audit_event` with `action` `PERMISSION_GRANT` /
 > account. Two controls make that visible rather than silent:
 >
 > 1. `bootstrap:admin` and the HR role-assignment surface both refuse to leave the
->    organisation with fewer than **two distinct, `ACTIVE`, MFA-enrolled `app_user` rows
->    holding the ACCOUNTS persona**, and `payroll:cycle:create` returns
->    `409 {"code":"DUAL_CONTROL_UNAVAILABLE"}` when that count is below two. The count is
->    a query, not a setting: `SELECT count(DISTINCT ur.app_user_id) FROM user_role ur JOIN role r ON r.id = ur.role_id JOIN app_user u ON u.id = ur.app_user_id WHERE r.persona = 'ACCOUNTS' AND ur.revoked_at IS NULL AND u.status = 'ACTIVE' AND EXISTS (SELECT 1 FROM mfa_credential m WHERE m.app_user_id = u.id AND m.confirmed_at IS NOT NULL AND m.disabled_at IS NULL)`.
+>    organisation with fewer than **three distinct, `ACTIVE`, MFA-enrolled `app_user` rows
+>    holding the ACCOUNTS persona**, and the guard `payroll.dual_control_available` fails
+>    `POST /payroll/cycles/:id/lock-inputs` (PAY-3) with
+>    `409 {"code":"DUAL_CONTROL_UNAVAILABLE"}` when that count is below three.
+>    **Three, not two** (`WORKFLOWS.md` R-8/R-9): `payroll.distinct_approver` separates the
+>    calculator from the approver and `payroll.distinct_publisher` separates the publisher
+>    from _both_, so publishing a cycle needs three distinct Accounts humans. Checking it at
+>    `INPUTS_LOCKED` rather than at publication is deliberate — a cycle that cannot be
+>    published must fail before anyone does the work, not after. An organisation with only
+>    two Accounts users sets `org_setting.payroll_publisher_may_equal_approver = true`, an
+>    audited `CONFIG_CHANGE` that relaxes **only** the second conjunct of
+>    `payroll.distinct_publisher` and never the first. The count is
+>    a query, not a setting: `SELECT count(DISTINCT ur.app_user_id) FROM user_role ur JOIN role r ON r.id = ur.role_id JOIN app_user u ON u.id = ur.app_user_id WHERE r.persona = 'ACCOUNTS' AND ur.revoked_at IS NULL AND (ur.valid_to IS NULL OR ur.valid_to >= CURRENT_DATE) AND u.status = 'ACTIVE' AND EXISTS (SELECT 1 FROM mfa_credential m WHERE m.app_user_id = u.id AND m.confirmed_at IS NOT NULL AND m.disabled_at IS NULL)`.
 > 2. Granting a second persona to a user who already holds ACCOUNTS, or granting ACCOUNTS
 >    to a user who already holds HR, writes a `PERMISSION_GRANT` audit event with
 >    `metadata.sod_conflict = true` and raises a standing compliance finding on the HR
@@ -1842,7 +1952,10 @@ family, and vice versa.
 Access tokens are stateless JWTs (10 min TTL, never persisted) carrying `sid`; they are
 verifiable offline **and** revocable, because §6.0's session row is consulted on every
 request. Refresh tokens are opaque 256-bit random values delivered in a
-`__Host-wd_rt` cookie (`httpOnly; Secure; SameSite=Strict; Path=/api/auth`; the
+`__Host-wd_rt` cookie (`HttpOnly; Secure; SameSite=Strict; Path=/`; the `__Host-` prefix
+**forbids** a narrower `Path` as well as a `Domain`, so `Path=/api/auth` is not a legal
+spelling of this cookie — route-level enforcement, not `Path`, is what narrows it
+(SECURITY.md §3.4); the
 `__Host-` prefix pins it to the exact host with no `Domain` attribute, so a compromised
 sibling subdomain cannot set it) and persisted **only as a hash**.
 

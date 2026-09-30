@@ -28,6 +28,16 @@ document, not licence to invent a column.
 
 ---
 
+> ### Canonical reference
+>
+> **`docs/ARCHITECTURE.md` is the system index and the single source of truth for every
+> entity name, enum value, permission string, state name and workflow-stage name.** Where
+> this document and any sibling disagree on a _name_, `ARCHITECTURE.md` §4 (Canonical
+> glossary) wins and the divergent spelling is a defect to be corrected here. Where they
+> disagree on a _control_, the stricter of the two wins and `ARCHITECTURE.md` §4 records
+> which that is. No document may introduce a name, enum value or permission code that
+> `ARCHITECTURE.md` §4 does not carry.
+
 ## 0. Conventions
 
 ### 0.1 Reading a transition table
@@ -488,8 +498,10 @@ implementer needs:
    may not act on an entity they may legitimately know exists; a `404` is returned where
    knowing the entity exists is itself disclosure (`SECURITY.md §4.6`). Both write an
    `AUTHZ.DENIED` audit row on the error path (§11.1).
-6. **RLS is the backstop, not the gate.** The API sets `ess.actor_employee_id`,
-   `ess.actor_scopes` and `ess.organization_id` with `SET LOCAL` inside the transaction
+6. **RLS is the backstop, not the gate.** The API sets the five GUCs of `DATA-MODEL.md`
+   §1.8.2 — `ess.organization_id`, `ess.actor_user_id`, `ess.actor_employee_id`,
+   `ess.actor_persona` and **`ess.scopes`** (not `ess.actor_scopes`) — with `SET LOCAL`
+   inside the transaction
    (`DATA-MODEL.md §1.8.2`); a bug that forgets a `WHERE` clause yields zero rows rather
    than another employee's payslip. Because the context is transaction-local, it is
    compatible with the transaction-pooled connection the deployment uses, and a request
@@ -517,9 +529,17 @@ others. Each moves money, changes where money goes, or changes who can do either
 | Any `EXPORT` of payroll, tax or audit data                         | Bulk sensitive read                 |
 
 A step-up is a fresh MFA assertion against the **current** session, recorded as
-`session.step_up_at`; it is valid for `org_setting.step_up_max_age_minutes` (seeded `15`)
-and is consumed per session, not per request, so a publish run of 200 payslips prompts
-once.
+**`session.mfa_verified_at`** (`DATA-MODEL.md` §6.0 — there is no `session.step_up_at` column).
+It is valid for **`org_setting.step_up_max_age_seconds`, seeded `300` (five minutes)** with a
+hard maximum of `900`, and is consumed per session, not per request, so a publish run of 200
+payslips prompts once. **Five minutes, not fifteen** (`SECURITY.md` R16): the step-up window
+bounds how long a stolen live session can move an organisation's payroll, and the earlier
+`step_up_max_age_minutes = 15` was a 3× widening of exactly that window. `mfa_at` in the access
+token mirrors this column, and `API.md` §4.3 enforces `now() - mfa_at <= 300 s`.
+
+Two of the transitions above additionally require a fresh **`reauth_at`** (a password
+re-presentation, `API.md` §4.3) rather than `mfa_at`: MFA enrolment and MFA credential removal.
+A first enrolment has no second factor to assert, so requiring `mfa_at` there is a deadlock.
 
 **Rate limits.** Buckets are token-bucket, keyed as shown, enforced server-side at the
 edge **and** in the API (the edge limit alone is bypassable by anything that reaches the
@@ -2199,7 +2219,7 @@ drops the mandate. Three rules close that:
 
 1. `organization.helpdesk_email` is **seeded** to `helpdesk@widedroptech.com` and is
    `NOT NULL`. It is changed only through `PATCH /admin/organization` under
-   `org:settings:write`, which writes a `CONFIG_CHANGE` audit row with before/after and
+   `org:setting:update`, which writes a `CONFIG_CHANGE` audit row with before/after and
    raises a `SECURITY_ALERT` to every `audit:read` holder.
 2. `to_addresses` is built as
    `array_distinct(ARRAY[category.routing_email] || ARRAY[organization.helpdesk_email])`.

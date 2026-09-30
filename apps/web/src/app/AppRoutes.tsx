@@ -11,6 +11,9 @@ import { useCurrentUser } from './AuthProvider.js';
 const HomeScreen = lazy(() =>
   import('../features/home/HomeScreen.js').then((m) => ({ default: m.HomeScreen })),
 );
+const PayslipsScreen = lazy(() =>
+  import('../features/payslips/PayslipsScreen.js').then((m) => ({ default: m.PayslipsScreen })),
+);
 
 export function AppRoutes() {
   const user = useCurrentUser();
@@ -47,6 +50,7 @@ export function AppRoutes() {
       <Suspense fallback={<SkeletonLines count={5} />}>
         <Routes>
           <Route path="/" element={<HomeScreen />} />
+          <Route path="/payslips" element={<PayslipsScreen />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>

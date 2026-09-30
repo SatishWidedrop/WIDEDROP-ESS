@@ -1,0 +1,157 @@
+.header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-8);
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: var(--text-heading-lg);
+  font-weight: var(--weight-semibold);
+}
+
+.subtitle {
+  font-size: var(--text-meta);
+  color: var(--text-muted);
+  margin-top: var(--space-2);
+}
+
+.yearSelect {
+  padding: 8px 11px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: var(--text-body-sm);
+}
+
+/* ── Payslip detail ───────────────────────────────────────────────── */
+
+.netBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  flex-wrap: wrap;
+  padding: var(--space-9);
+  background: var(--surface-raised);
+  border-radius: var(--radius-md);
+}
+
+.netLabel {
+  font-size: var(--text-meta);
+  color: var(--text-muted);
+}
+
+.netValue {
+  font-size: var(--text-metric-lg);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  margin-top: var(--space-2);
+}
+
+.netMeta {
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  text-align: right;
+  line-height: var(--leading-relaxed);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--space-10);
+}
+
+.lineGroup {
+  display: flex;
+  flex-direction: column;
+}
+
+.groupHeading {
+  font-size: var(--text-eyebrow);
+  letter-spacing: var(--tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-dim);
+  font-weight: var(--weight-medium);
+  padding-bottom: var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+
+.line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-6);
+  padding: var(--space-6) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.lineLabel {
+  font-size: var(--text-body-sm);
+  color: var(--text-secondary);
+  min-width: 0;
+}
+
+.lineNote {
+  display: block;
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.lineAmount {
+  font-size: var(--text-body-sm);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+/* A line reduced by loss of pay shows what it would have been. */
+.lineFull {
+  display: block;
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+  text-decoration: line-through;
+  font-weight: var(--weight-regular);
+}
+
+.total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-6);
+  padding: var(--space-7) 0 0;
+  font-weight: var(--weight-semibold);
+}
+
+.totalAmount {
+  font-variant-numeric: tabular-nums;
+}
+
+.attendance {
+  display: flex;
+  gap: var(--space-10);
+  flex-wrap: wrap;
+  font-size: var(--text-meta);
+  color: var(--text-muted);
+}
+
+.attendanceValue {
+  color: var(--text);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+.footnote {
+  font-size: var(--text-caption);
+  color: var(--text-dim);
+  line-height: var(--leading-relaxed);
+}

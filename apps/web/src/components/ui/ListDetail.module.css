@@ -1,0 +1,81 @@
+/*
+ * The prototype's list-and-detail split: a scrolling list on the left, the
+ * selected record on the right. Collapses to one column when the main area is
+ * too narrow to hold both, at which point the list sits above the detail.
+ */
+.split {
+  display: grid;
+  grid-template-columns: var(--grid-split-current);
+  gap: var(--space-10);
+  align-items: start;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.detail {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  width: 100%;
+  padding: var(--space-7) var(--space-8);
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.row:hover {
+  background: var(--surface-hover);
+}
+
+.rowSelected,
+.rowSelected:hover {
+  background: var(--surface-selected);
+}
+
+.rowMain {
+  flex: 1;
+  min-width: 0;
+}
+
+.rowTitle {
+  font-size: var(--text-body-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rowMeta {
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rowValue {
+  font-size: var(--text-body-sm);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}

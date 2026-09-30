@@ -759,6 +759,8 @@ enum AuditAction {
   IMPERSONATE
   CONFIG_CHANGE
   CRYPTO_REWRAP
+  /// An employee's explicit confirmation that they read a policy version.
+  ACKNOWLEDGE
 
   @@map("ess_audit_action")
   @@schema("ess")

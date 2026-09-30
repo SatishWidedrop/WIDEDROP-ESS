@@ -2170,7 +2170,8 @@ exports.AuditAction = exports.$Enums.AuditAction = {
   PERMISSION_REVOKE: 'PERMISSION_REVOKE',
   IMPERSONATE: 'IMPERSONATE',
   CONFIG_CHANGE: 'CONFIG_CHANGE',
-  CRYPTO_REWRAP: 'CRYPTO_REWRAP'
+  CRYPTO_REWRAP: 'CRYPTO_REWRAP',
+  ACKNOWLEDGE: 'ACKNOWLEDGE'
 };
 
 exports.FilePurpose = exports.$Enums.FilePurpose = {
