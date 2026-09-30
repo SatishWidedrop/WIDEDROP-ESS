@@ -221,6 +221,52 @@ Do not "fix" it. Preserve the state, capture the verifier's output, and
 escalate. The value of the trail is that it is not something anybody can
 quietly repair.
 
+### 3.7 HR cannot submit attendance
+
+Upstream of §3.3, and the likeliest thing to go wrong in a first cycle: the
+period will not submit, so no payroll cycle can consume it.
+
+| Message                                        | What it means                                                        |
+| ---------------------------------------------- | -------------------------------------------------------------------- |
+| `N people have no reporting manager`           | Nobody is nominated to review the people at the top. See below.      |
+| `… would be theirs to approve`                 | The nominee has no manager either, so they would sign off their own. |
+| `N records do not add up to the days employed` | A correction left payable + loss-of-pay ≠ days employed.             |
+| `There are no attendance records to submit`    | Derive has not run for this period.                                  |
+
+**Nobody nominated.** Every organisation has somebody the reporting tree stops
+at, whose record has no manager to route to. The organisation names who reviews
+those — in practice the head of People Ops — and until it does, the submission
+is refused. Who is currently affected:
+
+```sql
+SELECT e.employee_number, e.full_name
+  FROM ess.employee e
+ WHERE e.organization_id = '<org id>'
+   AND e.employment_status IN ('ACTIVE','ON_LEAVE','NOTICE_PERIOD')
+   AND NOT EXISTS (SELECT 1 FROM ess.employee_manager m
+                    WHERE m.employee_id = e.id
+                      AND m.is_primary AND m.effective_to IS NULL);
+```
+
+`GET /api/v1/hr/attendance/approver` returns the same list with whoever is
+nominated; `PUT` sets it, and needs `org-structure:write`, which is HR at
+organisation scope. There is no screen for it yet, so see step 8 of
+`docs/GO-LIVE.md` for the statement.
+
+**The nominee would approve themselves.** Refused deliberately: routing a
+record to the person it belongs to is not a review. Either give that person a
+reporting manager, or nominate somebody else. The same is true of the
+temptation to route these records back to whoever submitted the period — HR
+derives and files attendance, so HR approving it would be approving its own
+filing, which is why the nomination exists rather than a fallback.
+
+Two things never to do here. Do not insert a reporting line that loops — A
+managing B and B managing A satisfies the check and gives you two people
+approving each other, which is the same failure wearing a hat. Do not
+`UPDATE ess.attendance_record SET status = 'APPROVED'`: the period's completion
+is driven by approval rows, so the records would be approved by nobody and the
+period would still never finish.
+
 ---
 
 ## 4. Routine operations

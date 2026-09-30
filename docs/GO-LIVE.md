@@ -169,7 +169,12 @@ Nothing below depends on the decisions above except where noted.
 
 1. Create the project. Pick the region closest to your people — `ap-south-1`
    (Mumbai) or `ap-southeast-1` (Singapore).
-2. **Upgrade to Pro before any real data goes in** (§2.2).
+2. **Do not put real payroll data in until there is a backup of some kind.**
+   Which kind is still open (§2.2): Supabase Pro at ~$25/month gets you daily
+   backups and a restore button, and a self-hosted dump keeps an off-platform
+   copy Pro does not give you. Either is fine; neither being in place is not.
+   The free tier has **zero** backup retention, so until one of them exists,
+   a mistake at the SQL editor is unrecoverable.
 3. Project Settings → Database → copy both connection strings:
    - pooled, port 6543 → `DATABASE_URL`, and append `&pgbouncer=true`
    - direct, port 5432 → `DIRECT_DATABASE_URL`
@@ -338,6 +343,29 @@ locations, designations, holiday calendar, leave types and their accrual, pay
 components, the tax regime, expense categories, help-desk categories, and the
 first employees.
 
+**Then nominate who approves attendance for people with no reporting manager.**
+Somebody in every organisation is at the top of the tree — the founder, the
+managing director, whoever it stops at — and their attendance record has no
+manager to route to. It still needs another person's review before payroll may
+consume the period, so the organisation names who that is, in practice the head
+of People Ops.
+
+Without it, HR's attendance submission is refused and the payroll cycle that
+consumes the period can never start. This is the one setup step with no screen
+yet, so for now it is one statement in the SQL editor:
+
+```sql
+update ess.organization
+   set attendance_approver_employee_id = (
+         select id from ess.employee
+          where organization_id = '<your org id>'
+            and employee_number = '<the approver>')
+ where id = '<your org id>';
+```
+
+The nominee must have a reporting manager of their own — the API refuses
+anybody who would end up approving their own record, which is not a review.
+
 ### Step 9 — Before real payroll
 
 A rehearsal, on real headcount, in this order:
@@ -345,12 +373,19 @@ A rehearsal, on real headcount, in this order:
 1. Load every employee and their salary structure.
 2. Run one full cycle end to end: Accounts uploads inputs → HR submits
    attendance → managers approve → validate → calculate → render → publish.
-3. **Time the calculation step** (§1).
+3. **Time the calculation step** against your real headcount:
+   `npm run bench:payroll -w @widedrop/api -- <headcount>`. Compare it with
+   the table in §1 — the shape of the curve matters more than the number,
+   because a per-employee cost that climbs with headcount means something is
+   quadratic and 500 people will not simply cost ten times what 50 did.
 4. Download a payslip as an employee and check the figures against your
    existing payroll.
 5. Verify the audit chain.
-6. Practise a restore from a Supabase backup into a scratch project. A restore
-   nobody has done is a restore that does not work.
+6. Practise a restore into a scratch project, from whichever backup route
+   §2.2 lands on. A restore nobody has done is a restore that does not work,
+   and this is the step that finds out whether the dump is complete, whether
+   the encryption key is where you think it is, and how long the whole thing
+   takes on a morning when payroll is due.
 
 ---
 
@@ -376,6 +411,10 @@ From `docs/PLAN.md` §4, the ones that matter before real use:
   prototype names explicitly.
 - **Virus scanning.** Every uploaded row is written `SKIPPED` rather than
   `PENDING`, because `PENDING` would claim a scanner is coming.
+- **The screen for nominating the attendance approver.** The migration, the
+  service and `PUT /api/v1/hr/attendance/approver` are in and tested; the HR
+  attendance page has no control for it yet, so it is the SQL in step 8 until
+  it does. It is needed once per organisation, not once per month.
 
 Rate limiting was on this list and is not any more; see §2.1. Nothing that
 remains blocks production outright.
