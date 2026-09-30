@@ -1,0 +1,183 @@
+name: Deploy
+
+# Only after CI has passed on main. A deploy that races the tests is a deploy
+# that can ship a red build.
+on:
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
+    branches: [main]
+  # For a rollback, or the first deploy of a new environment.
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Which environment to deploy
+        type: choice
+        options: [staging, production]
+        default: staging
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  # One deploy at a time per environment, and never cancelled part-way: a
+  # half-uploaded site is worse than a queued one.
+  group: deploy-${{ github.event.inputs.environment || 'production' }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  # The image is built here rather than by the platform, so the artifact that
+  # ships is the one CI exercised, and a broken Dockerfile fails a pull request
+  # rather than a deploy.
+  image:
+    name: Build the API image
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: true
+          # Tagged by commit, never `latest`: a deploy names exactly what it
+          # is shipping, and a rollback names exactly what it is going back to.
+          tags: ghcr.io/${{ github.repository }}/ess-api:${{ github.event.workflow_run.head_sha || github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+
+  web:
+    name: Build and upload the SPA
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build -w @widedrop/shared
+
+      # The build also generates dist/_headers and runs the assertions that
+      # keep the content-security policy honest: no inline style, no inline
+      # script, nothing loaded from another host, no VITE_ variable that looks
+      # like a secret. Any of them fails the deploy here rather than shipping.
+      - name: Build the SPA
+        working-directory: apps/web
+        env:
+          CONTEXT: ${{ github.event.inputs.environment == 'staging' && 'staging' || 'production' }}
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+          VITE_APP_ENV: ${{ github.event.inputs.environment || 'production' }}
+        run: npm run build
+
+      - name: Upload to Netlify
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: |
+          npx --yes netlify-cli@17 deploy \
+            --dir apps/web/dist \
+            --prod \
+            --message "${{ github.event.workflow_run.head_sha || github.sha }}"
+
+  api:
+    name: Release the API and the worker
+    needs: [image]
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+    steps:
+      # Render applies `npx prisma migrate deploy` as its pre-deploy step and
+      # holds the old instances until the new ones answer /health/ready, so a
+      # release that cannot reach the database never takes traffic.
+      - name: Trigger the API deploy
+        run: curl --fail --silent --show-error "${{ secrets.RENDER_API_DEPLOY_HOOK }}"
+
+      # The worker ships from the same image and the same commit. A worker a
+      # release behind the API writes rows the API refuses.
+      - name: Trigger the worker deploy
+        run: curl --fail --silent --show-error "${{ secrets.RENDER_WORKER_DEPLOY_HOOK }}"
+
+  smoke:
+    name: Smoke test
+    needs: [web, api]
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+    steps:
+      - name: Wait for the API to be ready
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent "${{ vars.VITE_API_BASE_URL }}/health/ready" > /dev/null; then
+              echo "api ready after ${attempt} attempts"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "api did not become ready" >&2
+          exit 1
+
+      # The headers are the deployment's security posture. If they are missing,
+      # the site is serving without them and somebody should know now.
+      - name: Assert the SPA's security headers
+        run: |
+          headers=$(curl --fail --silent --head "${{ vars.WEB_PUBLIC_URL }}/")
+          for required in \
+            "content-security-policy" \
+            "strict-transport-security" \
+            "x-content-type-options" \
+            "referrer-policy"; do
+            echo "$headers" | grep -iq "^$required:" || {
+              echo "missing header: $required" >&2
+              exit 1
+            }
+          done
+          # 'unsafe-inline' anywhere in the policy means the policy is theatre.
+          echo "$headers" | grep -i "^content-security-policy:" | grep -q "unsafe-inline" && {
+            echo "the content-security-policy allows unsafe-inline" >&2
+            exit 1
+          }
+          echo "security headers present"
+
+      - name: Assert the SPA's history fallback
+        run: |
+          # A deep link must render the app, not Netlify's 404 page.
+          status=$(curl --fail --silent --output /dev/null --write-out '%{http_code}' \
+            "${{ vars.WEB_PUBLIC_URL }}/payslips")
+          test "$status" = "200" || { echo "deep link returned $status" >&2; exit 1; }
+
+      - name: Assert the API is not proxied through the SPA host
+        run: |
+          # A rewrite here would make the API same-origin and defeat the CORS
+          # allowlist. It must 404.
+          status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            "${{ vars.WEB_PUBLIC_URL }}/api/v1/me")
+          test "$status" = "404" || { echo "the SPA host answered /api/v1/me with $status" >&2; exit 1; }

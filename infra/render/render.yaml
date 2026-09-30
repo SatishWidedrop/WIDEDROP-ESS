@@ -1,0 +1,248 @@
+# Widedrop ESS — the API, the worker, the rate-limit store and the database.
+#
+# The SPA is not here: it is a static site on Netlify, alongside but separate
+# from widedrop.com. This blueprint covers everything that holds state or runs
+# code.
+#
+# Two services from one image. They must ship together — a worker a release
+# behind the API writes rows the API refuses — so both name the same Dockerfile
+# and both deploy from the same commit.
+#
+#   render blueprint launch --file infra/render/render.yaml
+#
+# Secrets are never in this file. Every `sync: false` below is a value set once
+# in the Render dashboard or through the API, and never echoed into a log, a
+# build argument or a commit.
+#
+# ── One list, not two ────────────────────────────────────────────────
+# Almost everything lives in the `ess-shared` environment group rather than on
+# each service, because the worker calls the same `loadEnv()` the API does and
+# refuses to start on the same missing value. Two hand-maintained copies of
+# that list is how one of them ends up a variable behind — and a worker that
+# will not boot is a help-desk queue that silently stops being emailed.
+# Only what genuinely differs between the two is set on the service itself.
+
+services:
+  # ── The API ────────────────────────────────────────────────────────
+  - type: web
+    name: ess-api
+    runtime: docker
+    repo: https://github.com/satishwidedrop/widedrop-ess
+    branch: main
+    region: singapore
+    plan: standard
+    dockerfilePath: ./apps/api/Dockerfile
+    # The whole repository: the API imports @widedrop/shared from the
+    # workspace, so a context of apps/api alone cannot build.
+    dockerContext: .
+    healthCheckPath: /health/ready
+    # Render holds the old instance until the new one answers the health
+    # check, so a release that cannot reach the database never takes traffic.
+    numInstances: 2
+
+    # Applied before the new instance starts serving. Migrations in this
+    # system are additive and backward-compatible by policy, so the old
+    # instance keeps working against the new schema during the overlap.
+    preDeployCommand: npx prisma migrate deploy
+
+    autoDeployTrigger: commit
+
+    envVars:
+      - fromGroup: ess-shared
+
+      - key: PORT
+        value: '4000'
+      - key: HOST
+        value: 0.0.0.0
+
+      # Cookie scope. The SPA is on ess.widedrop.com and the API on
+      # api-ess.widedrop.com: different origins, same site, so Lax cookies are
+      # sent on the cross-origin fetch and a third-party page still cannot
+      # forge one.
+      - key: COOKIE_SECURE
+        value: 'true'
+      - key: COOKIE_SAMESITE
+        value: lax
+      - key: COOKIE_DOMAIN
+        value: .widedrop.com
+
+      - key: ACCESS_TOKEN_TTL_SECONDS
+        value: '600'
+      - key: REFRESH_TOKEN_TTL_SECONDS
+        value: '2592000'
+
+      # Checks a new password against the breach corpus by k-anonymity prefix,
+      # so the password never leaves the process.
+      - key: HIBP_ENABLED
+        value: 'true'
+
+      # Render terminates TLS and sets X-Forwarded-For, so the rate limiter and
+      # the audit trail record the caller rather than the proxy. Only ever true
+      # behind a proxy that overwrites the header — otherwise a client could
+      # set its own and walk past every per-IP limit and lockout.
+      - key: TRUST_PROXY
+        value: 'true'
+
+  # ── The worker ─────────────────────────────────────────────────────
+  # A separate service so draining mail and sweeping overdue acknowledgements
+  # never compete with a request for the API's event loop — and so the two
+  # scale independently: instances of the API follow traffic, and there is
+  # exactly one worker regardless.
+  #
+  # It is safe to run more than one (the outbox is claimed with SKIP LOCKED),
+  # but there is no reason to at this volume.
+  - type: worker
+    name: ess-worker
+    runtime: docker
+    repo: https://github.com/satishwidedrop/widedrop-ess
+    branch: main
+    region: singapore
+    plan: starter
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    dockerCommand: node dist/worker.js
+    numInstances: 1
+    autoDeployTrigger: commit
+
+    envVars:
+      # The same group the API reads. The worker writes the same rows under the
+      # same encryption and the same audit chain, and validates the same
+      # environment at boot.
+      - fromGroup: ess-shared
+
+      - key: WORKER_POLL_INTERVAL_MS
+        value: '15000'
+
+  # ── The rate-limit store ───────────────────────────────────────────
+  # Required in production. With an in-process store, two API instances mean
+  # two separate budgets: a lockout holds only on whichever instance the next
+  # attempt happens to reach, which is not a lockout.
+  #
+  # `keyvalue` is Render's current name for what the dashboard used to call
+  # Redis; an older Render account may need `type: redis` instead.
+  - type: keyvalue
+    name: ess-keyvalue
+    region: singapore
+    plan: starter
+    # Reachable only from the services above, never from the internet.
+    ipAllowList: []
+    # Counters, not records: if the store is lost the limits simply start over.
+    maxmemoryPolicy: allkeys-lru
+
+databases:
+  - name: ess-postgres
+    databaseName: widedrop_ess
+    user: ess_app
+    region: singapore
+    plan: standard
+    postgresMajorVersion: '16'
+    # Only the two services reach the database. Nothing on the public internet
+    # does, and the connection string is never handed to the SPA's build.
+    ipAllowList: []
+
+# Everything both processes need. Secrets still live in the dashboard; this
+# group carries the names and the values that are not secret.
+envVarGroups:
+  - name: ess-shared
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Never `silent` in production: a security incident would leave no trace.
+      - key: LOG_LEVEL
+        value: info
+
+      - key: API_PUBLIC_URL
+        value: https://api-ess.widedrop.com
+      - key: WEB_PUBLIC_URL
+        value: https://ess.widedrop.com
+      # The exact origins allowed to read authenticated responses. Never a
+      # wildcard and never http: the API answers with credentials.
+      - key: CORS_ORIGINS
+        value: https://ess.widedrop.com
+
+      # ── Database ───────────────────────────────────────────────────
+      # Set by hand rather than with `fromDatabase`, which is the obvious
+      # thing and the wrong one: Render's connection string carries no
+      # `sslmode`, and the environment validator refuses to start in
+      # production without it. Paste the *internal* connection string of
+      # ess-postgres with `?sslmode=require` appended — internal, because the
+      # external host routes over the public internet.
+      - key: DATABASE_URL
+        sync: false
+
+      # ── Rate limiting ──────────────────────────────────────────────
+      # The internal connection string of ess-keyvalue. Set by hand for the
+      # same reason as above: an environment group cannot reference a service.
+      - key: REDIS_URL
+        sync: false
+
+      # ── Authentication ─────────────────────────────────────────────
+      # Ed25519 signing keys for the access token. Rotating them signs out
+      # every session, which is the point: it is the break-glass control.
+      - key: JWT_PRIVATE_KEY
+        sync: false
+      - key: JWT_PUBLIC_KEY
+        sync: false
+      - key: JWT_KEY_ID
+        sync: false
+
+      # Mixed into every password hash, so a stolen database is not enough to
+      # mount an offline attack. Never stored beside the hashes, and
+      # effectively irreversible once accounts exist — see docs/RUNBOOK.md §4.4.
+      - key: PASSWORD_PEPPER
+        sync: false
+
+      # ── Encryption ─────────────────────────────────────────────────
+      # The key-encrypting key for bank accounts, statutory identifiers and
+      # personal contact details. The database holds only wrapped keys, so a
+      # database copy without this value is useless.
+      - key: ENCRYPTION_KEK
+        sync: false
+      - key: ENCRYPTION_KEY_VERSION
+        value: v1
+
+      # The audit chain's HMAC key. The database never sees it, which is what
+      # makes tampering detectable rather than merely discouraged.
+      - key: AUDIT_HMAC_KEY
+        sync: false
+
+      # ── Object storage ─────────────────────────────────────────────
+      # Payslips, letters and receipts. A container filesystem is ephemeral;
+      # these are business records, so production refuses to start on the
+      # filesystem driver.
+      - key: STORAGE_DRIVER
+        value: s3
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_REGION
+        sync: false
+      # Only for an S3-compatible store (R2, B2, Spaces, MinIO), which also
+      # selects path-style addressing. Leave unset for S3 itself.
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      # A download URL is a capability. Five minutes is long enough to click
+      # and short enough that a URL in a shared log is already dead.
+      - key: SIGNED_URL_TTL_SECONDS
+        value: '300'
+
+      # ── Email ──────────────────────────────────────────────────────
+      - key: MAIL_DRIVER
+        value: smtp
+      - key: MAIL_FROM
+        value: no-reply@widedroptech.com
+      - key: HELPDESK_EMAIL
+        value: helpdesk@widedroptech.com
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: '587'
+      - key: SMTP_SECURE
+        value: 'false'
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false

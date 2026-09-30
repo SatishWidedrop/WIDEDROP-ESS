@@ -155,11 +155,19 @@ class SmtpTransport implements MailTransport {
       // A message the server accepted for some recipients and rejected for
       // others has not been fully delivered. Reported rather than counted as a
       // success, so the outbox row records what actually happened.
-      if (info.rejected.length > 0 && info.accepted.length === 0) {
+      //
+      // Both lists are optional in the transport's contract — only SMTP
+      // reports per-recipient results — and an absent list means "not
+      // reported", never "rejected". Treating it as a rejection would fail
+      // every message on a transport that does not answer at that
+      // granularity.
+      const rejected = info.rejected ?? [];
+      const accepted = info.accepted ?? [];
+      if (rejected.length > 0 && accepted.length === 0) {
         return {
           ok: false,
           retryable: false,
-          error: `every recipient was rejected (${info.rejected.length})`,
+          error: `every recipient was rejected (${rejected.length})`,
         };
       }
 

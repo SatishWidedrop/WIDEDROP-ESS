@@ -218,3 +218,37 @@ table {
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum';
 }
+
+/*
+ * The no-JavaScript fallback.
+ *
+ * Styled from here rather than with inline attributes because the policy sets
+ * `style-src-attr 'none'`: an inline `style=` would be blocked and the message
+ * would arrive unstyled. This stylesheet is linked from the document head, so
+ * it applies whether or not the bundle ever runs.
+ */
+.noscript {
+  max-width: 34rem;
+  margin: 4rem auto;
+  padding: var(--space-10);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-panel);
+  color: var(--text);
+}
+
+.noscript h1 {
+  font-size: var(--text-title);
+  font-weight: var(--weight-semibold);
+  margin-bottom: var(--space-6);
+}
+
+.noscript p {
+  font-size: var(--text-body-sm);
+  color: var(--text-secondary);
+  line-height: var(--leading-relaxed);
+}
+
+.noscript a {
+  color: var(--accent);
+}

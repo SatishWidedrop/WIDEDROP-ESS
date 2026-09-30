@@ -61,7 +61,62 @@ jobs:
       - run: npm run db:generate -w @widedrop/api
       - run: npm run db:migrate -w @widedrop/api
       - run: npm test
+      # The SPA build also generates dist/_headers and runs the assertions
+      # that keep the content-security policy honest, which need an API
+      # origin to build the policy around. A local development origin is the
+      # right one here: this job proves the build works, and the deploy
+      # workflow is where the production origin is asserted.
       - run: npm run build
+        env:
+          VITE_API_BASE_URL: http://127.0.0.1:4000
+          VITE_APP_ENV: development
+
+      # The compiled output, started the way the container starts it.
+      #
+      # Everything above this line runs from TypeScript source, so none of it
+      # would notice a `dist` that cannot resolve its own imports — and that
+      # is exactly what shipped once: the generated Prisma client lives beside
+      # the sources and tsc does not copy it, so `node dist/server.js` failed
+      # at its first import, on the first container to try to start.
+      - name: The built server and worker actually run
+        env:
+          NODE_ENV: development
+          PORT: '4100'
+          HOST: 127.0.0.1
+          API_PUBLIC_URL: http://127.0.0.1:4100
+          WEB_PUBLIC_URL: http://127.0.0.1:5173
+          CORS_ORIGINS: http://127.0.0.1:5173
+          JWT_PRIVATE_KEY: ci
+          JWT_PUBLIC_KEY: ci
+          JWT_KEY_ID: ci-1
+          PASSWORD_PEPPER: kQ7vR2mZ9xL4pB8nT6yH3wC5jF1sD0aG
+          ENCRYPTION_KEK: BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQVU=
+          AUDIT_HMAC_KEY: BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY=
+          COOKIE_SECURE: 'false'
+          STORAGE_DRIVER: filesystem
+          MAIL_DRIVER: noop
+          HIBP_ENABLED: 'false'
+        working-directory: apps/api
+        run: |
+          set -euo pipefail
+
+          node dist/server.js & api=$!
+          for _ in $(seq 1 30); do
+            curl --fail --silent http://127.0.0.1:4100/health/ready && break
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:4100/health/ready
+          # SIGTERM, not SIGKILL: the drain on shutdown is what keeps a deploy
+          # from aborting somebody's payroll run, so exercise it.
+          kill -TERM "$api"
+          wait "$api"
+
+          node dist/worker.js & worker=$!
+          sleep 5
+          kill -0 "$worker"
+          kill -TERM "$worker"
+          wait "$worker"
+          echo "the built server and worker both start and stop cleanly"
 
   security:
     name: Security checks
@@ -79,8 +134,13 @@ jobs:
           cache: npm
       - run: npm ci
 
+      # Any high or critical advisory fails the build. An advisory with no
+      # fixed release can be accepted only by writing down, in
+      # scripts/audit-check.mjs, why it does not apply here and when the
+      # reasoning must be re-examined — and an expired acceptance fails the
+      # build just as an unreviewed advisory does.
       - name: Dependency audit (fail on high/critical)
-        run: npm audit --audit-level=high
+        run: npm run audit:ci
 
       - name: Secret scan
         uses: gitleaks/gitleaks-action@v2
@@ -96,3 +156,47 @@ jobs:
             p/owasp-top-ten
             p/secrets
         continue-on-error: false
+
+  image:
+    name: API image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      # Built but not pushed: the point is to find a broken Dockerfile in the
+      # pull request rather than in the deploy that needs it.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  netlify-config:
+    name: Netlify config is valid
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: The SPA must not carry its own _headers or _redirects
+        run: |
+          # Either would be copied into dist and merged with the generated
+          # file, which is how a site ends up serving two conflicting
+          # Content-Security-Policy headers.
+          for stray in apps/web/public/_headers apps/web/public/_redirects; do
+            test ! -e "$stray" || { echo "$stray must not exist" >&2; exit 1; }
+          done
+      - name: No header is defined in both netlify.toml and the generated file
+        run: |
+          # netlify.toml carries the context-invariant headers; the build
+          # generates the two whose value depends on the API origin.
+          for generated in "Content-Security-Policy" "Reporting-Endpoints"; do
+            grep -iq "$generated" infra/netlify/netlify.toml && {
+              echo "$generated is generated at build time; remove it from netlify.toml" >&2
+              exit 1
+            }
+          done
+          echo "no duplicate header sources"

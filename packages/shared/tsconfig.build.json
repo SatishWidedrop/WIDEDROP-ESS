@@ -1,0 +1,8 @@
+{
+  // What ships. The test files are typechecked by `tsconfig.json` and run by
+  // vitest; they must not be compiled into `dist`, both because nothing should
+  // import a package's tests and because doing so makes the build depend on
+  // vitest being installed — which it is not in a production image.
+  "extends": "./tsconfig.json",
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
+}

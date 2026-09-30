@@ -49,6 +49,10 @@ const EXEMPT_PATHS = new Set([
   '/health',
   '/health/ready',
   '/version',
+  // A CSP report is a browser-initiated POST with no opportunity to carry a
+  // token. The origin check above still applies, which is the useful half:
+  // only our own pages can report.
+  '/api/v1/csp-report',
 ]);
 
 export function issueCsrfToken(reply: FastifyReply, options: CsrfOptions): string {

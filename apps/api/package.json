@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/server.js",
   "scripts": {
-    "build": "prisma generate && tsc -p tsconfig.json",
+    "build": "prisma generate && tsc -p tsconfig.json && node scripts/copy-generated.mjs",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
     "worker": "node dist/worker.js",
@@ -26,6 +26,8 @@
     "schema": "prisma/schema.prisma"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1143.0",
+    "@aws-sdk/s3-request-presigner": "^3.1143.0",
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^10.0.2",
     "@fastify/helmet": "^13.0.1",
@@ -37,19 +39,21 @@
     "@prisma/client": "^6.1.0",
     "@widedrop/shared": "*",
     "fastify": "^5.2.0",
-    "file-type": "^19.6.0",
+    "file-type": "^22.1.1",
     "jose": "^5.9.6",
-    "nodemailer": "^6.9.16",
+    "nodemailer": "^10.0.12",
     "otpauth": "^9.3.6",
     "pino": "^9.5.0",
+    "prisma": "^6.1.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.10.2",
     "@types/nodemailer": "^6.4.17",
-    "prisma": "^6.1.0",
+    "js-yaml": "^4.3.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "^5.0.2"
   }
 }

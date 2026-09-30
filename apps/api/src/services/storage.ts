@@ -1,4 +1,5 @@
 import { FilesystemStorage } from '../lib/storage/filesystem.js';
+import { S3Storage } from '../lib/storage/s3.js';
 import type { StorageDriver } from '../lib/storage/types.js';
 import type { Env } from '../config/env.js';
 
@@ -27,13 +28,34 @@ function build(env: Env): StorageDriver {
         apiBaseUrl: env.API_PUBLIC_URL,
       });
 
-    case 's3':
-      // The S3 driver is selected by configuration and implemented alongside
-      // the deployment work; the env validator already refuses to start in
-      // production without its credentials.
-      throw new Error(
-        'The S3 storage driver is not built into this image. Set STORAGE_DRIVER=filesystem for development.',
-      );
+    case 's3': {
+      // The env validator already refuses to start in production without
+      // these, so a missing one here means somebody selected `s3` outside
+      // production without finishing the job. Say which value is missing
+      // rather than failing later inside the SDK.
+      const missing = (
+        ['S3_REGION', 'S3_BUCKET', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY'] as const
+      ).filter((key) => !env[key]);
+      if (missing.length > 0) {
+        throw new Error(
+          `STORAGE_DRIVER is "s3" but ${missing.join(', ')} ${
+            missing.length === 1 ? 'is' : 'are'
+          } not set`,
+        );
+      }
+
+      return new S3Storage({
+        region: env.S3_REGION as string,
+        bucket: env.S3_BUCKET as string,
+        accessKeyId: env.S3_ACCESS_KEY_ID as string,
+        secretAccessKey: env.S3_SECRET_ACCESS_KEY as string,
+        endpoint: env.S3_ENDPOINT,
+        // A custom endpoint means an S3-compatible store, which may not
+        // resolve bucket-as-subdomain. On S3 itself, virtual-hosted addressing
+        // is the supported form.
+        forcePathStyle: Boolean(env.S3_ENDPOINT),
+      });
+    }
   }
 }
 

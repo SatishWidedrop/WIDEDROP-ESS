@@ -21,6 +21,8 @@ import { hrRoutes } from './v1/hr.js';
 import { payrollRoutes } from './v1/payroll.js';
 import { reimbursementRoutes } from './v1/reimbursements.js';
 import { auditRoutes } from './v1/audit.js';
+import { cspReportRoutes } from './v1/csp-report.js';
+import { fileRoutes } from './v1/files.js';
 
 /**
  * Route registration.
@@ -77,4 +79,6 @@ export async function registerRoutes(app: App): Promise<void> {
   await app.register(payrollRoutes);
   await app.register(reimbursementRoutes);
   await app.register(auditRoutes);
+  await app.register(cspReportRoutes);
+  await app.register(fileRoutes);
 }

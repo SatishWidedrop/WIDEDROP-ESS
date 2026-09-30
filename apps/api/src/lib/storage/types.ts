@@ -81,3 +81,53 @@ export function buildStorageKey(input: {
   const extension = input.extension.replace(/[^a-z0-9]/gi, '').toLowerCase();
   return `${safe(input.purpose)}/${year}/${month}/${safe(input.scopeId)}/${safe(input.objectId)}.${extension}`;
 }
+
+/**
+ * The exact shape `buildStorageKey` produces, and nothing else.
+ *
+ * Keys are generated server-side, so this is defence in depth — it is the one
+ * check both drivers make before a key reaches a filesystem path or an S3
+ * request line. A key that fails here never becomes either.
+ */
+export function isValidStorageKey(key: string): boolean {
+  if (key.length === 0 || key.length > 512) return false;
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001F\u007F\\]/.test(key)) return false;
+  if (key.startsWith('/') || key.endsWith('/')) return false;
+  const segments = key.split('/');
+  return segments.every(
+    (segment) =>
+      segment.length > 0 &&
+      /^[A-Za-z0-9._-]+$/.test(segment) &&
+      segment !== '.' &&
+      segment !== '..',
+  );
+}
+
+/**
+ * A `Content-Disposition` value that offers `filename` to the browser without
+ * letting it inject a header.
+ *
+ * The filename reaches here from a database row that an employee's upload named,
+ * so it is treated as hostile: the quoted form is reduced to a conservative
+ * ASCII subset, and the RFC 5987 form carries the real name percent-encoded for
+ * every browser in use. A name that reduces to nothing falls back to `download`
+ * rather than emitting an empty filename, which some browsers ignore entirely.
+ */
+export function contentDisposition(filename: string): string {
+  const ascii = filename
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .replace(/[^\x20-\x7E]/g, '_')
+    .replace(/["\\]/g, '_')
+    .slice(0, 200)
+    .trim();
+  const fallback = ascii.length > 0 ? ascii : 'download';
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeRFC5987(filename)}`;
+}
+
+function encodeRFC5987(value: string): string {
+  return encodeURIComponent(value.slice(0, 200))
+    .replace(/['()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase())
+    .replace(/%(7C|60|5E)/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+}

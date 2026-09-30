@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Widedrop Technologies \u2014 Employee Self-Service portal",
+  "description": "Widedrop Technologies — Employee Self-Service portal",
   "license": "UNLICENSED",
   "engines": {
     "node": ">=22.0.0",
@@ -29,7 +29,7 @@
     "db:migrate": "npm run db:migrate -w @widedrop/api",
     "db:reset": "npm run db:reset -w @widedrop/api",
     "db:seed:reference": "npm run db:seed:reference -w @widedrop/api",
-    "audit:ci": "npm audit --audit-level=high"
+    "audit:ci": "node scripts/audit-check.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
@@ -40,6 +40,9 @@
     "prettier": "^3.4.2",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.18.1",
-    "vitest": "^2.1.8"
+    "vitest": "^5.0.2"
+  },
+  "overrides": {
+    "vite": "^7.3.6"
   }
 }

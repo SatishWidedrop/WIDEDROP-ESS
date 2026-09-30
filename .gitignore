@@ -34,3 +34,9 @@ infra/.pgdata/
 # Local object storage and captured mail (development drivers)
 apps/api/.storage/
 apps/api/.mail/
+
+# Generated Prisma client — regenerated from prisma/schema.prisma by
+# `npm run db:generate`. Not committed: it carries a 17 MB platform-specific
+# query engine, and a committed copy can silently disagree with the schema it
+# was supposed to be generated from.
+apps/api/src/generated/

@@ -6,10 +6,13 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "types": ["node"],
+    // Typechecking only: these two files are read by Vite, never emitted by
+    // tsc. `composite` would require declaration emit, which `noEmit` forbids
+    // — TypeScript 5.9 rejects the combination outright rather than ignoring
+    // it, and there is nothing here for another project to reference anyway.
     "noEmit": true,
     "declaration": false,
-    "declarationMap": false,
-    "composite": true
+    "declarationMap": false
   },
   "include": ["vite.config.ts", "vitest.config.ts"]
 }

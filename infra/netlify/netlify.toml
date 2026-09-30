@@ -1,0 +1,111 @@
+# Widedrop ESS — the SPA site.
+#
+# A second Netlify site, separate from the one that serves widedrop.com. The
+# marketing site's configuration is untouched: nothing here can change it, and
+# a bad deploy of one cannot take down the other.
+#
+# Point the site's "Configuration file path" at infra/netlify/netlify.toml.
+#
+# The Content-Security-Policy is deliberately NOT here. Its connect-src must
+# equal the API origin for the deploy context, so it is generated at build time
+# into dist/_headers. No header name appears in both files: Netlify merges the
+# two sources, and a header named in both would be emitted twice.
+
+[build]
+  # `base` is resolved from the repository root; `command` and `publish` are
+  # then resolved relative to `base`. Writing publish = "apps/web/dist" here
+  # would make Netlify look for apps/web/apps/web/dist and fail the deploy.
+  base    = "apps/web"
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+  # The web app imports @widedrop/shared from the workspace, so the install
+  # must cover the whole repository rather than one package.
+  NPM_FLAGS    = "--workspaces --include-workspace-root"
+  CI           = "true"
+  NODE_ENV     = "production"
+
+[build.processing]
+  # Vite already hashes, minifies and inlines what it should. Netlify's
+  # post-processing would rewrite asset URLs the CSP's hashes depend on.
+  skip_processing = true
+
+# ── Deploy contexts ──────────────────────────────────────────────────
+# Production is built in CI and uploaded, so these govern Netlify-side
+# builds — deploy previews and the staging branch — only.
+
+[context.production.environment]
+  VITE_API_BASE_URL = "https://api-ess.widedrop.com"
+  VITE_APP_ENV      = "production"
+
+[context.branch-deploy.environment]
+  VITE_API_BASE_URL = "https://api-ess-staging.widedrop.com"
+  VITE_APP_ENV      = "staging"
+
+[context.deploy-preview.environment]
+  VITE_API_BASE_URL = "https://api-ess-staging.widedrop.com"
+  VITE_APP_ENV      = "preview"
+
+# ── Redirects ────────────────────────────────────────────────────────
+# Order is semantic: Netlify takes the first match, so every specific rule
+# must precede the catch-all.
+
+# The SPA must never proxy the API. A rewrite to the API host would make it
+# same-origin, which defeats the CORS allowlist and puts an uncontrolled CDN
+# in front of authenticated responses. Anything under /api/ on this host is a
+# mistake, and says so.
+[[redirects]]
+  from   = "/api/*"
+  to     = "/index.html"
+  status = 404
+
+# History fallback, last and as a rewrite rather than a redirect, so a deep
+# link such as /payslips?payslip=… renders the app. force = false, so a real
+# file on disk always wins.
+[[redirects]]
+  from   = "/*"
+  to     = "/index.html"
+  status = 200
+  force  = false
+
+# ── Security headers ─────────────────────────────────────────────────
+# Everything except Content-Security-Policy, which dist/_headers carries.
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Strict-Transport-Security         = "max-age=63072000; includeSubDomains"
+    X-Content-Type-Options            = "nosniff"
+    X-Frame-Options                   = "DENY"
+    Referrer-Policy                   = "strict-origin-when-cross-origin"
+    Cross-Origin-Opener-Policy        = "same-origin"
+    Cross-Origin-Resource-Policy      = "same-origin"
+    X-Permitted-Cross-Domain-Policies = "none"
+    X-DNS-Prefetch-Control            = "off"
+    Origin-Agent-Cluster              = "?1"
+    Permissions-Policy = "accelerometer=(), autoplay=(), camera=(), display-capture=(), encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), publickey-credentials-get=(self), screen-wake-lock=(), usb=(), xr-spatial-tracking=()"
+
+# index.html must never be cached: it is how a CSP change or a new asset hash
+# reaches a browser that already has the old one.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-store, must-revalidate"
+
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cache-Control = "no-store, must-revalidate"
+
+# Vite emits content-hashed filenames, so these are safe to cache forever.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/fonts/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

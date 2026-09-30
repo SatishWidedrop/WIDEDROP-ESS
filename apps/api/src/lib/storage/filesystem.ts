@@ -4,6 +4,7 @@ import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, normalize, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import type { PutObjectInput, SignedUrl, StorageDriver, StoredObject } from './types.js';
+import { isValidStorageKey } from './types.js';
 
 /**
  * Filesystem storage driver — development only.
@@ -49,20 +50,15 @@ export class FilesystemStorage implements StorageDriver {
     return target;
   }
 
-  /** The exact shape `buildStorageKey` produces, and nothing else. */
+  /**
+   * The exact shape `buildStorageKey` produces, and nothing else.
+   *
+   * Shared with the S3 driver so both refuse the same keys: a rule that held
+   * only on the development driver would be a rule that never ran in
+   * production.
+   */
   static isValidKey(key: string): boolean {
-    if (key.length === 0 || key.length > 512) return false;
-    // eslint-disable-next-line no-control-regex
-    if (/[\u0000-\u001F\u007F\\]/.test(key)) return false;
-    if (key.startsWith('/') || key.endsWith('/')) return false;
-    const segments = key.split('/');
-    return segments.every(
-      (segment) =>
-        segment.length > 0 &&
-        /^[A-Za-z0-9._-]+$/.test(segment) &&
-        segment !== '.' &&
-        segment !== '..',
-    );
+    return isValidStorageKey(key);
   }
 
   async put(input: PutObjectInput): Promise<StoredObject> {

@@ -1,0 +1,49 @@
+# What never belongs in a build context.
+#
+# Without this, `docker build .` streams the whole repository to the daemon —
+# 450 MB of node_modules the image reinstalls anyway, plus the design artifacts
+# and the docs. It is slow, and it is how a `.env` ends up in an image layer.
+#
+# The paths are anchored rather than globbed: `**/dist` would also match
+# `node_modules/@prisma/engines/dist`, which is where Prisma's downloaded query
+# engine lives.
+
+node_modules
+**/node_modules
+/dist
+/apps/*/dist
+/packages/*/dist
+/apps/*/build
+coverage
+*.tsbuildinfo
+
+# Secrets. Belt and braces: these are gitignored too, but a build context is
+# not a git checkout and a developer's working tree may hold one.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Local state a container must never inherit.
+.storage
+.mail
+*.log
+
+# Not needed to run the API.
+.git
+.github
+docs
+design
+infra
+
+# The web app's source is not needed to run the API, but its manifest is: the
+# lockfile describes the whole workspace, and `npm ci` refuses to install
+# against a lockfile whose workspaces it cannot see.
+apps/web/src
+apps/web/public
+apps/web/index.html
+
+# Generated at build time from the schema, so a stale copy cannot ship.
+apps/api/src/generated
