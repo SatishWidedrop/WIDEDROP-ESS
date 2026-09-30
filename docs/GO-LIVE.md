@@ -175,7 +175,28 @@ Nothing below depends on the decisions above except where noted.
    copy Pro does not give you. Either is fine; neither being in place is not.
    The free tier has **zero** backup retention, so until one of them exists,
    a mistake at the SQL editor is unrecoverable.
-3. Project Settings → Database → copy both connection strings:
+3. **Turn the Data API off.** Nothing here uses it: the API reaches Postgres
+   through Prisma on the direct connection, Storage through the S3-compatible
+   endpoint with its own keys, and `pg_net` only makes outbound calls. The
+   Data API is PostgREST and GraphQL over your tables, reached with the `anon`
+   key — which is public by design and ships in browser bundles. A surface
+   with no consumer is only attack surface.
+
+   If the console will not let you disable it outright, then at creation:
+   **"automatically expose new tables" unchecked** and **"automatic RLS"
+   checked**. Those two are often presented the other way round, and the
+   inverse pair is the worst of the four: exposing grants the `anon` role
+   access to every table a later migration adds, and no RLS means nothing then
+   decides which rows it may read. Supabase is retiring the exposing default
+   for this reason — new projects since 30 May 2026, existing ones from 30
+   October 2026.
+
+   Our tables are in `ess` and `ess_ops` rather than `public`, and the Data API
+   serves only the schemas on its exposed list, so they are not reachable today
+   either way. That is one config change away from being wrong, which is why it
+   is not the control.
+
+4. Project Settings → Database → copy both connection strings:
    - pooled, port 6543 → `DATABASE_URL`, and append `&pgbouncer=true`
    - direct, port 5432 → `DIRECT_DATABASE_URL`
 
@@ -184,16 +205,16 @@ Nothing below depends on the decisions above except where noted.
    fine and then fails intermittently under load, which is a far worse way to
    find out.
 
-4. Storage → create a **private** bucket, `ess-documents`. Not public: every
+5. Storage → create a **private** bucket, `ess-documents`. Not public: every
    read goes through a short-lived signed URL the API issues after it has
    checked authorization.
-5. Project Settings → Storage → S3 access keys → generate a pair. Set
+6. Project Settings → Storage → S3 access keys → generate a pair. Set
    `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`,
    `S3_SECRET_ACCESS_KEY`. These keys bypass row-level security, so they are
    server-side only and must never reach a `VITE_` variable — the SPA build
    asserts that.
-6. `npm run db:migrate -w @widedrop/api` against the direct connection.
-7. `npm run db:seed:reference -w @widedrop/api` — roles, permissions, pay
+7. `npm run db:migrate -w @widedrop/api` against the direct connection.
+8. `npm run db:seed:reference -w @widedrop/api` — roles, permissions, pay
    components. It creates no people.
 
 ### Step 2 — Email
