@@ -65,12 +65,35 @@ const baseSchema = z.object({
   /** Exact browser origins allowed to call the API with credentials. */
   CORS_ORIGINS: csv,
 
+  /**
+   * The connection the application uses.
+   *
+   * Pooled, wherever the platform offers one: the API scales out and a direct
+   * connection per instance exhausts Postgres's connection slots long before
+   * traffic does. On Supabase that is Supavisor in transaction mode, port
+   * 6543, with `?pgbouncer=true`.
+   */
   DATABASE_URL: z
     .string()
     .url()
     .refine((v) => v.startsWith('postgres'), {
       message: 'DATABASE_URL must be a PostgreSQL connection string',
     }),
+
+  /**
+   * The connection migrations use, when it differs from the one above.
+   *
+   * DDL and the advisory locks `prisma migrate` takes do not survive a
+   * transaction-mode pooler, which is free to hand the connection to somebody
+   * else between statements. Unset where there is no pooler in front.
+   */
+  DIRECT_DATABASE_URL: z
+    .string()
+    .url()
+    .refine((v) => v.startsWith('postgres'), {
+      message: 'DIRECT_DATABASE_URL must be a PostgreSQL connection string',
+    })
+    .optional(),
 
   /* ---------------- Authentication & sessions ---------------- */
 
@@ -207,9 +230,40 @@ const schema = baseSchema.superRefine((env, ctx) => {
   if (!env.DATABASE_URL.includes('sslmode=')) {
     fail('DATABASE_URL', 'must specify sslmode (require or verify-full) in production');
   }
+
+  // Supavisor and PgBouncer in transaction mode do not support prepared
+  // statements, which Prisma creates unless told not to. Without this the
+  // application starts and then fails intermittently under load with
+  // "prepared statement already exists" — which is a far worse way to find out.
+  const pooled = /:6543\b/.test(env.DATABASE_URL) || /pooler\./.test(env.DATABASE_URL);
+  if (pooled && !env.DATABASE_URL.includes('pgbouncer=true')) {
+    fail(
+      'DATABASE_URL',
+      'looks like a transaction-mode pooler; append ?pgbouncer=true or Prisma will use prepared statements the pooler cannot hold',
+    );
+  }
+  if (pooled && !env.DIRECT_DATABASE_URL) {
+    fail(
+      'DIRECT_DATABASE_URL',
+      'is required alongside a pooled DATABASE_URL — migrations need a direct connection (port 5432) to hold DDL and advisory locks',
+    );
+  }
+  if (env.DIRECT_DATABASE_URL?.includes('pgbouncer=true')) {
+    fail('DIRECT_DATABASE_URL', 'must be the direct connection, not the pooler');
+  }
 });
 
 export type Env = z.infer<typeof baseSchema>;
+
+/**
+ * Every variable this module reads, whether or not it happens to be set.
+ *
+ * `Object.keys(loadEnv(...))` is not the same list: zod drops an optional that
+ * was not provided, so a variable would look unread simply because the
+ * environment being checked did not set it. Anything comparing a reference
+ * file or a deployment blueprint against "what the API reads" wants this.
+ */
+export const ENV_KEYS = Object.keys(baseSchema.shape) as (keyof Env)[];
 
 let cached: Env | undefined;
 

@@ -118,6 +118,8 @@ export interface RenderSummary {
   rendered: number;
   alreadyHad: number;
   failed: { payslipId: string; reason: string }[];
+  /** True when a `limit` cut the batch short and another pass has work to do. */
+  more: boolean;
 }
 
 /**
@@ -130,7 +132,7 @@ export interface RenderSummary {
 export async function renderPendingPayslips(
   db: Database,
   env: Env,
-  input: { organizationId: string; cycleId: string },
+  input: { organizationId: string; cycleId: string; limit?: number },
 ): Promise<RenderSummary> {
   const payslips = await db.payslip.findMany({
     where: {
@@ -141,21 +143,54 @@ export async function renderPendingPayslips(
       status: { in: ['GENERATED', 'PUBLISHED'] },
     },
     select: PAYSLIP_SELECT,
+    // A caller with a deadline — a serverless function with ten seconds, say —
+    // asks for a slice it can finish and calls again. Rendering is idempotent
+    // and claims each payslip conditionally, so calling again is safe and two
+    // callers overlapping is safe.
+    ...(input.limit !== undefined ? { take: input.limit } : {}),
   });
 
-  const summary: RenderSummary = { rendered: 0, alreadyHad: 0, failed: [] };
+  const summary: RenderSummary = {
+    rendered: 0,
+    alreadyHad: 0,
+    failed: [],
+    more: input.limit !== undefined && payslips.length === input.limit,
+  };
 
-  for (const payslip of payslips) {
-    try {
-      const outcome = await renderOne(db, env, input.organizationId, payslip);
-      if (outcome === 'rendered') summary.rendered += 1;
-      else summary.alreadyHad += 1;
-    } catch (error) {
+  // A bounded number at a time.
+  //
+  // Building the document costs about a quarter of a millisecond; writing it to
+  // object storage costs a network round trip, which is two to three orders of
+  // magnitude more. Rendered one after another, a cycle's cost is therefore
+  // (employees x round trip) — about 26 seconds for two hundred people against
+  // a remote bucket, which is the difference between fitting inside a request
+  // and not.
+  //
+  // Eight, not eight hundred: each one holds a database transaction while it
+  // writes its rows, and a pooled connection with it. The limit is there to
+  // keep a large cycle from exhausting the pool rather than to squeeze out the
+  // last millisecond.
+  const CONCURRENCY = 8;
+
+  for (let start = 0; start < payslips.length; start += CONCURRENCY) {
+    const slice = payslips.slice(start, start + CONCURRENCY);
+    const outcomes = await Promise.allSettled(
+      slice.map((payslip) => renderOne(db, env, input.organizationId, payslip)),
+    );
+
+    outcomes.forEach((outcome, index) => {
+      if (outcome.status === 'fulfilled') {
+        if (outcome.value === 'rendered') summary.rendered += 1;
+        else summary.alreadyHad += 1;
+        return;
+      }
+      // Settled, not raced: one payslip failing must not abandon the seven
+      // beside it, and the caller gets told which one it was.
       summary.failed.push({
-        payslipId: payslip.id,
-        reason: error instanceof Error ? error.message : 'unknown',
+        payslipId: slice[index]!.id,
+        reason: outcome.reason instanceof Error ? outcome.reason.message : 'unknown',
       });
-    }
+    });
   }
 
   return summary;

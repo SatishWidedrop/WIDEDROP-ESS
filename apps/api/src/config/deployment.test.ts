@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { load } from 'js-yaml';
 import { describe, expect, it } from 'vitest';
-import { loadEnv } from './env.js';
+import { ENV_KEYS, loadEnv } from './env.js';
 
 /**
  * The deployment artifacts, checked against the validator they have to satisfy.
@@ -103,7 +103,10 @@ describe('the Render blueprint', () => {
   it('sets nothing the validator does not read', () => {
     // A variable nobody reads is either a leftover or a typo for one that is
     // required, and the second is the dangerous case.
-    const known = new Set(Object.keys(loadEnv(environmentOf('ess-api'))));
+    //
+    // ENV_KEYS rather than the parsed result, which omits any optional the
+    // environment did not happen to set.
+    const known = new Set<string>(ENV_KEYS);
     // Not part of the schema, but genuinely consumed by the platform.
     const platformOwned = new Set(['PORT', 'HOST']);
 
@@ -151,8 +154,7 @@ describe('.env.example', () => {
     // The file is the reference a developer copies and the one a deployment is
     // checked against. A variable missing from it is a variable nobody knows
     // to set.
-    const required = Object.keys(loadEnv(environmentOf('ess-api')));
-    for (const key of required) {
+    for (const key of ENV_KEYS) {
       expect(documented.has(key), `${key} is read by the API but absent from .env.example`).toBe(
         true,
       );
@@ -160,7 +162,7 @@ describe('.env.example', () => {
   });
 
   it('documents nothing the API does not read', () => {
-    const known = new Set(Object.keys(loadEnv(environmentOf('ess-api'))));
+    const known = new Set<string>(ENV_KEYS);
 
     // The seed scripts are development tooling, not the server: they read
     // these straight from process.env and never reach the validator, which is

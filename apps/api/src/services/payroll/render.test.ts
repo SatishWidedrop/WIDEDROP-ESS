@@ -218,6 +218,65 @@ describe('renderPendingPayslips', () => {
     ).toBeDefined();
   });
 
+  it('bounds a batch when given a limit, and says there is more', async () => {
+    for (const employeeId of [fixture.people.priya, fixture.people.arjun, fixture.people.divya]) {
+      await seedPayslip(employeeId);
+    }
+
+    // What a caller with a deadline does — a serverless function with ten
+    // seconds asks for as much as it can finish and calls again.
+    const first = await renderPendingPayslips(db, env, {
+      organizationId: fixture.organizationId,
+      cycleId,
+      limit: 2,
+    });
+    expect(first.rendered).toBe(2);
+    expect(first.more).toBe(true);
+
+    const second = await renderPendingPayslips(db, env, {
+      organizationId: fixture.organizationId,
+      cycleId,
+      limit: 2,
+    });
+    expect(second.rendered).toBe(1);
+    // Fewer came back than the limit, so the work is done.
+    expect(second.more).toBe(false);
+
+    expect(
+      await db.payslip.count({ where: { payrollCycleId: cycleId, pdfFileObjectId: null } }),
+    ).toBe(0);
+  });
+
+  it('renders a batch concurrently without losing or duplicating one', async () => {
+    // More than the concurrency limit, so at least two slices run.
+    const ids: string[] = [];
+    for (let i = 0; i < 10; i += 1) {
+      ids.push(
+        await seedPayslip(
+          [fixture.people.priya, fixture.people.arjun, fixture.people.divya][i % 3]!,
+          { version: Math.floor(i / 3) + 1 },
+        ),
+      );
+    }
+
+    const summary = await render();
+
+    expect(summary.rendered).toBe(10);
+    expect(summary.failed).toEqual([]);
+    // One document each, not nine or eleven.
+    expect(
+      await db.fileObject.count({
+        where: { purpose: 'PAYSLIP_PDF', payslipPdfs: { some: { payrollCycleId: cycleId } } },
+      }),
+    ).toBe(10);
+    // And every one of them is distinct.
+    const files = await db.payslip.findMany({
+      where: { id: { in: ids } },
+      select: { pdfFileObjectId: true },
+    });
+    expect(new Set(files.map((f) => f.pdfFileObjectId)).size).toBe(10);
+  });
+
   it('records the render in the audit trail, tied to the source digest', async () => {
     await seedPayslip(fixture.people.priya, { reference: 'PS-2026-10-0042' });
     await render();

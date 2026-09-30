@@ -6,6 +6,7 @@ Two kinds live in here, and reading one as the other wastes an afternoon.
 
 |                  |                                                                                                                                                                               |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`GO-LIVE.md`** | What has to happen to put this in front of people, in order, with what it costs and what is still undecided. Start here if you are deploying.                                 |
 | **`PLAN.md`**    | What was asked for, the milestones it was broken into, what each delivered, and what is not built. Start here.                                                                |
 | **`RUNBOOK.md`** | Operating it: what to check first, the incident playbooks, deploys, rollbacks, restores, secret rotation. Written for whoever is on call, who may not have written any of it. |
 | **`RBAC.md`**    | Who can do what, over whom. **Generated** from `packages/shared/src/rbac/roles.ts` by `npm run docs:rbac`; CI fails if it has drifted.                                        |

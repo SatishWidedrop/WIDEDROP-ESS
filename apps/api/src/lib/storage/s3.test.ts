@@ -112,6 +112,23 @@ describe('S3Storage.signedDownloadUrl', () => {
     expect(new URL(honest.url).searchParams.get('X-Amz-SignedHeaders')).toBe('host');
   });
 
+  it('addresses Supabase Storage, whose endpoint carries a path', async () => {
+    // `https://<ref>.storage.supabase.co/storage/v1/s3` is an endpoint with a
+    // path, which several S3 clients get wrong by replacing it rather than
+    // appending to it. The bucket and key have to land after `/storage/v1/s3`,
+    // not at the root.
+    const { url } = await make({
+      endpoint: 'https://abcdefghijklmnop.storage.supabase.co/storage/v1/s3',
+      region: 'ap-south-1',
+      forcePathStyle: true,
+    }).signedDownloadUrl(key, { expiresInSeconds: 300, downloadFilename: 'p.pdf' });
+
+    const parsed = new URL(url);
+    expect(parsed.host).toBe('abcdefghijklmnop.storage.supabase.co');
+    expect(parsed.pathname).toBe(`/storage/v1/s3/${OPTIONS.bucket}/${key}`);
+    expect(parsed.searchParams.get('X-Amz-Algorithm')).toBe('AWS4-HMAC-SHA256');
+  });
+
   it('refuses a key that did not come from buildStorageKey', async () => {
     for (const bad of ['../../etc/passwd', '/absolute.pdf', 'a\u0000b.pdf', '', 'trailing/']) {
       await expect(

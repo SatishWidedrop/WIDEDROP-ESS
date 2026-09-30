@@ -22,7 +22,15 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  // The pooled connection. On Supabase this is Supavisor in transaction mode
+  // on port 6543 with `?pgbouncer=true`, which turns off prepared statements —
+  // the pooler does not support them and Prisma creates them by default.
   url      = env("DATABASE_URL")
+  // The direct connection, on port 5432. Migrations take advisory locks and
+  // run DDL, neither of which survives a transaction-mode pooler handing the
+  // connection to somebody else between statements. Prisma uses this for
+  // `migrate` and `db push` only; the application never touches it.
+  directUrl = env("DIRECT_DATABASE_URL")
   schemas  = ["ess", "ess_ops"]
 
   // Managed by Prisma so the shadow database used to diff migrations has them
