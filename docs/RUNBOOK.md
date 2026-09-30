@@ -146,8 +146,29 @@ SELECT status, count(*), max(attempts)
  GROUP BY status;
 ```
 
-- **`QUEUED` and growing** → the worker is not running. Check the `ess-worker`
-  service. The messages are safe; they deliver when it comes back.
+- **`QUEUED` and growing** → nothing is draining the outbox. Which thing
+  depends on the deployment:
+
+  - **A container**: check the `ess-worker` service is up.
+  - **Serverless**: the scheduler is not getting through. Read
+    `ess_ops.job_run` first — it is the only place that knows whether the job
+    _ran_, as opposed to whether something called it:
+
+    ```sql
+    SELECT job_name, status, started_at, finished_at, payload, last_error
+      FROM ess_ops.job_run
+     ORDER BY started_at DESC LIMIT 20;
+    ```
+
+    No rows at all means the call is not arriving. Then check the response
+    codes in Supabase: `SELECT status_code, created FROM net._http_response
+ORDER BY created DESC LIMIT 20;`. A **401** means the token in
+    `ess_ops.job_runner_config` and `JOB_RUNNER_TOKEN` on the API disagree. A
+    **404** means `JOB_RUNNER_TOKEN` is unset on the API, so the endpoint was
+    never registered. A **429** means something else is spending the budget.
+
+  Either way the messages are safe; they deliver when it comes back.
+
 - **`QUEUED` with `attempts` climbing and `last_error` set** → the mail
   provider is refusing. Read `last_error`; it is the provider's own words.
 - **`FAILED`** → six attempts over about eleven hours, all refused. These need

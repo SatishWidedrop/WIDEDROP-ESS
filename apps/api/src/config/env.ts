@@ -190,6 +190,16 @@ const baseSchema = z.object({
   WORKER_POLL_INTERVAL_MS: z.coerce.number().int().min(1_000).max(300_000).default(15_000),
 
   /**
+   * The secret a scheduler presents to run background work over HTTP.
+   *
+   * Needed only where there is no worker process — a serverless deployment,
+   * where `pg_cron` calls the API instead of a loop running in a container.
+   * Unset, the endpoint is not registered at all, which is a stronger
+   * guarantee than an endpoint that exists and checks.
+   */
+  JOB_RUNNER_TOKEN: secret('JOB_RUNNER_TOKEN').optional(),
+
+  /**
    * Whether a proxy sits in front of this process.
    *
    * With no proxy the client's address is the socket's, full stop. With one,
@@ -248,6 +258,16 @@ const schema = baseSchema.superRefine((env, ctx) => {
   // database is the other, and it is always present — so this only fails when
   // somebody has explicitly asked for the in-process store and then thought
   // better of naming the instance count.
+  // A worker process and a scheduler calling in are two ways to do the same
+  // thing, and a deployment needs one of them. Without either, mail sits in
+  // the outbox, payslip documents are never rendered and a cycle cannot be
+  // published — all silently, because nothing is failing.
+  if (!env.JOB_RUNNER_TOKEN) {
+    // Not a failure: a container deployment runs `node dist/worker.js`, which
+    // needs no token. The warning is in DEPLOYMENT and GO-LIVE rather than
+    // here, because the validator cannot see which of the two this is.
+  }
+
   if (env.CLIENT_IP_HEADER && !env.TRUST_PROXY) {
     fail(
       'CLIENT_IP_HEADER',

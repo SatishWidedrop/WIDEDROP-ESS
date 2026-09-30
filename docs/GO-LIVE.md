@@ -223,22 +223,55 @@ refusing the eleventh and twelfth sign-in attempts.
 
 ### Step 5 — Background work
 
-The `background_jobs` table from your architecture note is the right design,
-and the existing outbox already works this way — claimed with
-`FOR UPDATE SKIP LOCKED` under a lease, six attempts with backoff, then kept
-for a person rather than discarded. Generalise that rather than writing a
-second mechanism.
+Built. Three jobs, defined once in `services/jobs/registry.ts` and driven from
+two directions: a container runs `worker.ts`, which loops on a timer, and a
+serverless deployment has a scheduler call `POST /api/v1/jobs/:name`. Both call
+the same functions — a second implementation of "drain the outbox" would be a
+second set of assumptions about leases and retries, and the first time they
+disagreed a message would go out twice.
 
-Two things need to run on a schedule:
+| Job                 | What it does                                                                | How often    |
+| ------------------- | --------------------------------------------------------------------------- | ------------ |
+| `email-outbox`      | Sends what is queued, and requeues anything a stopped sender was holding    | every minute |
+| `payslip-documents` | Renders payslip documents that are missing one, so a cycle can be published | every minute |
+| `maintenance`       | Marks overdue policy acknowledgements, drops closed rate-limit windows      | hourly       |
 
-- **Draining the outbox** — every minute or two.
-- **Rendering pending payslips** — the publish guard refuses a cycle whose
-  payslips have no document, so this is what unblocks a publish.
+**Every job is bounded and resumable.** Each gets a budget — seven seconds
+under a ten-second function — does what it can, and says whether more is
+waiting. Nothing assumes it will be allowed to finish: the outbox claims under
+a lease, rendering claims a payslip conditionally, the sweeps converge. A test
+runs two drainers at once over ten messages and asserts exactly ten were sent,
+because a cron invocation _will_ land while the previous one is still going.
 
-Supabase Cron (`pg_cron` + `pg_net`) posts to a Netlify function, which drains a
-bounded slice and returns. Under ten seconds per invocation, so **no paid
-Netlify plan is needed** — Background Functions are Core Pro and above, and
-slicing avoids them entirely.
+**Setting it up on Supabase:**
+
+1. Generate a token: `openssl rand -base64 48`. Set it as `JOB_RUNNER_TOKEN` on
+   the Netlify site.
+2. Edit the two values at the top of `infra/supabase/cron.sql` — your API
+   origin and that same token — and run the file in the Supabase SQL editor.
+   It creates `pg_cron` and `pg_net`, stores the token in a table only the
+   scheduler can read, and schedules the three jobs.
+3. Check it: `SELECT job_name, status, started_at, payload FROM ess_ops.job_run
+ORDER BY started_at DESC LIMIT 20;` — that is the one to read, because
+   `pg_cron` only knows it called and `pg_net` only knows the status code.
+
+**Without a token the endpoint is not registered at all.** That is deliberate:
+an endpoint that drains the outbox and writes files should not be reachable on
+a deployment that does not use it, and "does not exist" is a stronger
+guarantee than "exists and checks". The Render blueprint sets no token for
+exactly that reason — it has a worker.
+
+The caller is a database, not a person: no cookie, no MFA, no employee record
+for the RBAC matrix to reason about. So it is one token compared in constant
+time, and the route is exempt from the Origin check because `pg_net` sends no
+Origin — the token is what replaces it, and a browser cannot supply one because
+nothing stores it there.
+
+One thing worth knowing, because it would have been invisible: the obvious rate
+limit for this endpoint was `payroll:mutate`, at 30 an hour. A scheduler
+calling three jobs every minute is 180. It would have refused two runs in every
+three, and shown up as mail that arrives eventually rather than as anything
+failing. It has its own budget of 360.
 
 ### Step 6 — The SPA
 

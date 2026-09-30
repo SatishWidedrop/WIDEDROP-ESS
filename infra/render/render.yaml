@@ -112,6 +112,10 @@ services:
 
       - key: WORKER_POLL_INTERVAL_MS
         value: '15000'
+      # No JOB_RUNNER_TOKEN here, and that is the point: this deployment has a
+      # worker process, so the HTTP job endpoint is not registered and there is
+      # no such surface to reach. The token belongs to a serverless deployment,
+      # where a scheduler has to call in because there is no loop to run in.
 
   # ── The rate-limit store ───────────────────────────────────────────
   # Required in production. With an in-process store, two API instances mean

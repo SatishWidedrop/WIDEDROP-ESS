@@ -23,6 +23,7 @@ import { reimbursementRoutes } from './v1/reimbursements.js';
 import { auditRoutes } from './v1/audit.js';
 import { cspReportRoutes } from './v1/csp-report.js';
 import { fileRoutes } from './v1/files.js';
+import { jobRoutes } from './v1/jobs.js';
 
 /**
  * Route registration.
@@ -81,4 +82,5 @@ export async function registerRoutes(app: App): Promise<void> {
   await app.register(auditRoutes);
   await app.register(cspReportRoutes);
   await app.register(fileRoutes);
+  await app.register(jobRoutes);
 }

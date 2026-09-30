@@ -53,6 +53,16 @@ export const RATE_LIMITS = {
   // Payroll generation is expensive and rarely legitimate more than once.
   'payroll:mutate': { max: 30, windowMs: 60 * 60_000 },
 
+  // The scheduler, calling three jobs once a minute each. 180 an hour is the
+  // legitimate rate, so the budget is twice that: tight enough to matter if
+  // something starts hammering it, loose enough that a retry or a second
+  // scheduler does not silently halve how often mail is sent.
+  //
+  // Worth stating because the obvious choice was `payroll:mutate`, at 30 an
+  // hour — which would have refused two runs in every three, and shown up as
+  // mail that arrives eventually rather than as anything failing.
+  'job:run': { max: 360, windowMs: 60 * 60_000 },
+
   // Search hits the database hardest per request.
   search: { max: 120, windowMs: 60_000 },
 

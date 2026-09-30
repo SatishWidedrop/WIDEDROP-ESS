@@ -55,6 +55,17 @@ const EXEMPT_PATHS = new Set([
   '/api/v1/csp-report',
 ]);
 
+/**
+ * Paths exempt from the Origin check as well as the token.
+ *
+ * Only the job endpoint, and only because its caller is a database rather than
+ * a browser: `pg_net` sends no Origin and no Sec-Fetch-Site, so the check
+ * below would refuse every scheduled run. What replaces it is a bearer token
+ * compared in constant time, which a browser cannot supply cross-site because
+ * nothing stores it there — see routes/v1/jobs.ts.
+ */
+const MACHINE_PATHS = /^\/api\/v1\/jobs(\/|$)/;
+
 export function issueCsrfToken(reply: FastifyReply, options: CsrfOptions): string {
   const token = randomBytes(32).toString('base64url');
   void reply.setCookie(CSRF_COOKIE, token, {
@@ -97,6 +108,11 @@ export const csrfPlugin = fp(
       if (SAFE_METHODS.has(request.method)) return;
 
       const path = request.url.split('?')[0] ?? '';
+
+      // A scheduler, not a browser. No cookie is involved, so there is no
+      // cross-site request to forge.
+      if (MACHINE_PATHS.test(path)) return;
+
       if (EXEMPT_PATHS.has(path)) {
         assertOrigin(request, allowedOrigins);
         return;
