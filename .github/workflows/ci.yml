@@ -185,6 +185,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+      - run: npm ci
+
+      # The API function ships the AWS SDK by path, because Netlify's bundler
+      # omits @aws-sdk/* on the assumption the Lambda runtime provides it. A
+      # dependency upgrade that adds a scope those paths do not cover builds
+      # cleanly and then fails at the first payslip download.
+      - name: The API function ships everything it imports
+        run: node scripts/check-function-bundle.mjs
+
       - name: The SPA must not carry its own _headers or _redirects
         run: |
           # Either would be copied into dist and merged with the generated

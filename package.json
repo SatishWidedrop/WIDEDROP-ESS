@@ -31,7 +31,9 @@
     "db:seed:reference": "npm run db:seed:reference -w @widedrop/api",
     "audit:ci": "node scripts/audit-check.mjs",
     "docs:rbac": "npm run build -w @widedrop/shared && node scripts/gen-rbac-doc.mjs",
-    "docs:check": "node scripts/gen-rbac-doc.mjs --check"
+    "docs:check": "node scripts/gen-rbac-doc.mjs --check",
+    "build:netlify": "npm run build -w @widedrop/shared && npm run db:generate -w @widedrop/api && npm run build -w @widedrop/api && npm run build -w @widedrop/web",
+    "check:function": "node scripts/check-function-bundle.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

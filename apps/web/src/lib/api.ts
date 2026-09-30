@@ -28,7 +28,15 @@ import type { ErrorEnvelope } from '@widedrop/shared';
  * Empty in development, where Vite proxies `/api` to the local API so that
  * cookies behave exactly as they do in production.
  */
-const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '');
+const RAW_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+
+/**
+ * `self` means the API is on this origin under /api — a function on the same
+ * site — so every request is relative and there is no cross-origin request to
+ * make at all. Empty means the same thing in development, where Vite proxies
+ * /api to the local API.
+ */
+const BASE_URL = RAW_BASE_URL === 'self' ? '' : RAW_BASE_URL.replace(/\/+$/, '');
 const CSRF_COOKIE = 'ess_csrf';
 
 export class ApiError extends Error {

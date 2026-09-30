@@ -28,6 +28,15 @@ export interface AppDependencies {
   env: Env;
   db: PrismaClient;
   logger?: Logger;
+  /**
+   * Built to run as a serverless function rather than a long-lived process.
+   *
+   * Turns off the parts that assume a server that stays up: load shedding has
+   * nothing to shed when the platform runs one request per container, and its
+   * background health check would hold a container open — and billable —
+   * between requests for no benefit.
+   */
+  serverless?: boolean;
 }
 
 /**
@@ -48,7 +57,7 @@ export interface AppDependencies {
  */
 export type App = Awaited<ReturnType<typeof buildApp>>;
 
-export async function buildApp({ env, db, logger }: AppDependencies) {
+export async function buildApp({ env, db, logger, serverless = false }: AppDependencies) {
   const log = logger ?? createLogger(env);
   const isProduction = env.NODE_ENV === 'production';
 
@@ -82,7 +91,11 @@ export async function buildApp({ env, db, logger }: AppDependencies) {
   // JavaScript number that could lose precision above 2^53.
   app.setSerializerCompiler(() => (data) => JSON.stringify(data, jsonReplacer));
 
-  await app.register(requestContextPlugin, { trustProxy: env.TRUST_PROXY });
+  await app.register(requestContextPlugin, {
+    trustProxy: env.TRUST_PROXY,
+    trustedProxyHops: env.TRUSTED_PROXY_HOPS,
+    clientIpHeader: env.CLIENT_IP_HEADER,
+  });
   await app.register(errorHandlerPlugin, { exposeStackTraces: !isProduction });
   await app.register(securityHeadersPlugin, { isProduction });
   await app.register(sensible);
@@ -138,27 +151,34 @@ export async function buildApp({ env, db, logger }: AppDependencies) {
 
   // Shed load rather than falling over: a saturated process returns 503 with a
   // Retry-After instead of timing every request out.
-  await app.register(underPressure, {
-    maxEventLoopDelay: 1_000,
-    maxHeapUsedBytes: 0,
-    maxRssBytes: 0,
-    maxEventLoopUtilization: 0.98,
-    retryAfter: 15,
-    healthCheck: async () => {
-      await db.$queryRaw`SELECT 1`;
-      return true;
-    },
-    healthCheckInterval: 15_000,
-    exposeStatusRoute: false,
-    pressureHandler: () => {
-      throw new AppError(
-        503,
-        ERROR_CODES.SERVICE_UNAVAILABLE,
-        'The service is busy. Try again in a moment.',
-        { retryAfterSeconds: 15, expected: false },
-      );
-    },
-  });
+  //
+  // Skipped under a serverless platform, where there is nothing to shed — the
+  // platform scales containers rather than queueing on one event loop — and
+  // where the background health check below would keep a container alive, and
+  // billed, between requests.
+  if (!serverless) {
+    await app.register(underPressure, {
+      maxEventLoopDelay: 1_000,
+      maxHeapUsedBytes: 0,
+      maxRssBytes: 0,
+      maxEventLoopUtilization: 0.98,
+      retryAfter: 15,
+      healthCheck: async () => {
+        await db.$queryRaw`SELECT 1`;
+        return true;
+      },
+      healthCheckInterval: 15_000,
+      exposeStatusRoute: false,
+      pressureHandler: () => {
+        throw new AppError(
+          503,
+          ERROR_CODES.SERVICE_UNAVAILABLE,
+          'The service is busy. Try again in a moment.',
+          { retryAfterSeconds: 15, expected: false },
+        );
+      },
+    });
+  }
 
   // A request that arrives with a body on a method that takes none is malformed.
   app.addContentTypeParser('application/json', { parseAs: 'string' }, (request, body, done) => {

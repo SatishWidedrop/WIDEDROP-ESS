@@ -1,4 +1,4 @@
-# Widedrop ESS — the SPA site.
+# Widedrop ESS — the SPA and the API, on one site.
 #
 # A second Netlify site, separate from the one that serves widedrop.com. The
 # marketing site's configuration is untouched: nothing here can change it, and
@@ -6,60 +6,125 @@
 #
 # Point the site's "Configuration file path" at infra/netlify/netlify.toml.
 #
-# The Content-Security-Policy is deliberately NOT here. Its connect-src must
-# equal the API origin for the deploy context, so it is generated at build time
-# into dist/_headers. No header name appears in both files: Netlify merges the
-# two sources, and a header named in both would be emitted twice.
+# ── Why both on one site ─────────────────────────────────────────────
+# The API answers under /api/* on the same origin as the SPA. That is not a
+# proxy to somewhere else — the function *is* the API — and it is the stronger
+# arrangement of the two: with one origin there is no cross-origin request to
+# allow, so there is no CORS allowlist to get wrong, and the refresh cookie can
+# be SameSite=Strict rather than Lax.
+#
+# The Content-Security-Policy is deliberately NOT here. It is generated at
+# build time into dist/_headers, because its connect-src depends on where the
+# API is. No header name appears in both files: Netlify merges the two sources,
+# and a header named in both would be emitted twice.
 
 [build]
-  # `base` is resolved from the repository root; `command` and `publish` are
-  # then resolved relative to `base`. Writing publish = "apps/web/dist" here
-  # would make Netlify look for apps/web/apps/web/dist and fail the deploy.
-  base    = "apps/web"
-  command = "npm run build"
-  publish = "dist"
+  # No `base`, because the build spans the whole workspace: the SPA needs
+  # @widedrop/shared and the function needs @widedrop/api, both built from
+  # source. `publish` and `functions` are therefore repository-relative.
+  command   = "npm run build:netlify"
+  publish   = "apps/web/dist"
+  functions = "netlify/functions"
 
 [build.environment]
   NODE_VERSION = "22"
-  # The web app imports @widedrop/shared from the workspace, so the install
-  # must cover the whole repository rather than one package.
-  NPM_FLAGS    = "--workspaces --include-workspace-root"
   CI           = "true"
   NODE_ENV     = "production"
 
-[build.processing]
-  # Vite already hashes, minifies and inlines what it should. Netlify's
-  # post-processing would rewrite asset URLs the CSP's hashes depend on.
-  skip_processing = true
+# ── The API function ─────────────────────────────────────────────────
+[functions]
+  # esbuild, so the function is one file rather than a copy of node_modules.
+  node_bundler = "esbuild"
+
+[functions."api"]
+  # Everything the bundler cannot work out for itself. The numbers in the
+  # comments are measured: the function is 19 MB zipped against AWS Lambda's
+  # 50 MB hard limit, and it was 53 MB — over — before the exclusions below.
+  included_files = [
+    # Prisma's query engine is a native binary no bundler can inline, and the
+    # client loads it by path at runtime. `rhel-openssl-3.0.x` is Amazon
+    # Linux, which is what a Lambda runs. The `native` engine beside it is for
+    # the local machine and the container image, and is deliberately NOT
+    # shipped here — it is 17 MB that would never be loaded.
+    "apps/api/src/generated/prisma/libquery_engine-rhel-openssl-3.0.x.so.node",
+    "apps/api/src/generated/prisma/schema.prisma",
+
+    # The AWS SDK, shipped rather than borrowed. The bundler treats
+    # `@aws-sdk/*` as provided by the Lambda runtime and omits it — which is
+    # true of `client-s3` and, as far as anybody documents, not reliably true
+    # of `s3-request-presigner`. Payslip downloads are not the place to find
+    # out. The whole tree is 27 packages across three scopes and costs 0.6 MB
+    # zipped; `scripts/check-function-bundle.mjs` fails the build if an
+    # upgrade adds a scope these globs do not cover.
+    "node_modules/@aws*/**",
+    "node_modules/@smithy/**",
+    "node_modules/tslib/**",
+    "node_modules/bowser/**",
+    "!node_modules/@aws*/**/*.d.ts",
+    "!node_modules/@smithy/**/*.d.ts",
+    "!node_modules/@aws*/**/dist-es/**",
+    "!node_modules/@smithy/**/dist-es/**",
+
+    # The bundler hardcodes `@prisma/client` as external and copies the whole
+    # package, which drags in TypeScript (15 MB) and a WebAssembly query
+    # engine for every database Prisma supports (25 MB). None of it is
+    # reachable: the generated client in apps/api/src/generated/prisma is
+    # self-contained and uses the native engine above. Excluding it is what
+    # takes the function from over the limit to comfortably under.
+    "!node_modules/typescript/**",
+    "!node_modules/@prisma/client/runtime/*cockroachdb*",
+    "!node_modules/@prisma/client/runtime/*mysql*",
+    "!node_modules/@prisma/client/runtime/*sqlserver*",
+    "!node_modules/@prisma/client/runtime/*sqlite*",
+    "!node_modules/@prisma/client/runtime/*react-native*",
+    "!node_modules/@prisma/client/runtime/*edge*",
+  ]
+
+  # Packages esbuild must not inline, because each loads a native `.node`
+  # binary at runtime.
+  #
+  #   @prisma/client   resolves its query engine by reading the filesystem,
+  #                    which esbuild cannot follow.
+  #   @node-rs/argon2  is the password hasher, a Rust addon. Its platform
+  #                    package is linux-x64-gnu, which is what Amazon Linux
+  #                    runs, so the one the build machine installs is the one
+  #                    the function needs.
+  external_node_modules = ["@prisma/client", "@node-rs/argon2"]
 
 # ── Deploy contexts ──────────────────────────────────────────────────
 # Production is built in CI and uploaded, so these govern Netlify-side
 # builds — deploy previews and the staging branch — only.
 
+# `VITE_API_BASE_URL = "self"` means the API is on this origin, under /api.
+# The SPA then issues relative requests and the generated CSP's connect-src is
+# 'self' — no host to name, and no way for the two to disagree about it.
+
 [context.production.environment]
-  VITE_API_BASE_URL = "https://api-ess.widedrop.com"
+  VITE_API_BASE_URL = "self"
   VITE_APP_ENV      = "production"
 
 [context.branch-deploy.environment]
-  VITE_API_BASE_URL = "https://api-ess-staging.widedrop.com"
+  VITE_API_BASE_URL = "self"
   VITE_APP_ENV      = "staging"
 
 [context.deploy-preview.environment]
-  VITE_API_BASE_URL = "https://api-ess-staging.widedrop.com"
+  VITE_API_BASE_URL = "self"
   VITE_APP_ENV      = "preview"
 
 # ── Redirects ────────────────────────────────────────────────────────
 # Order is semantic: Netlify takes the first match, so every specific rule
 # must precede the catch-all.
 
-# The SPA must never proxy the API. A rewrite to the API host would make it
-# same-origin, which defeats the CORS allowlist and puts an uncontrolled CDN
-# in front of authenticated responses. Anything under /api/ on this host is a
-# mistake, and says so.
+# The API. A rewrite rather than a redirect, so the browser's request URL —
+# and therefore the origin the cookie and the CSRF check are evaluated against
+# — stays this site.
+#
+# 200, not 301: a redirect would turn every POST into a GET and lose its body.
 [[redirects]]
   from   = "/api/*"
-  to     = "/index.html"
-  status = 404
+  to     = "/.netlify/functions/api/:splat"
+  status = 200
+  force  = true
 
 # History fallback, last and as a rewrite rather than a redirect, so a deep
 # link such as /payslips?payslip=… renders the app. force = false, so a real
@@ -73,6 +138,9 @@
 # ── Security headers ─────────────────────────────────────────────────
 # Everything except Content-Security-Policy, which dist/_headers carries.
 
+# Scoped to the SPA's own paths rather than /*, because the API sets its own
+# headers per response — including cache-control: no-store on a payslip — and
+# a header set here would be merged with them.
 [[headers]]
   for = "/*"
   [headers.values]
@@ -109,3 +177,12 @@
   for = "/fonts/*"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
+
+# Responses from the API are never cached by the CDN. The application sets
+# `cache-control: no-store, no-cache, must-revalidate, private` on every one of
+# them; this says the same thing at the edge, so a payslip cannot be served to
+# the wrong person by a cache that ignored the application.
+[[headers]]
+  for = "/api/*"
+  [headers.values]
+    Cache-Control = "no-store, must-revalidate"

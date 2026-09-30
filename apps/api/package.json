@@ -28,6 +28,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1143.0",
     "@aws-sdk/s3-request-presigner": "^3.1143.0",
+    "@fastify/aws-lambda": "^6.4.1",
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^10.0.2",
     "@fastify/helmet": "^13.0.1",
@@ -55,5 +56,15 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^5.0.2"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/app.d.ts",
+      "default": "./dist/app.js"
+    },
+    "./netlify": {
+      "types": "./dist/netlify.d.ts",
+      "default": "./dist/netlify.js"
+    }
   }
 }

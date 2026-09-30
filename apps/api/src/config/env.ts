@@ -188,7 +188,41 @@ const baseSchema = z.object({
 
   /** Worker loop interval for the email outbox and scheduled jobs. */
   WORKER_POLL_INTERVAL_MS: z.coerce.number().int().min(1_000).max(300_000).default(15_000),
+
+  /**
+   * Whether a proxy sits in front of this process.
+   *
+   * With no proxy the client's address is the socket's, full stop. With one,
+   * it has to be read out of a forwarded header — and that header is
+   * attacker-influenced, hence the two settings below.
+   */
   TRUST_PROXY: boolish.default('false'),
+
+  /**
+   * How many proxies append to `X-Forwarded-For` between the client and here.
+   *
+   * One for a single load balancer; two behind a CDN in front of one. Too low
+   * and the address read is one the client supplied; too high and everyone
+   * behind the same proxy shares a rate-limit bucket. Ignored when
+   * `CLIENT_IP_HEADER` is set, which is better than counting.
+   */
+  TRUSTED_PROXY_HOPS: z.coerce.number().int().min(1).max(8).default(1),
+
+  /**
+   * A single-value header the platform sets for the client's address.
+   *
+   * `x-nf-client-connection-ip` on Netlify, `cf-connecting-ip` behind
+   * Cloudflare, `true-client-ip` on some others. Preferred over counting the
+   * `X-Forwarded-For` trail, because the platform overwrites these rather than
+   * appending, so nothing a client sends can reach them.
+   *
+   * Only ever set to a header the platform in front is known to overwrite: one
+   * it merely passes through would be worse than counting.
+   */
+  CLIENT_IP_HEADER: z
+    .string()
+    .regex(/^[a-z0-9-]+$/, 'must be a lowercase header name')
+    .optional(),
 });
 
 /**
@@ -214,6 +248,13 @@ const schema = baseSchema.superRefine((env, ctx) => {
   // database is the other, and it is always present — so this only fails when
   // somebody has explicitly asked for the in-process store and then thought
   // better of naming the instance count.
+  if (env.CLIENT_IP_HEADER && !env.TRUST_PROXY) {
+    fail(
+      'CLIENT_IP_HEADER',
+      'is set but TRUST_PROXY is false — with no proxy in front, a forwarded header is whatever the client sent',
+    );
+  }
+
   if (env.RATE_LIMIT_ALLOW_IN_PROCESS && env.REDIS_URL) {
     fail(
       'RATE_LIMIT_ALLOW_IN_PROCESS',

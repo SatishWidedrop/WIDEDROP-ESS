@@ -173,23 +173,53 @@ which stops a flood before it costs an invocation.
 
 ### Step 4 — The API on Netlify Functions
 
-The work, in order of risk:
+Built. The same Fastify application `server.ts` listens with, handed to the
+platform as a handler instead — not a second implementation, so a route cannot
+behave one way here and another way in a container. It is one function serving
+`/api/*` rather than one per route, which is what keeps the plugin chain
+identical: request context, security headers, rate limiting, CSRF,
+authentication, authorization, registered once in one order.
 
-1. **Wrap Fastify.** `@fastify/aws-lambda` turns the existing app into a
-   handler with no route changes. One function at `/api/*` rather than one per
-   route, so the plugin chain — CSRF, security headers, authentication,
-   authorization — runs exactly as it does now.
-2. **Connection handling.** One Prisma client per container, reused across
-   invocations; never one per request. Against the pooled URL, with
-   `pgbouncer=true`.
-3. **Bundle size.** The Prisma query engine is a ~17 MB native binary. It fits
-   Lambda's limit but needs to be included deliberately — check this early, it
-   is the most likely unpleasant surprise.
-4. **Drop what has no meaning.** `@fastify/under-pressure` (there is no event
-   loop to shed load from) and the graceful-drain shutdown (nothing to drain).
-5. **Cold starts.** Prisma plus the engine is roughly a second on a cold
-   start. Acceptable for an internal portal; worth knowing before somebody
-   reports the first load as slow.
+**The API is same-origin with the SPA.** Both are on one Netlify site, so there
+is no cross-origin request to allow, no CORS allowlist to get wrong, and the
+refresh cookie can be `SameSite=Strict` rather than `Lax`. The CSP's
+`connect-src` is `'self'` with no host to name.
+
+Measured on the bundled function against a real database:
+
+|                                         |                                                |
+| --------------------------------------- | ---------------------------------------------- |
+| Cold start, including the first request | **269 ms**                                     |
+| Warm request                            | **3 ms**                                       |
+| Function size                           | **19.3 MB zipped**, against a 50 MB hard limit |
+
+That last number was **53 MB** — over the limit — before three things came out,
+and it is worth knowing why, because each was invisible until measured:
+
+1. **Two Prisma engines.** `native` is the build machine's; only
+   `rhel-openssl-3.0.x` (Amazon Linux) is ever loaded in a Lambda. 17 MB.
+2. **TypeScript.** Netlify's bundler hardcodes `@prisma/client` as external and
+   copies the whole package, TypeScript included. 15 MB, unreachable.
+3. **A WebAssembly query engine for every database Prisma supports** —
+   CockroachDB, MySQL, SQL Server, SQLite. 25 MB, none of it used: the
+   generated client is self-contained and uses the native engine.
+
+Two further traps, both found by actually running the bundle:
+
+- **The AWS SDK is omitted by the bundler**, which assumes the Lambda runtime
+  provides it. That is true of `client-s3` and not documented for
+  `s3-request-presigner`, and payslip downloads are not the place to find out —
+  so it is shipped explicitly, which costs 0.6 MB.
+  `npm run check:function` fails the build if an SDK upgrade adds a scope the
+  paths do not cover; that is how `@aws/lambda-invoke-store` was caught.
+- **`@node-rs/argon2`** is a native addon and cannot be inlined either. Its
+  platform package is `linux-x64-gnu`, which is what Amazon Linux runs, so the
+  one the build machine installs is the one the function needs.
+
+Verified end to end against the dev database, through the bundled artifact: a
+401 without a token, a successful sign-in, three payslips with the right
+figures, a signed download URL, the security headers, and the rate limiter
+refusing the eleventh and twelfth sign-in attempts.
 
 ### Step 5 — Background work
 

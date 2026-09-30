@@ -17,7 +17,17 @@ generator client {
   provider        = "prisma-client-js"
   output          = "../src/generated/prisma"
   previewFeatures = ["relationJoins", "postgresqlExtensions"]
-  binaryTargets   = ["native"]
+  // "native" is the machine that runs `prisma generate`; the others are
+  // platforms the built artifact runs on and the build machine is not.
+  //
+  // `rhel-openssl-3.0.x` is Amazon Linux, which is what a Lambda — and so a
+  // Netlify Function — runs. Without it the function builds cleanly on
+  // Ubuntu and then fails on its first query with "Query engine library for
+  // current platform could not be found", which is a poor place to learn it.
+  //
+  // Each target is another ~17 MB engine beside the generated client. That is
+  // the cost of the artifact being able to run where it is sent.
+  binaryTargets   = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
