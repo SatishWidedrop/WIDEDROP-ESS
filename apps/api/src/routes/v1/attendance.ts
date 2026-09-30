@@ -412,4 +412,129 @@ export async function attendanceRoutes(app: App): Promise<void> {
       };
     },
   );
+
+  /* ---------------------------------------------------------------- */
+  /* HR: who approves attendance for people with no manager            */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * Every organisation has somebody at the top whose attendance nobody
+   * manages. Their record still needs another person's review before payroll
+   * may consume the period, so the organisation nominates who that is.
+   *
+   * Read and written together on the HR attendance screen, which is where the
+   * submission that needs it is raised.
+   */
+
+  app.get('/api/v1/hr/attendance/approver', { onRequest: app.authenticate() }, async (request) => {
+    const principal = requirePrincipal(request);
+    assertPermission(principal, 'attendance:read', 'ORG');
+
+    const organization = await db.organization.findUniqueOrThrow({
+      where: { id: principal.organizationId },
+      select: {
+        attendanceApproverEmployeeId: true,
+        attendanceApprover: {
+          select: { id: true, fullName: true, initials: true, employmentStatus: true },
+        },
+      },
+    });
+
+    // Who currently has nobody to approve them. The screen needs this to
+    // explain why a nomination is required at all, and it is a fact about
+    // the data rather than a number chosen to fill the panel.
+    const unmanaged = await db.employee.findMany({
+      where: {
+        organizationId: principal.organizationId,
+        employmentStatus: { in: ['ACTIVE', 'ON_LEAVE', 'NOTICE_PERIOD'] },
+        managerLinks: { none: { effectiveTo: null, isPrimary: true } },
+      },
+      orderBy: { fullName: 'asc' },
+      select: { id: true, fullName: true, initials: true },
+    });
+
+    return { approver: organization.attendanceApprover, unmanaged };
+  });
+
+  app.put(
+    '/api/v1/hr/attendance/approver',
+    { onRequest: app.authenticate(), config: { rateLimitName: 'write' } },
+    async (request) => {
+      const principal = requirePrincipal(request);
+      // The first use of `org-structure:write`: this is a change to who holds
+      // an approval authority, not a correction to a month's numbers, so it
+      // sits with reporting lines rather than with `attendance:record`.
+      assertPermission(principal, 'org-structure:write', 'ORG');
+
+      const { employeeId } = request.body as { employeeId?: string | null };
+
+      if (employeeId !== null && typeof employeeId !== 'string') {
+        throw new AppError(
+          400,
+          ERROR_CODES.VALIDATION_FAILED,
+          'Give the employee who should approve attendance for people with no reporting manager, or null to clear it.',
+        );
+      }
+
+      return db.$transaction(async (tx) => {
+        const before = await tx.organization.findUniqueOrThrow({
+          where: { id: principal.organizationId },
+          select: {
+            attendanceApproverEmployeeId: true,
+            attendanceApprover: { select: { fullName: true } },
+          },
+        });
+
+        let nominee: { id: string; fullName: string } | null = null;
+
+        if (employeeId !== null) {
+          // Scoped to the organisation, so a valid id from another tenant is
+          // indistinguishable from one that does not exist.
+          const found = await tx.employee.findFirst({
+            where: { id: employeeId, organizationId: principal.organizationId },
+            select: { id: true, fullName: true, employmentStatus: true },
+          });
+          if (!found) throw notFound('That employee');
+
+          if (found.employmentStatus === 'EXITED') {
+            throw new AppError(
+              422,
+              ERROR_CODES.BUSINESS_RULE_VIOLATION,
+              `${found.fullName} has left, so they cannot hold an approval authority.`,
+            );
+          }
+
+          nominee = { id: found.id, fullName: found.fullName };
+        }
+
+        const updated = await tx.organization.update({
+          where: { id: principal.organizationId },
+          data: { attendanceApproverEmployeeId: nominee?.id ?? null },
+          select: {
+            attendanceApprover: {
+              select: { id: true, fullName: true, initials: true, employmentStatus: true },
+            },
+          },
+        });
+
+        await recordAudit(
+          tx,
+          {
+            organizationId: principal.organizationId,
+            action: 'UPDATE',
+            entityType: 'organization',
+            entityId: principal.organizationId,
+            before: { attendanceApproverEmployeeId: before.attendanceApproverEmployeeId },
+            after: { attendanceApproverEmployeeId: nominee?.id ?? null },
+            summary: nominee
+              ? `${nominee.fullName} approves attendance for people with no reporting manager`
+              : `Cleared the attendance approver for people with no reporting manager (was ${before.attendanceApprover?.fullName ?? 'nobody'})`,
+          },
+          env.AUDIT_HMAC_KEY,
+        );
+
+        return { approver: updated.attendanceApprover };
+      });
+    },
+  );
 }

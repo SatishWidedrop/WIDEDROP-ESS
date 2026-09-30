@@ -35,13 +35,48 @@ the batch short — so a function with a deadline renders what it can and asks
 the queue to call it again. There is no size at which this stops working; past
 about five hundred people it just takes more than one invocation.
 
-**Payroll calculation** is the other long operation. It carries a 300-second
-transaction timeout in code, which is a ceiling rather than a measurement — it
-is database writes with no network round trips, so a few hundred employees
-should land in a second or two. **Measure it before the first real run** with a
-copy of your actual headcount; if it exceeds ten seconds it has to become a
-queued job, and unlike rendering it cannot simply be sliced, because a
-half-calculated payroll run is worse than none.
+**Payroll calculation** is the other long operation, and it is now measured
+rather than guessed. `npm run bench:payroll -w @widedrop/api` builds a real
+organisation at a given headcount, runs the pipeline through the same service
+functions the routes call, and times each stage:
+
+| Employees | Validate | Calculate  | Statements issued by calculate |
+| --------- | -------- | ---------- | ------------------------------ |
+| 50        | 0.72 s   | 1.20 s     | 670                            |
+| 200       | 2.53 s   | 4.35 s     | 2,620                          |
+| 500       | 5.96 s   | **10.9 s** | 6,520                          |
+
+It scales linearly — about **22 ms and 13 database round trips per employee**,
+flat from 50 to 500, so there is no hidden quadratic waiting further up. The
+earlier guess of "a second or two for a few hundred" was roughly an order of
+magnitude optimistic.
+
+The round-trip count is the number that matters, because those timings are
+against Postgres on a loopback socket and production's statements cross a
+network to Supabase. Thirteen round trips per employee means latency dominates:
+
+| Per-statement latency | Employees in a 10 s function |
+| --------------------- | ---------------------------- |
+| loopback (measured)   | ~450                         |
+| 1 ms                  | ~280                         |
+| 2 ms                  | ~200                         |
+
+So the practical ceiling for a synchronous calculate on Netlify is **about two
+hundred people**, not the four hundred the raw timing suggests. Widedrop is far
+below that, and this is a number to revisit at around 150 rather than a problem
+today.
+
+One correction to what this document used to say: calculation **can** be sliced
+after all. The claim that it cannot rested on "a half-calculated run is worse
+than none", which is true of a run that is _visible_ while half-finished — but
+the state machine already has a state for exactly this. Payslips may exist in
+`CALCULATING`, and `EMPLOYEE_VISIBLE_STATES` is `PUBLISHED` and `CLOSED` only,
+so a cycle part-way through calculation is invisible to employees by
+construction. A resumable job could write payslips in batches and transition to
+`CALCULATED` only once every eligible employee has one. That is a real change to
+`generatePayroll`, not a flag, and it is not worth making until the headcount
+asks for it — but it is available, and it is the answer at that point rather
+than a paid tier.
 
 ---
 

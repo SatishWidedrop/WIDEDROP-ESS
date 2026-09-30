@@ -10,7 +10,7 @@
     "start": "node dist/server.js",
     "worker": "node dist/worker.js",
     "worker:dev": "tsx watch src/worker.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.scripts.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "prisma generate",
@@ -20,7 +20,8 @@
     "db:studio": "prisma studio",
     "db:seed:reference": "tsx prisma/seed-reference.ts",
     "db:seed:demo": "tsx prisma/seed-demo.ts",
-    "bootstrap:admin": "tsx scripts/bootstrap-admin.ts"
+    "bootstrap:admin": "tsx scripts/bootstrap-admin.ts",
+    "bench:payroll": "tsx scripts/bench-payroll.ts"
   },
   "prisma": {
     "schema": "prisma/schema.prisma"

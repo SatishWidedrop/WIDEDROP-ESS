@@ -417,13 +417,70 @@ export async function submitAttendancePeriod(
     );
   }
 
+  /**
+   * People at the top of the tree.
+   *
+   * Every organisation has somebody whose attendance nobody manages, and their
+   * record still has to be reviewed by another person before payroll may
+   * consume the period. The organisation nominates who that is — typically the
+   * head of People Ops — and the record is routed to them here, so that from
+   * this point on the period is simply a set of manager slices like any other.
+   *
+   * It is a nomination rather than a fallback to whoever submitted the period:
+   * HR derives and submits attendance, so routing it back to the submitter
+   * would be HR approving its own filing, and the review would mean nothing.
+   */
   const withoutManager = records.filter((record) => record.managerEmployeeId === null);
   if (withoutManager.length > 0) {
-    throw new AppError(
-      422,
-      ERROR_CODES.BUSINESS_RULE_VIOLATION,
-      `${withoutManager.length} ${withoutManager.length === 1 ? 'person has' : 'people have'} no manager, so their attendance has nobody to approve it — starting with ${withoutManager[0]?.employee.fullName}.`,
-    );
+    const organization = await tx.organization.findUniqueOrThrow({
+      where: { id: principal.organizationId },
+      select: {
+        attendanceApproverEmployeeId: true,
+        attendanceApprover: { select: { fullName: true, employmentStatus: true } },
+      },
+    });
+    const approverId = organization.attendanceApproverEmployeeId;
+
+    if (!approverId) {
+      throw new AppError(
+        422,
+        ERROR_CODES.BUSINESS_RULE_VIOLATION,
+        `${withoutManager.length} ${withoutManager.length === 1 ? 'person has' : 'people have'} no reporting manager, so their attendance has nobody to approve it — starting with ${withoutManager[0]?.employee.fullName}. Nominate an attendance approver for people with no reporting manager, then submit again.`,
+        {
+          details: withoutManager.slice(0, 10).map((record) => ({
+            path: record.employeeId,
+            message: `${record.employee.fullName} has no reporting manager.`,
+          })),
+        },
+      );
+    }
+
+    // Nobody approves their own attendance. If the nominated approver is
+    // themselves at the top of the tree, the nomination cannot cover them.
+    const selfApproving = withoutManager.find((record) => record.employeeId === approverId);
+    if (selfApproving) {
+      throw new AppError(
+        422,
+        ERROR_CODES.BUSINESS_RULE_VIOLATION,
+        `${selfApproving.employee.fullName} is the nominated attendance approver and has no reporting manager, so their own attendance would be theirs to approve. Give them a reporting manager, or nominate somebody else.`,
+      );
+    }
+
+    if (organization.attendanceApprover?.employmentStatus === 'EXITED') {
+      throw new AppError(
+        422,
+        ERROR_CODES.BUSINESS_RULE_VIOLATION,
+        `${organization.attendanceApprover.fullName} is the nominated attendance approver but has left. Nominate somebody else, then submit again.`,
+      );
+    }
+
+    await tx.attendanceRecord.updateMany({
+      where: { attendancePeriodId: period.id, managerEmployeeId: null },
+      data: { managerEmployeeId: approverId },
+    });
+
+    // The tally below counts from `records`, which was read before the update.
+    for (const record of withoutManager) record.managerEmployeeId = approverId;
   }
 
   const submittedAt = new Date();

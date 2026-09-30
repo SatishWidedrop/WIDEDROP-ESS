@@ -596,9 +596,19 @@ async function main(): Promise<void> {
   }
   await rebuildReportingClosure(prisma, organization.id);
 
+  // Who reviews the attendance of people with no reporting manager. Ravi runs
+  // the company and reports to nobody; his record still needs another person's
+  // review before payroll may consume the period, and without this nomination
+  // attendance could not be submitted at all.
+  await prisma.organization.update({
+    where: { id: organization.id },
+    data: { attendanceApproverEmployeeId: employeeIds.get('04001') ?? null },
+  });
+
   console.log(
     `  people: ${people.length}, each with a verified bank account, PAN, UAN, tax election and salary structure`,
   );
+  console.log('  attendance for people with no reporting manager is approved by Vikram Shetty');
 
   /* ---------------------------------------------------------------- */
   /* Leave entitlements                                                */

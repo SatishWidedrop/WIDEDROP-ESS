@@ -31,17 +31,17 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider  = "postgresql"
   // The pooled connection. On Supabase this is Supavisor in transaction mode
   // on port 6543 with `?pgbouncer=true`, which turns off prepared statements —
   // the pooler does not support them and Prisma creates them by default.
-  url      = env("DATABASE_URL")
+  url       = env("DATABASE_URL")
   // The direct connection, on port 5432. Migrations take advisory locks and
   // run DDL, neither of which survives a transaction-mode pooler handing the
   // connection to somebody else between statements. Prisma uses this for
   // `migrate` and `db push` only; the application never touches it.
   directUrl = env("DIRECT_DATABASE_URL")
-  schemas  = ["ess", "ess_ops"]
+  schemas   = ["ess", "ess_ops"]
 
   // Managed by Prisma so the shadow database used to diff migrations has them
   // too. citext keeps emails and reference codes case-insensitive; btree_gist
@@ -809,23 +809,32 @@ enum Persona {
 // ═══════════════════════════════════════════════════════════════════════════
 
 model Organization {
-  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  legalName            String   @map("legal_name")
-  displayName          String   @map("display_name")
-  domain               String   @unique @db.Citext
-  timezone             String   @default("Asia/Kolkata")
-  currencyCode         String   @default("INR") @map("currency_code")
-  locale               String   @default("en-IN")
+  id                           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  legalName                    String   @map("legal_name")
+  displayName                  String   @map("display_name")
+  domain                       String   @unique @db.Citext
+  timezone                     String   @default("Asia/Kolkata")
+  currencyCode                 String   @default("INR") @map("currency_code")
+  locale                       String   @default("en-IN")
   /// Prefix for generated employee numbers, e.g. `WDT`.
-  employeeNumberPrefix String   @default("EMP") @map("employee_number_prefix")
+  employeeNumberPrefix         String   @default("EMP") @map("employee_number_prefix")
   /// Where portal help-desk tickets are dispatched.
-  helpdeskEmail        String   @map("helpdesk_email") @db.Citext
+  helpdeskEmail                String   @map("helpdesk_email") @db.Citext
   /// Financial year start month; 4 = April, as Indian statute requires.
-  fiscalYearStartMonth Int      @default(4) @map("fiscal_year_start_month") @db.SmallInt
-  logoFileObjectId     String?  @map("logo_file_object_id") @db.Uuid
-  isActive             Boolean  @default(true) @map("is_active")
-  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  fiscalYearStartMonth         Int      @default(4) @map("fiscal_year_start_month") @db.SmallInt
+  logoFileObjectId             String?  @map("logo_file_object_id") @db.Uuid
+  /// Who approves attendance for people who have no reporting manager — in
+  /// practice the head of People Ops. Every organisation has somebody at the
+  /// top whose attendance nobody manages, and their record still has to be
+  /// reviewed by another person before payroll may consume the period.
+  /// Null until nominated, and a period containing such a person cannot be
+  /// submitted until it is.
+  attendanceApproverEmployeeId String?  @map("attendance_approver_employee_id") @db.Uuid
+  isActive                     Boolean  @default(true) @map("is_active")
+  createdAt                    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  attendanceApprover Employee? @relation("OrgAttendanceApprover", fields: [attendanceApproverEmployeeId], references: [id], onDelete: Restrict)
 
   departments       Department[]
   locations         Location[]
@@ -1180,35 +1189,36 @@ model Employee {
   dependents        Dependent[]
   nominees          Nominee[]
 
-  leaveBalances       LeaveBalance[]
-  leaveLedger         LeaveBalanceLedger[]
-  leaveRequests       LeaveRequest[]              @relation("LeaveRequester")
-  attendanceRecords   AttendanceRecord[]
-  attendanceApprovals AttendanceApproval[]        @relation("AttendanceApprover")
-  salaryStructures    SalaryStructure[]
-  payrollInputItems   PayrollInputItem[]
-  payslips            Payslip[]
-  payslipRollups      PayslipFyRollup[]
-  validationResults   PayrollValidationResult[]
-  taxElections        EmployeeTaxRegimeElection[]
-  taxDeclarations     EmployeeTaxDeclaration[]
-  taxProjections      EmployeeTaxProjection[]
-  tdsQuarters         TdsQuarter[]
-  form16s             Form16Document[]
-  benefitEnrolments   BenefitEnrolment[]
-  expenseClaims       ExpenseClaim[]              @relation("ExpenseClaimant")
-  expenseRollups      ExpenseFyRollup[]
-  documents           EmployeeDocument[]
-  documentRequests    DocumentRequest[]           @relation("DocumentRequester")
-  policyAssignments   PolicyAssignment[]
-  acknowledgements    PolicyAcknowledgement[]
-  announcementReads   AnnouncementRead[]
-  ticketsRaised       HelpdeskTicket[]            @relation("TicketRequester")
-  ticketsAssigned     HelpdeskTicket[]            @relation("TicketAssignee")
-  ticketComments      TicketComment[]
-  approvalTasks       ApprovalTask[]              @relation("ApprovalAssignee")
-  approvalSubjects    ApprovalTask[]              @relation("ApprovalSubject")
-  changeRequests      ProfileChangeRequest[]      @relation("ChangeRequestSubject")
+  leaveBalances         LeaveBalance[]
+  leaveLedger           LeaveBalanceLedger[]
+  leaveRequests         LeaveRequest[]              @relation("LeaveRequester")
+  attendanceRecords     AttendanceRecord[]
+  attendanceApprovals   AttendanceApproval[]        @relation("AttendanceApprover")
+  salaryStructures      SalaryStructure[]
+  payrollInputItems     PayrollInputItem[]
+  payslips              Payslip[]
+  payslipRollups        PayslipFyRollup[]
+  validationResults     PayrollValidationResult[]
+  taxElections          EmployeeTaxRegimeElection[]
+  taxDeclarations       EmployeeTaxDeclaration[]
+  taxProjections        EmployeeTaxProjection[]
+  tdsQuarters           TdsQuarter[]
+  form16s               Form16Document[]
+  benefitEnrolments     BenefitEnrolment[]
+  expenseClaims         ExpenseClaim[]              @relation("ExpenseClaimant")
+  expenseRollups        ExpenseFyRollup[]
+  documents             EmployeeDocument[]
+  documentRequests      DocumentRequest[]           @relation("DocumentRequester")
+  policyAssignments     PolicyAssignment[]
+  acknowledgements      PolicyAcknowledgement[]
+  announcementReads     AnnouncementRead[]
+  ticketsRaised         HelpdeskTicket[]            @relation("TicketRequester")
+  ticketsAssigned       HelpdeskTicket[]            @relation("TicketAssignee")
+  ticketComments        TicketComment[]
+  approvalTasks         ApprovalTask[]              @relation("ApprovalAssignee")
+  approvalSubjects      ApprovalTask[]              @relation("ApprovalSubject")
+  changeRequests        ProfileChangeRequest[]      @relation("ChangeRequestSubject")
+  approvesAttendanceFor Organization[]              @relation("OrgAttendanceApprover")
 
   @@unique([organizationId, employeeNumber], map: "ux_employee__org_number")
   @@unique([organizationId, workEmail], map: "ux_employee__org_work_email")
@@ -2594,7 +2604,7 @@ model Dependent {
   dateOfBirth    DateTime?             @map("date_of_birth") @db.Date
   gender         Gender                @default(UNDISCLOSED)
   /// Generated by the database: avatar initials, so the UI never derives them.
-  initials       String   @default(dbgenerated())
+  initials       String                @default(dbgenerated())
   isActive       Boolean               @default(true) @map("is_active")
   createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)

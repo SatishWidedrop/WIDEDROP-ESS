@@ -356,3 +356,123 @@ describe('the attendance period', () => {
     ).rejects.toMatchObject({ statusCode: 403, code: 'OUT_OF_SCOPE' });
   });
 });
+
+/**
+ * Somebody has to be at the top.
+ *
+ * Every organisation has a person whose attendance nobody manages, and for a
+ * long while that refused the whole period — so no period could be approved,
+ * and no payroll cycle could consume one. The organisation nominates who
+ * reviews those records instead.
+ */
+describe('people with no reporting manager', () => {
+  /** Arjun and Ananya are at the top of the fixture's tree. */
+  async function openDeriveAndSubmit() {
+    const period = await as(fixture.principals.hr, () =>
+      db.$transaction((tx) =>
+        openAttendancePeriod(tx, fixture.principals.hr, { year: 2026, month: 10 }, HMAC_KEY),
+      ),
+    );
+    await as(fixture.principals.hr, () =>
+      db.$transaction((tx) =>
+        deriveAttendanceRecords(tx, fixture.principals.hr, { periodId: period.id }, HMAC_KEY),
+      ),
+    );
+    return as(fixture.principals.hr, () =>
+      db
+        .$transaction((tx) =>
+          submitAttendancePeriod(tx, fixture.principals.hr, { periodId: period.id }, HMAC_KEY),
+        )
+        .then((result) => ({ ...result, periodId: period.id })),
+    );
+  }
+
+  async function nominate(employeeId: string | null): Promise<void> {
+    await db.organization.update({
+      where: { id: fixture.organizationId },
+      data: { attendanceApproverEmployeeId: employeeId },
+    });
+  }
+
+  it('refuses to submit until somebody is nominated, and says so', async () => {
+    await expect(openDeriveAndSubmit()).rejects.toMatchObject({
+      statusCode: 422,
+      code: 'BUSINESS_RULE_VIOLATION',
+      // The message has to name the way out, because the person reading it is
+      // HR at the end of the month and the way out is a setting they have
+      // never been asked for before.
+      message: expect.stringContaining('Nominate an attendance approver'),
+    });
+
+    // And nothing was half-done: the period is still there to submit again.
+    const stuck = await db.attendanceRecord.count({ where: { status: 'SUBMITTED' } });
+    expect(stuck).toBe(0);
+  });
+
+  it('routes them to the nominee, who then holds a slice like any manager', async () => {
+    // Priya reports to Arjun, so she can review the people Arjun cannot.
+    await nominate(fixture.people.priya);
+
+    const { periodId, managerCount } = await openDeriveAndSubmit();
+
+    // Arjun and Ananya both route to Priya, so she holds one slice of two.
+    const priyaSlice = await db.attendanceApproval.findFirstOrThrow({
+      where: { attendancePeriodId: periodId, managerEmployeeId: fixture.people.priya },
+      select: { recordCount: true, status: true },
+    });
+    expect(priyaSlice.recordCount).toBe(2);
+    expect(priyaSlice.status).toBe('PENDING');
+    // Arjun still holds his own: Priya and Divya report to him.
+    expect(managerCount).toBe(2);
+
+    const routed = await db.attendanceRecord.findMany({
+      where: { attendancePeriodId: periodId, managerEmployeeId: fixture.people.priya },
+      select: { employeeId: true },
+    });
+    expect(routed).toHaveLength(2);
+    expect(routed.map((record) => record.employeeId)).toContain(fixture.people.arjun);
+  });
+
+  it('will not let the nominee approve their own attendance', async () => {
+    // Arjun has no manager himself, so nominating him would make his own
+    // record his to sign off — which is not a review.
+    await nominate(fixture.people.arjun);
+
+    await expect(openDeriveAndSubmit()).rejects.toMatchObject({
+      statusCode: 422,
+      code: 'BUSINESS_RULE_VIOLATION',
+      message: expect.stringContaining('would be theirs to approve'),
+    });
+  });
+
+  it('carries the whole period to APPROVED once the nominee decides too', async () => {
+    await nominate(fixture.people.priya);
+    const { periodId } = await openDeriveAndSubmit();
+
+    const arjun = { ...fixture.principals.manager };
+    const priya = { ...fixture.principals.employee };
+
+    const first = await as(arjun, () =>
+      db.$transaction((tx) =>
+        decideAttendanceSlice(tx, arjun, { periodId, approve: true }, HMAC_KEY),
+      ),
+    );
+    // Not yet: the records that had no manager are still waiting on Priya, and
+    // a period that flipped to APPROVED here would carry unreviewed rows into
+    // payroll.
+    expect(first.periodStatus).not.toBe('APPROVED');
+    expect(first.remaining).toBe(1);
+
+    const second = await as(priya, () =>
+      db.$transaction((tx) =>
+        decideAttendanceSlice(tx, priya, { periodId, approve: true }, HMAC_KEY),
+      ),
+    );
+    expect(second.periodStatus).toBe('APPROVED');
+
+    const unapproved = await db.attendanceRecord.count({
+      where: { attendancePeriodId: periodId, status: { not: 'APPROVED' } },
+    });
+    expect(unapproved).toBe(0);
+  });
+});

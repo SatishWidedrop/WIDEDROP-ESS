@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { Persona } from '@widedrop/shared';
 import type { App } from '../../app.js';
 import { buildTestApp, testEnv } from '../../test/app.js';
 import { closeTestDb, resetTestDb, testDb } from '../../test/db.js';
@@ -106,28 +107,30 @@ beforeEach(async () => {
   expect(signIn.statusCode).toBe(200);
   priyaToken = signIn.json().accessToken;
 
-  // Everyone needs a manager before attendance can be submitted.
+  // A reporting line for Ananya, and an approver for the person at the top.
+  //
+  // Arjun runs the company and reports to nobody, which is true of somebody in
+  // every organisation. His attendance still needs another person's review
+  // before payroll may consume the period, so the organisation nominates who
+  // that is — Ananya, who runs People Ops. This setup used to make Arjun
+  // report to Divya and Divya report to Arjun, a loop that exists in no real
+  // company and was there only to get past a refusal.
   const ananya = await db.employee.findFirstOrThrow({
     where: { employeeNumber: 'WDT-01120' },
     select: { id: true },
   });
-  await db.employeeManager.createMany({
-    data: [
-      {
-        organizationId: fixture.organizationId,
-        employeeId: fixture.people.arjun,
-        managerEmployeeId: fixture.people.divya,
-        isPrimary: true,
-        effectiveFrom: new Date('2024-07-11'),
-      },
-      {
-        organizationId: fixture.organizationId,
-        employeeId: ananya.id,
-        managerEmployeeId: fixture.people.divya,
-        isPrimary: true,
-        effectiveFrom: new Date('2024-07-11'),
-      },
-    ],
+  await db.employeeManager.create({
+    data: {
+      organizationId: fixture.organizationId,
+      employeeId: ananya.id,
+      managerEmployeeId: fixture.people.arjun,
+      isPrimary: true,
+      effectiveFrom: new Date('2024-07-11'),
+    },
+  });
+  await db.organization.update({
+    where: { id: fixture.organizationId },
+    data: { attendanceApproverEmployeeId: ananya.id },
   });
 
   const cycle = await db.payrollCycle.create({
@@ -226,43 +229,39 @@ async function runToGenerated(): Promise<{ payslipId: string; reference: string 
   );
 
   // 3. Every manager approves their own slice.
-  const divyaUser = await db.employee.findUniqueOrThrow({
-    where: { id: fixture.people.divya },
-    select: { appUserId: true },
+  //
+  // Read from the approval rows rather than named here, so the walk follows
+  // however the period was actually routed — including the slice the
+  // nominated approver holds for the people at the top of the tree.
+  const slices = await db.attendanceApproval.findMany({
+    where: { attendancePeriodId: period.id, status: 'PENDING' },
+    select: { managerEmployeeId: true, manager: { select: { appUserId: true } } },
   });
-  const divya = {
-    userId: divyaUser.appUserId!,
-    organizationId: fixture.organizationId,
-    employeeId: fixture.people.divya,
-    personas: ['EMPLOYEE', 'MANAGER'] as const,
-    sessionId: '00000000-0000-4000-8000-0000000000ff',
-    mfaSatisfied: true,
-  };
+  expect(slices.length).toBeGreaterThan(1);
 
-  await as(manager, () =>
-    db.$transaction((tx) =>
-      decideAttendanceSlice(tx, manager, { periodId: period.id, approve: true }, HMAC),
-    ),
-  );
-  await as(divya, () =>
-    db.$transaction((tx) =>
-      decideAttendanceSlice(
-        tx,
-        { ...divya, personas: [...divya.personas] },
-        { periodId: period.id, approve: true },
-        HMAC,
+  let lastDecider = manager;
+  for (const slice of slices) {
+    const decider = {
+      userId: slice.manager.appUserId!,
+      organizationId: fixture.organizationId,
+      employeeId: slice.managerEmployeeId,
+      personas: ['EMPLOYEE', 'MANAGER'] as Persona[],
+      sessionId: '00000000-0000-4000-8000-0000000000ff',
+      mfaSatisfied: true,
+    };
+    await as(decider, () =>
+      db.$transaction((tx) =>
+        decideAttendanceSlice(tx, decider, { periodId: period.id, approve: true }, HMAC),
       ),
-    ),
-  );
-  await as(divya, () =>
+    );
+    lastDecider = decider;
+  }
+
+  await as(lastDecider, () =>
     db.$transaction((tx) =>
-      transitionCycle(
-        tx,
-        { ...divya, personas: [...divya.personas] },
-        { cycleId, event: 'APPROVE_ATTENDANCE' },
-        HMAC,
-        { data: { attendanceApprovedAt: new Date() } },
-      ),
+      transitionCycle(tx, lastDecider, { cycleId, event: 'APPROVE_ATTENDANCE' }, HMAC, {
+        data: { attendanceApprovedAt: new Date() },
+      }),
     ),
   );
 

@@ -66,11 +66,23 @@ export async function closeTestDb(): Promise<void> {
   prisma = undefined;
 }
 
-/** Apply migrations to the test database. Safe to call repeatedly. */
+/**
+ * Apply migrations to the test database. Safe to call repeatedly.
+ *
+ * Both variables are set, not just `DATABASE_URL`. The schema declares a
+ * `directUrl` for Supabase's pooler — migrations cannot run through a
+ * transaction-mode pooler — and `prisma migrate` follows `directUrl` when it
+ * is present. Setting only `DATABASE_URL` therefore pointed the suite's
+ * migrations at whatever `DIRECT_DATABASE_URL` happened to hold, which on a
+ * developer's machine is their own database: migrations landed there while the
+ * test database quietly stayed behind, and the first symptom was a column the
+ * schema knew about and the database did not.
+ */
 export function migrateTestDb(): void {
+  const url = testDatabaseUrl();
   execFileSync('npx', ['prisma', 'migrate', 'deploy'], {
     cwd: new URL('../..', import.meta.url).pathname,
-    env: { ...process.env, DATABASE_URL: testDatabaseUrl() },
+    env: { ...process.env, DATABASE_URL: url, DIRECT_DATABASE_URL: url },
     stdio: 'pipe',
   });
 }
