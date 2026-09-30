@@ -196,14 +196,39 @@ Nothing below depends on the decisions above except where noted.
    either way. That is one config change away from being wrong, which is why it
    is not the control.
 
-4. Project Settings → Database → copy both connection strings:
-   - pooled, port 6543 → `DATABASE_URL`, and append `&pgbouncer=true`
-   - direct, port 5432 → `DIRECT_DATABASE_URL`
+4. Connection strings. **The green "Connect" button in the top bar of the
+   project dashboard**, not Project Settings — it opens a panel with a tab per
+   connection type. You want two of the three:
 
-   Both need `sslmode=require`. The validator refuses to start otherwise, and
-   refuses a pooled URL missing `pgbouncer=true` — without it the API starts
-   fine and then fails intermittently under load, which is a far worse way to
-   find out.
+   | Tab                    | Host and port               | Goes to               |
+   | ---------------------- | --------------------------- | --------------------- |
+   | **Transaction pooler** | `…pooler.supabase.com:6543` | `DATABASE_URL`        |
+   | **Session pooler**     | `…pooler.supabase.com:5432` | `DIRECT_DATABASE_URL` |
+   | Direct connection      | `db.<ref>.supabase.co:5432` | neither — see below   |
+
+   Append `&pgbouncer=true` to the transaction one, and make sure both carry
+   `sslmode=require`. Both pooler usernames are `postgres.<project-ref>` rather
+   than plain `postgres`, which catches people out when they hand-edit one.
+
+   **`DIRECT_DATABASE_URL` is the Session pooler, not the "Direct connection"
+   tab**, despite the name of the variable. Direct connections resolve to IPv6
+   only unless the project buys the IPv4 add-on, and both Netlify's Lambda
+   runtime and GitHub Actions runners are IPv4. The direct string does not fail
+   loudly there — it hangs until something times out, most likely the first
+   `prisma migrate deploy` of your deploy pipeline. Session mode holds one
+   connection per client for the length of the session, so it carries DDL and
+   the advisory lock a migration takes exactly as a direct connection would.
+
+   Why two at all: the API scales out, so it needs the transaction pooler or it
+   exhausts Postgres's connection slots long before traffic does — but that
+   pooler is free to hand the connection to somebody else between statements,
+   which no migration survives. Prisma has to be told each separately.
+
+   The validator refuses a pooled URL missing `pgbouncer=true`, refuses port
+   6543 for migrations, and refuses production without `sslmode`. Each is a
+   failure that otherwise surfaces much later and much less clearly: without
+   `pgbouncer=true` the API starts fine and then fails intermittently under
+   load with "prepared statement already exists".
 
 5. Storage → create a **private** bucket, `ess-documents`. Not public: every
    read goes through a short-lived signed URL the API issues after it has
@@ -213,7 +238,7 @@ Nothing below depends on the decisions above except where noted.
    `S3_SECRET_ACCESS_KEY`. These keys bypass row-level security, so they are
    server-side only and must never reach a `VITE_` variable — the SPA build
    asserts that.
-7. `npm run db:migrate -w @widedrop/api` against the direct connection.
+7. `npm run db:migrate -w @widedrop/api`, with `DIRECT_DATABASE_URL` set — that's the connection Prisma migrates over, per step 4.
 8. `npm run db:seed:reference -w @widedrop/api` — roles, permissions, pay
    components. It creates no people.
 

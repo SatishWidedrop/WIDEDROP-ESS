@@ -86,6 +86,15 @@ const baseSchema = z.object({
    * DDL and the advisory locks `prisma migrate` takes do not survive a
    * transaction-mode pooler, which is free to hand the connection to somebody
    * else between statements. Unset where there is no pooler in front.
+   *
+   * On Supabase this is the **Session pooler** — the same `pooler.` host as
+   * `DATABASE_URL` but port 5432 — and not the console's "Direct connection"
+   * tab, despite the name of this variable. Direct connections resolve to IPv6
+   * only unless the project buys the IPv4 add-on, and Netlify's Lambda runtime
+   * and GitHub Actions runners are IPv4: the direct string does not fail
+   * loudly there, it hangs until something times out. Session mode holds one
+   * connection per client for the session, so it carries DDL and advisory
+   * locks the way a direct connection does.
    */
   DIRECT_DATABASE_URL: z
     .string()
@@ -319,7 +328,17 @@ const schema = baseSchema.superRefine((env, ctx) => {
   // statements, which Prisma creates unless told not to. Without this the
   // application starts and then fails intermittently under load with
   // "prepared statement already exists" — which is a far worse way to find out.
-  const pooled = /:6543\b/.test(env.DATABASE_URL) || /pooler\./.test(env.DATABASE_URL);
+  //
+  // Session mode is not transaction mode. Supabase serves both from the same
+  // `pooler.` host and tells them apart by port: 6543 is transaction mode,
+  // 5432 is session mode, which holds one connection per client for the length
+  // of the session and so supports prepared statements, DDL and advisory locks
+  // exactly as a direct connection does. Demanding `pgbouncer=true` there
+  // would disable prepared statements for nothing.
+  const sessionMode = /pooler\./.test(env.DATABASE_URL) && /:5432\b/.test(env.DATABASE_URL);
+  const pooled =
+    !sessionMode && (/:6543\b/.test(env.DATABASE_URL) || /pooler\./.test(env.DATABASE_URL));
+
   if (pooled && !env.DATABASE_URL.includes('pgbouncer=true')) {
     fail(
       'DATABASE_URL',
@@ -329,11 +348,25 @@ const schema = baseSchema.superRefine((env, ctx) => {
   if (pooled && !env.DIRECT_DATABASE_URL) {
     fail(
       'DIRECT_DATABASE_URL',
-      'is required alongside a pooled DATABASE_URL — migrations need a direct connection (port 5432) to hold DDL and advisory locks',
+      'is required alongside a pooled DATABASE_URL — migrations need a connection that holds DDL ' +
+        'and advisory locks for a whole session. On Supabase that is the Session pooler on port ' +
+        '5432, not the Direct connection tab: direct is IPv6-only without the paid IPv4 add-on, ' +
+        'and Netlify and GitHub Actions are IPv4',
     );
   }
   if (env.DIRECT_DATABASE_URL?.includes('pgbouncer=true')) {
-    fail('DIRECT_DATABASE_URL', 'must be the direct connection, not the pooler');
+    fail(
+      'DIRECT_DATABASE_URL',
+      'must not be the transaction-mode pooler — it cannot hold a migration. Use the direct ' +
+        'connection, or the Session pooler on port 5432, neither of which takes pgbouncer=true',
+    );
+  }
+  if (env.DIRECT_DATABASE_URL && /:6543\b/.test(env.DIRECT_DATABASE_URL)) {
+    fail(
+      'DIRECT_DATABASE_URL',
+      'is on port 6543, which is transaction mode — a migration cannot hold its advisory lock ' +
+        'across statements there. Session mode is the same host on port 5432',
+    );
   }
 });
 

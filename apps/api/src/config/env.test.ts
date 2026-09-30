@@ -67,8 +67,12 @@ describe('the pooled connection', () => {
       'DIRECT_DATABASE_URL',
     );
     // DDL and `prisma migrate`'s advisory lock do not survive a pooler that is
-    // free to hand the connection to somebody else between statements.
-    expect(message).toContain('direct connection');
+    // free to hand the connection to somebody else between statements. The
+    // message has to name Session mode, because the console's obvious answer —
+    // the "Direct connection" tab — is the one that does not work from
+    // Netlify.
+    expect(message).toContain('Session pooler');
+    expect(message).toContain('IPv4');
   });
 
   it('accepts the pair', () => {
@@ -91,12 +95,56 @@ describe('the pooled connection', () => {
       }),
       'DIRECT_DATABASE_URL',
     );
-    expect(message).toContain('not the pooler');
+    expect(message).toContain('transaction-mode pooler');
   });
 
   it('leaves a plain direct connection alone', () => {
     // No pooler in front, nothing to configure around.
     expect(() => loadEnv(production() as NodeJS.ProcessEnv)).not.toThrow();
+  });
+
+  /**
+   * Session mode is not transaction mode.
+   *
+   * Supabase serves both from the same `pooler.` host and tells them apart by
+   * port. Session mode holds one connection per client for the length of the
+   * session, so prepared statements, DDL and advisory locks all behave as they
+   * would on a direct connection — and it is the only one of the two that is
+   * reachable over IPv4 without the paid add-on, which is what Netlify and
+   * GitHub Actions have.
+   */
+  const SESSION =
+    'postgresql://postgres.abcdef:pw@aws-0-ap-south-1.pooler.supabase.com:5432/postgres?sslmode=require';
+
+  it('accepts the session pooler for migrations, where direct is IPv6-only', () => {
+    expect(() =>
+      loadEnv(
+        production({
+          DATABASE_URL: `${POOLED}&pgbouncer=true`,
+          DIRECT_DATABASE_URL: SESSION,
+        }) as NodeJS.ProcessEnv,
+      ),
+    ).not.toThrow();
+  });
+
+  it('does not demand pgbouncer=true of a session-mode DATABASE_URL', () => {
+    // Port 5432 on the pooler host is session mode, which can hold a prepared
+    // statement. Demanding the flag there would turn them off for nothing.
+    expect(complaint(production({ DATABASE_URL: SESSION }), 'DATABASE_URL')).toBeUndefined();
+  });
+
+  it('refuses a transaction-mode URL for migrations even without the flag', () => {
+    // The `pgbouncer=true` check catches the obvious copy-paste. This catches
+    // the one where somebody strips the flag to get past it: port 6543 cannot
+    // hold a migration's advisory lock whatever the query string says.
+    const message = complaint(
+      production({
+        DATABASE_URL: `${POOLED}&pgbouncer=true`,
+        DIRECT_DATABASE_URL: POOLED,
+      }),
+      'DIRECT_DATABASE_URL',
+    );
+    expect(message).toContain('transaction mode');
   });
 });
 
