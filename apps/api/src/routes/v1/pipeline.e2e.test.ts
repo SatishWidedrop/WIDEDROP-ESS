@@ -447,6 +447,37 @@ describe('once the cycle is published', () => {
     expect(item.lopDays).toBe(0);
   });
 
+  it('signs a download URL that serves the payslip as a real PDF', async () => {
+    const { payslipId, reference } = await runToGenerated();
+    await publish();
+
+    const signed = response(await get(`/api/v1/payslips/${payslipId}/document`));
+    expect(signed.url).toBeTruthy();
+    expect(new Date(signed.expiresAt).getTime()).toBeGreaterThan(Date.now());
+
+    // Follow it. This is the last link in the chain the requirement describes,
+    // and the one that was fabricated until the renderer existed: "payslip
+    // becomes visible to the employee" means an employee can open it.
+    const target = new URL(signed.url);
+    const download = await app.inject({
+      method: 'GET',
+      url: target.pathname + target.search,
+    });
+
+    expect(download.statusCode).toBe(200);
+    expect(download.headers['content-disposition']).toContain('attachment');
+    // A real PDF, not a row claiming one exists.
+    expect(download.rawPayload.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+    expect(download.rawPayload.subarray(-6).toString('latin1').trim()).toBe('%%EOF');
+
+    // And it is this employee's payslip, with the figures the pipeline
+    // produced, printed on it.
+    const text = download.rawPayload.toString('latin1');
+    expect(text).toContain(reference);
+    expect(text).toContain('Priya Raghavan');
+    expect(text).toContain('INR 1,26,400.00'); // gross, as the list reported it
+  });
+
   it('serves the detail, with the lines that explain the total', async () => {
     const { payslipId } = await runToGenerated();
     await publish();

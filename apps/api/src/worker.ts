@@ -1,9 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { loadEnv } from './config/env.js';
 import { createLogger } from './lib/logger.js';
 import { createPrismaClient } from './lib/prisma.js';
 import { markOverdueAcknowledgements } from './services/policies/service.js';
 import { startOutboxWorker } from './services/email/worker.js';
 import { renderPendingPayslips } from './services/payroll/render.js';
+import { runAsSystem } from './lib/request-context.js';
 
 /**
  * The background worker.
@@ -96,10 +98,21 @@ function startRenderSweep(
 
         for (const group of pending) {
           if (!running) break;
-          const summary = await renderPendingPayslips(db, env, {
-            organizationId: group.organizationId,
-            cycleId: group.payrollCycleId,
-          });
+          // Under a job context, so the audit rows this writes carry a request
+          // id and a route naming the job. An audit row whose origin is "some
+          // background process" is a row somebody has to guess about.
+          const summary = await runAsSystem(
+            {
+              requestId: randomUUID(),
+              organizationId: group.organizationId,
+              job: 'payslip-render',
+            },
+            () =>
+              renderPendingPayslips(db, env, {
+                organizationId: group.organizationId,
+                cycleId: group.payrollCycleId,
+              }),
+          );
           if (summary.rendered > 0 || summary.failed.length > 0) {
             logger.info(
               {
@@ -161,8 +174,13 @@ function startPeriodicSweeps(
         });
 
         for (const organization of organizations) {
-          const overdue = await db.$transaction((tx) =>
-            markOverdueAcknowledgements(tx, organization.id),
+          const overdue = await runAsSystem(
+            {
+              requestId: randomUUID(),
+              organizationId: organization.id,
+              job: 'policy-acknowledgement-sweep',
+            },
+            () => db.$transaction((tx) => markOverdueAcknowledgements(tx, organization.id)),
           );
           if (overdue > 0) {
             logger.info(

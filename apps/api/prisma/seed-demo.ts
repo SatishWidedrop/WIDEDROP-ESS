@@ -25,6 +25,7 @@ import { transitionCycle } from '../src/services/payroll/pipeline.js';
 import { runValidation } from '../src/services/payroll/validation.js';
 import { refreshPayslipRollups } from '../src/services/payroll/rollups.js';
 import { generatePayroll } from '../src/services/payroll/generation.js';
+import { renderPendingPayslips } from '../src/services/payroll/render.js';
 import { rebuildReportingClosure, type Principal } from '../src/services/auth/authorization.js';
 
 const prisma = new PrismaClient();
@@ -1041,28 +1042,19 @@ async function runOneCycle(input: {
       );
 
       /* 6. Documents, then sign-off and publication. */
-      for (const payslip of await prisma.payslip.findMany({
-        where: { payrollCycleId: cycle.id },
-        select: { id: true, reference: true, employeeId: true },
-      })) {
-        const file = await prisma.fileObject.create({
-          data: {
-            organizationId,
-            purpose: 'PAYSLIP_PDF',
-            storageKey: `PAYSLIP_PDF/${year}/${String(month).padStart(2, '0')}/${payslip.employeeId}/${payslip.id}.pdf`,
-            displayFilename: `Payslip_${label.replace(' ', '-')}.pdf`,
-            contentType: 'application/pdf',
-            sizeBytes: 48_000,
-            sha256: 'f'.repeat(64),
-            scanStatus: 'CLEAN',
-            subjectEmployeeId: payslip.employeeId,
-          },
-          select: { id: true },
-        });
-        await prisma.payslip.update({
-          where: { id: payslip.id },
-          data: { pdfFileObjectId: file.id },
-        });
+      // The real renderer, not a row that says a document exists. A seed that
+      // fabricated them produced demo payslips nobody could open — which is
+      // exactly the failure the pipeline's publish guard is there to prevent,
+      // reintroduced by the thing meant to demonstrate it working.
+      const documents = await renderPendingPayslips(prisma, env, {
+        organizationId,
+        cycleId: cycle.id,
+      });
+      if (documents.failed.length > 0) {
+        throw new Error(
+          `${documents.failed.length} payslip documents could not be rendered: ` +
+            documents.failed.map((f) => f.reason).join('; '),
+        );
       }
 
       await transitionCycle(
