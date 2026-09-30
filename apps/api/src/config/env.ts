@@ -361,6 +361,25 @@ const schema = baseSchema.superRefine((env, ctx) => {
         'connection, or the Session pooler on port 5432, neither of which takes pgbouncer=true',
     );
   }
+  // Supavisor identifies the tenant from the username, so a pooler connection
+  // has to say `postgres.<project-ref>` and not plain `postgres`. Copying the
+  // string from the console gets this right; hand-editing one to change the
+  // port — which is how you get the session URL from the transaction one —
+  // is where it goes wrong. The failure is "Tenant or user not found", which
+  // names neither.
+  for (const key of ['DATABASE_URL', 'DIRECT_DATABASE_URL'] as const) {
+    const value = env[key];
+    if (!value || !/pooler\./.test(value)) continue;
+    const user = safeUsername(value);
+    if (user && !user.includes('.')) {
+      fail(
+        key,
+        `is a pooler connection but its username is "${user}" — Supavisor reads the project ` +
+          'from the username, so it must be postgres.<project-ref>',
+      );
+    }
+  }
+
   if (env.DIRECT_DATABASE_URL && /:6543\b/.test(env.DIRECT_DATABASE_URL)) {
     fail(
       'DIRECT_DATABASE_URL',
@@ -369,6 +388,20 @@ const schema = baseSchema.superRefine((env, ctx) => {
     );
   }
 });
+
+/**
+ * The username from a connection string, or undefined if it cannot be read.
+ *
+ * Deliberately total: a malformed URL is somebody else's error to report, and
+ * a check meant to improve a message should never be the thing that throws.
+ */
+function safeUsername(url: string): string | undefined {
+  try {
+    return decodeURIComponent(new URL(url).username) || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export type Env = z.infer<typeof baseSchema>;
 

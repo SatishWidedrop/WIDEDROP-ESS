@@ -133,6 +133,19 @@ describe('the pooled connection', () => {
     expect(complaint(production({ DATABASE_URL: SESSION }), 'DATABASE_URL')).toBeUndefined();
   });
 
+  it('catches a pooler username that lost its project ref', () => {
+    // Supavisor reads the tenant from the username. Plain `postgres` against a
+    // pooler host fails with "Tenant or user not found", which names neither
+    // the tenant nor the user nor the fix.
+    const message = complaint(
+      production({
+        DATABASE_URL: POOLED.replace('postgres.abcdef:', 'postgres:') + '&pgbouncer=true',
+      }),
+      'DATABASE_URL',
+    );
+    expect(message).toContain('postgres.<project-ref>');
+  });
+
   it('refuses a transaction-mode URL for migrations even without the flag', () => {
     // The `pgbouncer=true` check catches the obvious copy-paste. This catches
     // the one where somebody strips the flag to get past it: port 6543 cannot

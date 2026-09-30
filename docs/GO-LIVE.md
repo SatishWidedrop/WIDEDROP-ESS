@@ -208,7 +208,22 @@ Nothing below depends on the decisions above except where noted.
 
    Append `&pgbouncer=true` to the transaction one, and make sure both carry
    `sslmode=require`. Both pooler usernames are `postgres.<project-ref>` rather
-   than plain `postgres`, which catches people out when they hand-edit one.
+   than plain `postgres` — Supavisor reads the project from the username, and
+   losing the suffix while hand-editing a port gives you "Tenant or user not
+   found", which names neither. The validator catches that one now.
+
+   **If the database password contains any of `@ : / ? # [ ] %`, percent-encode
+   it** in the connection string, or the URL parses with a different host than
+   you think. The console says this in small print next to the string.
+
+   Ignore the console's "Transaction pooler uses IPv6 by default — enable the
+   IPv4 add-on" banner. That is about the **dedicated** pooler, a paid-plan
+   feature; the shared pooler the panel gives you is IPv4, so the ~$4/month
+   add-on buys you nothing here. `aws-0-ap-south-1.pooler.supabase.com`
+   resolves to A records only, while `db.<ref>.supabase.co` resolves to AAAA
+   only — which is the whole reason `DIRECT_DATABASE_URL` is the session pooler
+   below. If you ever need to re-check, `getent hosts <host>` answers it in a
+   second and does not care what any banner says.
 
    **`DIRECT_DATABASE_URL` is the Session pooler, not the "Direct connection"
    tab**, despite the name of the variable. Direct connections resolve to IPv6
