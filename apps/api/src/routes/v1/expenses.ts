@@ -6,7 +6,7 @@ import {
   toIsoDate,
 } from '@widedrop/shared';
 import type { App } from '../../app.js';
-import { notFound } from '../../lib/errors.js';
+import { badRequest, conflict, notFound } from '../../lib/errors.js';
 import { requirePrincipal } from '../../plugins/authenticate.js';
 import {
   assertPermission,
@@ -18,6 +18,9 @@ import {
   submitExpenseClaim,
   withdrawExpenseClaim,
 } from '../../services/expenses/service.js';
+import { acceptUpload, requireUploadedFile } from '../../services/uploads/service.js';
+import { storage } from '../../services/storage.js';
+import { recordAudit } from '../../services/audit.js';
 
 /**
  * Expenses.
@@ -26,6 +29,9 @@ import {
  * rather than zeroes when no rollup exists — the difference between "you have
  * claimed nothing this year" and "the year has not started for you".
  */
+/** Enough for a trip with a few receipts, not enough to be a file store. */
+const MAX_BILLS_PER_CLAIM = 5;
+
 export async function expenseRoutes(app: App): Promise<void> {
   const db = app.db;
   const env = app.env;
@@ -308,6 +314,258 @@ export async function expenseRoutes(app: App): Promise<void> {
         submitExpenseClaim(tx, principal, { claimId: request.params.id }, env.AUDIT_HMAC_KEY),
       );
 
+      return reply.status(204).send();
+    },
+  );
+
+  /* ---------------------------------------------------------------- */
+  /* Bills                                                             */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * The claim a bill may be attached to, or a refusal.
+   *
+   * A claim that has left the employee's hands is evidence in somebody else's
+   * decision: letting a bill appear on it after a manager approved it would
+   * mean the thing approved and the thing on file are not the same thing. So
+   * attaching and detaching are DRAFT-only.
+   *
+   * Ownership is part of the lookup rather than a check after it, so a claim
+   * belonging to somebody else is *not found* — a 403 would confirm that the
+   * reference exists, which the caller has not earned.
+   */
+  const ownDraftClaim = async (claimId: string, principalEmployeeId: string, orgId: string) => {
+    const claim = await db.expenseClaim.findFirst({
+      where: { id: claimId, organizationId: orgId, employeeId: principalEmployeeId },
+      select: { id: true, employeeId: true, status: true, reference: true },
+    });
+    if (!claim) throw notFound('The claim');
+    if (claim.status !== 'DRAFT') {
+      throw conflict('This claim has been submitted. Withdraw it before changing its bills.');
+    }
+    return claim;
+  };
+
+  /**
+   * What is attached to a claim.
+   *
+   * Metadata only — no URL. A signed URL is a capability, so it is issued one
+   * file at a time by the route below, when somebody is about to open it,
+   * rather than handed out in bulk for a list that may sit on screen for an
+   * hour.
+   */
+  app.get<{ Params: { id: string } }>(
+    '/api/v1/expenses/:id/attachments',
+    { onRequest: app.authenticate() },
+    async (request) => {
+      const principal = requirePrincipal(request);
+      assertPermission(principal, 'expense:read', 'SELF');
+      const scope = await employeeScopeFor(db, principal, 'expense:read');
+
+      // The claim is resolved through the caller's scope first, so a claim they
+      // may not see is not found rather than forbidden — and an empty list is
+      // never mistaken for "no bills on a claim you cannot read".
+      const claim = await db.expenseClaim.findFirst({
+        where: {
+          id: request.params.id,
+          organizationId: principal.organizationId,
+          ...employeeWhere(scope),
+        },
+        select: { id: true },
+      });
+      if (!claim) throw notFound('The claim');
+
+      const attachments = await db.expenseAttachment.findMany({
+        where: { expenseClaimId: claim.id, organizationId: principal.organizationId },
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          createdAt: true,
+          file: { select: { displayFilename: true, contentType: true, sizeBytes: true } },
+        },
+      });
+
+      return {
+        items: attachments.map((attachment) => ({
+          id: attachment.id,
+          filename: attachment.file.displayFilename,
+          contentType: attachment.file.contentType,
+          sizeBytes: attachment.file.sizeBytes,
+          uploadedAt: attachment.createdAt.toISOString(),
+        })),
+      };
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    '/api/v1/expenses/:id/attachments',
+    {
+      onRequest: app.authenticate(),
+      // An upload is heavier than a write and easier to abuse; it gets the
+      // stricter budget rather than the ordinary one.
+      config: { rateLimitName: 'file:upload' },
+    },
+    async (request, reply) => {
+      const principal = requirePrincipal(request);
+      assertPermission(principal, 'expense:submit', 'SELF');
+
+      // A bill is attached by the person claiming, never on their behalf:
+      // no role holds expense:submit beyond SELF.
+      if (!principal.employeeId) throw notFound('The claim');
+      const claim = await ownDraftClaim(
+        request.params.id,
+        principal.employeeId,
+        principal.organizationId,
+      );
+
+      const existing = await db.expenseAttachment.count({ where: { expenseClaimId: claim.id } });
+      if (existing >= MAX_BILLS_PER_CLAIM) {
+        throw badRequest(`A claim can carry at most ${MAX_BILLS_PER_CLAIM} bills.`);
+      }
+
+      const part = await requireUploadedFile(await request.file());
+
+      const attachment = await db.$transaction(async (tx) => {
+        const uploaded = await acceptUpload(tx, env, part, {
+          organizationId: principal.organizationId,
+          purpose: 'EXPENSE_BILL',
+          subjectEmployeeId: claim.employeeId,
+          uploadedByUserId: principal.userId,
+        });
+
+        const row = await tx.expenseAttachment.create({
+          data: {
+            organizationId: principal.organizationId,
+            expenseClaimId: claim.id,
+            fileObjectId: uploaded.fileObjectId,
+          },
+          select: { id: true, createdAt: true },
+        });
+
+        await recordAudit(
+          tx,
+          {
+            organizationId: principal.organizationId,
+            action: 'UPDATE',
+            entityType: 'ExpenseClaim',
+            entityId: claim.id,
+            summary: `Attached ${uploaded.displayFilename} to ${claim.reference}`,
+          },
+          env.AUDIT_HMAC_KEY,
+        );
+
+        return { row, uploaded };
+      });
+
+      return reply.status(201).send({
+        id: attachment.row.id,
+        filename: attachment.uploaded.displayFilename,
+        contentType: attachment.uploaded.contentType,
+        sizeBytes: attachment.uploaded.sizeBytes,
+        uploadedAt: attachment.row.createdAt.toISOString(),
+      });
+    },
+  );
+
+  /**
+   * A short-lived link to one bill.
+   *
+   * Reading somebody else's bill is a scope question, not an ownership one:
+   * a manager reviewing a claim has to be able to see what they are approving,
+   * so the check is the same `expense:read` scope the claim list uses.
+   */
+  app.get<{ Params: { id: string; attachmentId: string } }>(
+    '/api/v1/expenses/:id/attachments/:attachmentId',
+    { onRequest: app.authenticate() },
+    async (request) => {
+      const principal = requirePrincipal(request);
+      assertPermission(principal, 'expense:read', 'SELF');
+      const scope = await employeeScopeFor(db, principal, 'expense:read');
+
+      const attachment = await db.expenseAttachment.findFirst({
+        where: {
+          id: request.params.attachmentId,
+          expenseClaimId: request.params.id,
+          organizationId: principal.organizationId,
+          claim: employeeWhere(scope),
+        },
+        select: {
+          file: { select: { storageKey: true, displayFilename: true, id: true } },
+          claim: { select: { reference: true, employeeId: true } },
+        },
+      });
+      if (!attachment) throw notFound('The bill');
+
+      const signed = await storage(env).signedDownloadUrl(attachment.file.storageKey, {
+        expiresInSeconds: env.SIGNED_URL_TTL_SECONDS,
+        downloadFilename: attachment.file.displayFilename,
+      });
+
+      // Reading somebody else's receipt is a sensitive read and is recorded as
+      // one; reading your own is not, or the trail would be mostly noise.
+      if (attachment.claim.employeeId !== principal.employeeId) {
+        await db.$transaction((tx) =>
+          recordAudit(
+            tx,
+            {
+              organizationId: principal.organizationId,
+              action: 'DOWNLOAD',
+              entityType: 'FileObject',
+              entityId: attachment.file.id,
+              summary: `Downloaded a bill on ${attachment.claim.reference}`,
+            },
+            env.AUDIT_HMAC_KEY,
+          ),
+        );
+      }
+
+      return { url: signed.url, expiresAt: signed.expiresAt.toISOString() };
+    },
+  );
+
+  app.delete<{ Params: { id: string; attachmentId: string } }>(
+    '/api/v1/expenses/:id/attachments/:attachmentId',
+    { onRequest: app.authenticate(), config: { rateLimitName: 'write' } },
+    async (request, reply) => {
+      const principal = requirePrincipal(request);
+      assertPermission(principal, 'expense:submit', 'SELF');
+
+      const attachment = await db.expenseAttachment.findFirst({
+        where: {
+          id: request.params.attachmentId,
+          expenseClaimId: request.params.id,
+          organizationId: principal.organizationId,
+        },
+        select: {
+          id: true,
+          file: { select: { id: true, displayFilename: true } },
+          claim: { select: { id: true, employeeId: true, status: true, reference: true } },
+        },
+      });
+      if (!attachment) throw notFound('The bill');
+      if (attachment.claim.employeeId !== principal.employeeId) throw notFound('The bill');
+      if (attachment.claim.status !== 'DRAFT') {
+        throw conflict('This claim has been submitted. Its bills can no longer be removed.');
+      }
+
+      await db.$transaction(async (tx) => {
+        await tx.expenseAttachment.delete({ where: { id: attachment.id } });
+        await recordAudit(
+          tx,
+          {
+            organizationId: principal.organizationId,
+            action: 'UPDATE',
+            entityType: 'ExpenseClaim',
+            entityId: attachment.claim.id,
+            summary: `Removed ${attachment.file.displayFilename} from ${attachment.claim.reference}`,
+          },
+          env.AUDIT_HMAC_KEY,
+        );
+      });
+
+      // The FileObject row and the object itself are deliberately left:
+      // detaching a bill is not a reason to destroy evidence, and the
+      // retention sweep is what removes a file nothing references.
       return reply.status(204).send();
     },
   );

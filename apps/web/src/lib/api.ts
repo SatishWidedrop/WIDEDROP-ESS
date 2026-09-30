@@ -15,7 +15,20 @@ import type { ErrorEnvelope } from '@widedrop/shared';
  *     stampede of refreshes that would trip the server's reuse detection.
  */
 
-const BASE_URL = (import.meta.env.VITE_API_URL ?? '').replace(/\/+$/, '');
+/**
+ * Where the API lives.
+ *
+ * `VITE_API_BASE_URL` — the same name the Netlify contexts, the deploy
+ * workflow and the CSP generator use. They have to agree: the generated
+ * `connect-src` is built from this origin, so a bundle reading a *different*
+ * variable would be blocked by the very policy meant to permit it. Reading a
+ * name nobody sets is worse still, and silent — it falls back to the SPA's own
+ * origin and every call 404s on Netlify.
+ *
+ * Empty in development, where Vite proxies `/api` to the local API so that
+ * cookies behave exactly as they do in production.
+ */
+const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '');
 const CSRF_COOKIE = 'ess_csrf';
 
 export class ApiError extends Error {
@@ -131,6 +144,14 @@ async function refreshSession(): Promise<boolean> {
 export interface RequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   body?: unknown;
+  /**
+   * One file, sent as multipart/form-data under the field name `file`.
+   *
+   * Mutually exclusive with `body`. The browser sets the Content-Type, because
+   * it is the only thing that knows the boundary it generated — setting it by
+   * hand produces a header the server cannot parse.
+   */
+  file?: File;
   /** Query parameters. Undefined and null values are omitted. */
   query?: Record<string, string | number | boolean | undefined | null>;
   signal?: AbortSignal;
@@ -170,6 +191,8 @@ async function send(path: string, options: RequestOptions): Promise<Response> {
   const headers: Record<string, string> = { accept: 'application/json' };
 
   if (accessToken) headers.authorization = `Bearer ${accessToken}`;
+  // Not set for a file: the browser adds multipart/form-data with the
+  // boundary it generated, and a hand-written header would omit it.
   if (options.body !== undefined) headers['content-type'] = 'application/json';
   if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey;
   if (options.ifMatch !== undefined) headers['if-match'] = String(options.ifMatch);
@@ -188,9 +211,18 @@ async function send(path: string, options: RequestOptions): Promise<Response> {
     // all, and safe because the server allows an exact origin list, never a
     // reflected one.
     credentials: 'include',
+    ...(options.file ? { body: formDataFor(options.file) } : {}),
     ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
   });
+}
+
+function formDataFor(file: File): FormData {
+  const form = new FormData();
+  // The field name the upload routes read. The filename travels with the part
+  // and is sanitised server-side; nothing here is trusted on the other end.
+  form.append('file', file, file.name);
+  return form;
 }
 
 async function handle<T>(response: Response): Promise<T> {
@@ -243,6 +275,10 @@ export const api = {
 
   delete: <T>(path: string, options: Omit<RequestOptions, 'method' | 'body'> = {}) =>
     apiRequest<T>(path, { ...options, method: 'DELETE' }),
+
+  /** Upload one file. The server decides what it is; the name is only a label. */
+  upload: <T>(path: string, file: File, options: Omit<RequestOptions, 'method' | 'body'> = {}) =>
+    apiRequest<T>(path, { ...options, method: 'POST', file }),
 };
 
 /** Restore a session on a cold start, using the refresh cookie alone. */

@@ -62,6 +62,8 @@ export function ExpensesScreen() {
   const toast = useToast();
   const queryClient = useQueryClient();
   const [formOpen, setFormOpen] = useState(false);
+  /** Which claim's bills are showing. One at a time, as the prototype's lists do. */
+  const [openBills, setOpenBills] = useState<string | null>(null);
 
   const list = useQuery({
     queryKey: queryKeys.expenses.list(),
@@ -147,52 +149,79 @@ export function ExpensesScreen() {
             const payable = claim.approvedAmountMinor ?? claim.totalAmountMinor;
 
             return (
-              <DataRow
-                key={claim.id}
-                leading={<Reference>{claim.reference}</Reference>}
-                title={claim.title}
-                meta={[
-                  `Spent ${formatDate(claim.spendDate)}`,
-                  claim.lineCount > 1 ? `${claim.lineCount} lines` : null,
-                  claim.attachmentCount > 0
-                    ? `${claim.attachmentCount} ${claim.attachmentCount === 1 ? 'receipt' : 'receipts'}`
-                    : null,
-                  // A fact, not a promise: the cycle is a row that names it.
-                  claim.payingWith
-                    ? `Paying with ${claim.payingWith.label} on ${formatDate(claim.payingWith.payDate)}`
-                    : null,
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
-                value={formatINR(Number(payable))}
-                trailing={
-                  <>
-                    {claim.canSubmit ? (
-                      <Button
-                        size="small"
-                        variant="secondary"
-                        onClick={() => void act(claim.id, 'submit')}
-                      >
-                        Submit
-                      </Button>
-                    ) : null}
-                    {claim.canWithdraw ? (
-                      <Button
-                        size="small"
-                        variant="ghost"
-                        onClick={() => void act(claim.id, 'withdraw')}
-                      >
-                        Withdraw
-                      </Button>
-                    ) : null}
-                    <StatusChip
-                      label={status.label}
-                      tone={status.tone}
-                      description={status.description}
-                    />
-                  </>
-                }
-              />
+              <div key={claim.id}>
+                <DataRow
+                  leading={<Reference>{claim.reference}</Reference>}
+                  title={claim.title}
+                  meta={[
+                    `Spent ${formatDate(claim.spendDate)}`,
+                    claim.lineCount > 1 ? `${claim.lineCount} lines` : null,
+                    claim.attachmentCount > 0
+                      ? `${claim.attachmentCount} ${claim.attachmentCount === 1 ? 'receipt' : 'receipts'}`
+                      : null,
+                    // A fact, not a promise: the cycle is a row that names it.
+                    claim.payingWith
+                      ? `Paying with ${claim.payingWith.label} on ${formatDate(claim.payingWith.payDate)}`
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                  value={formatINR(Number(payable))}
+                  trailing={
+                    <>
+                      {/*
+                      Shown when there is something to see or something to
+                      attach, and never otherwise: a "Bills (0)" button on a
+                      submitted claim with no receipt is a control that does
+                      nothing.
+                    */}
+                      {claim.canSubmit || claim.attachmentCount > 0 ? (
+                        <Button
+                          size="small"
+                          variant="ghost"
+                          onClick={() =>
+                            setOpenBills((open) => (open === claim.id ? null : claim.id))
+                          }
+                        >
+                          {openBills === claim.id ? 'Hide bills' : 'Bills'}
+                        </Button>
+                      ) : null}
+                      {claim.canSubmit ? (
+                        <Button
+                          size="small"
+                          variant="secondary"
+                          onClick={() => void act(claim.id, 'submit')}
+                        >
+                          Submit
+                        </Button>
+                      ) : null}
+                      {claim.canWithdraw ? (
+                        <Button
+                          size="small"
+                          variant="ghost"
+                          onClick={() => void act(claim.id, 'withdraw')}
+                        >
+                          Withdraw
+                        </Button>
+                      ) : null}
+                      <StatusChip
+                        label={status.label}
+                        tone={status.tone}
+                        description={status.description}
+                      />
+                    </>
+                  }
+                />
+                {openBills === claim.id ? (
+                  <BillsPanel
+                    claimId={claim.id}
+                    canChange={claim.canSubmit}
+                    requiresReceipt={
+                      data?.categories.some((category) => category.requiresReceipt) ?? false
+                    }
+                  />
+                ) : null}
+              </div>
             );
           })
         )}
@@ -345,4 +374,157 @@ function NewClaimForm({
       </form>
     </Card>
   );
+}
+
+/**
+ * The bills on one claim.
+ *
+ * Attaching and removing are draft-only, which is the server's rule and is
+ * reflected here rather than reimplemented: `canChange` comes from the same
+ * `canSubmit` flag the API computes, so the two cannot drift. A claim that has
+ * gone to a manager shows its bills read-only, because the thing approved and
+ * the thing on file have to stay the same thing.
+ */
+function BillsPanel({
+  claimId,
+  canChange,
+  requiresReceipt,
+}: {
+  claimId: string;
+  canChange: boolean;
+  requiresReceipt: boolean;
+}) {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const inputId = `bill-${claimId}`;
+  const [busy, setBusy] = useState(false);
+
+  const bills = useQuery({
+    queryKey: queryKeys.expenses.attachments(claimId),
+    queryFn: () => api.get<{ items: Bill[] }>(`/api/v1/expenses/${claimId}/attachments`),
+  });
+
+  async function attach(file: File) {
+    setBusy(true);
+    try {
+      await api.upload(`/api/v1/expenses/${claimId}/attachments`, file);
+      toast.success(`${file.name} attached.`);
+      await queryClient.invalidateQueries({ queryKey: ['expenses'] });
+    } catch (error) {
+      // The server's message is the useful one — it names the real type of a
+      // file that lied about itself, or the size limit it exceeded.
+      toast.error(error instanceof Error ? error.message : 'That file could not be attached.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function open(bill: Bill) {
+    try {
+      const { url } = await api.get<{ url: string }>(
+        `/api/v1/expenses/${claimId}/attachments/${bill.id}`,
+      );
+      // A fresh short-lived URL each time, rather than one held in the page:
+      // the URL is the capability, so it is fetched when it is about to be used.
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'That bill could not be opened.');
+    }
+  }
+
+  async function remove(bill: Bill) {
+    try {
+      await api.delete(`/api/v1/expenses/${claimId}/attachments/${bill.id}`);
+      toast.success(`${bill.filename} removed.`);
+      await queryClient.invalidateQueries({ queryKey: ['expenses'] });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'That bill could not be removed.');
+    }
+  }
+
+  if (bills.error) {
+    return (
+      <div className={styles.bills}>
+        <ErrorState error={bills.error} onRetry={() => void bills.refetch()} />
+      </div>
+    );
+  }
+
+  const items = bills.data?.items ?? [];
+
+  return (
+    <div className={styles.bills}>
+      {bills.isPending ? (
+        <SkeletonLines count={2} />
+      ) : items.length === 0 ? (
+        <p className={styles.note}>
+          {canChange
+            ? requiresReceipt
+              ? 'No bill attached yet. A category that requires a receipt will not pass approval without one.'
+              : 'No bill attached yet.'
+            : 'This claim was submitted without a bill.'}
+        </p>
+      ) : (
+        <ul className={styles.billList}>
+          {items.map((bill) => (
+            <li key={bill.id} className={styles.bill}>
+              <button type="button" className={styles.billName} onClick={() => void open(bill)}>
+                {bill.filename}
+              </button>
+              <span className={styles.billMeta}>{formatBytes(bill.sizeBytes)}</span>
+              {canChange ? (
+                <Button size="small" variant="ghost" onClick={() => void remove(bill)}>
+                  Remove
+                </Button>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {canChange ? (
+        <div className={styles.actions}>
+          {/*
+            A real file input, labelled. Styled through the label rather than
+            replaced by a button that clicks it, so it keeps its keyboard
+            behaviour and its announcement to a screen reader.
+          */}
+          <span className={styles.attachWrap}>
+            <input
+              id={inputId}
+              className={styles.fileInput}
+              type="file"
+              accept=".pdf,.jpg,.jpeg,.png,.webp"
+              disabled={busy}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                // Cleared so choosing the same file twice fires a change again.
+                event.target.value = '';
+                if (file) void attach(file);
+              }}
+            />
+            <label className={styles.attach} htmlFor={inputId}>
+              {busy ? 'Attaching…' : 'Attach a bill'}
+            </label>
+          </span>
+          <span className={styles.note}>PDF, JPEG, PNG or WebP · up to 10 MB · at most 5</span>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+interface Bill {
+  id: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  uploadedAt: string;
+}
+
+/** Bytes as a person reads them. Not a business figure, so rounding is fine. */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

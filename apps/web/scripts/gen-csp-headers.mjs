@@ -114,7 +114,37 @@ for (const file of files.filter((f) => f.endsWith('.css'))) {
 }
 
 /* ------------------------------------------------------------------ */
-/* 6. A stray _headers or _redirects would be merged in                */
+/* 6. The bundle talks to the origin the policy permits                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * `connect-src` is generated from VITE_API_BASE_URL, so if the bundle reads
+ * some *other* variable for its base URL the policy permits an origin the app
+ * never calls — and the app calls an origin the policy forbids. That is
+ * exactly what shipped once: the client read `VITE_API_URL`, nothing set it,
+ * and the fallback made every request relative, so the SPA called its own
+ * Netlify host and got a 404 from the catch-all.
+ *
+ * Nothing about that is visible in a build log, a typecheck or a test that
+ * runs against a local API. The one place it is visible is the bundle: if the
+ * origin was compiled in, `VITE_API_BASE_URL` reached the code that matters.
+ *
+ * Skipped when the origin is empty by design — in development Vite proxies
+ * /api and a relative base URL is the correct answer.
+ */
+if (origin && !isLocal(new URL(origin))) {
+  const bundles = files.filter((f) => f.endsWith('.js'));
+  const mentions = bundles.some((file) => readFileSync(file, 'utf8').includes(origin));
+  if (!mentions) {
+    fail(
+      `no bundle contains ${origin}: the client is not reading VITE_API_BASE_URL, ` +
+        'so it will call its own origin while the policy permits the API',
+    );
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 7. A stray _headers or _redirects would be merged in                */
 /* ------------------------------------------------------------------ */
 
 for (const name of ['_headers', '_redirects']) {

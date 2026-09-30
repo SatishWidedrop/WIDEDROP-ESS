@@ -46,6 +46,7 @@ export const queryKeys = {
     list: (status?: string) => ['expenses', 'list', { status }] as const,
     categories: ['expenses', 'categories'] as const,
     rollup: ['expenses', 'rollup'] as const,
+    attachments: (claimId: string) => ['expenses', 'attachments', claimId] as const,
   },
 
   documents: {
