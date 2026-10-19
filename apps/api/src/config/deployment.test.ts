@@ -142,7 +142,33 @@ describe('the Render blueprint', () => {
 });
 
 describe('.env.example', () => {
-  const example = read('.env.example');
+  const example = read('apps/api/.env.example');
+
+  /**
+   * The example has to sit in the directory the real file is loaded from.
+   *
+   * It lived at the repository root while every script loads `.env` relative
+   * to `apps/api`, so the obvious `cp .env.example .env` produced a file
+   * nothing read — and the failure was silent, because the Prisma CLI finds
+   * its own `.env` and the commands people actually run are Prisma's.
+   */
+  it('sits beside the file it is copied to', () => {
+    const scripts = JSON.parse(read('apps/api/package.json')) as {
+      scripts: Record<string, string>;
+    };
+    const loaders = Object.values(scripts.scripts).filter((command) =>
+      command.includes('--env-file'),
+    );
+    expect(loaders.length).toBeGreaterThan(0);
+
+    // Every loader names a bare `.env`, so the file resolves against the
+    // workspace directory — which is where the example must therefore be.
+    for (const command of loaders) {
+      expect(command).toContain('--env-file-if-exists=.env');
+    }
+    expect(() => read('apps/api/.env.example')).not.toThrow();
+  });
+
   const documented = new Set(
     example
       .split('\n')

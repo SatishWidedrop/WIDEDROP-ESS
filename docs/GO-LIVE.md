@@ -259,7 +259,7 @@ load with "prepared statement already exists".
    text file on the desktop: they are full read-write credentials to a
    database that will hold every employee's personal and payroll data.
 
-   - **Locally**, `cp .env.example apps/api/.env` and fill them in there. It is
+   - **Locally**, `cp apps/api/.env.example apps/api/.env` and fill them in there. It is
      git-ignored, and every script that needs it now loads it —
      `npm run db:migrate`, the seeds, `bootstrap:admin`, `npm run dev`.
    - **On Netlify**, type them into Site configuration → Environment variables
